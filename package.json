@@ -1,0 +1,29 @@
+{
+  "name": "chaoshan-upgrade",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "潮汕升级 · 四人两副牌网页对战（阶段1：骨架 + 登录/座位/聊天）",
+  "workspaces": [
+    "client"
+  ],
+  "scripts": {
+    "start": "concurrently -k -n SERVER,WEB -c green,cyan \"npm:server\" \"npm:client\"",
+    "server": "node server/index.js",
+    "client": "npm run dev -w client",
+    "build": "npm run build -w client",
+    "start:prod": "npm run build && node server/index.js",
+    "test": "node --test \"server/test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "puppeteer-core": "^25.7.0"
+  }
+}

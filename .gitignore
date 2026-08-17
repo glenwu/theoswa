@@ -1,0 +1,7 @@
+node_modules/
+.npm-cache/
+dist/
+screenshots/
+server/savegame.json
+.DS_Store
+*.log

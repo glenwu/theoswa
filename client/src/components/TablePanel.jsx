@@ -1,0 +1,1206 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  suitSymbol,
+  suitRed,
+  rankLabel,
+  cardLabel,
+  levelLabel,
+  SUIT_INFO,
+  PLAYER_EMOJI,
+} from '../utils.js';
+import { PlayingCard } from './PlayingCard.jsx';
+import Modal from './Modal.jsx';
+import { useNow, secondsLeft } from '../useNow.js';
+import { shortcutAction } from '../shortcut.js';
+import { checkSelection } from '../playCheck.js';
+import { trickLeader } from '../../../server/trick.js';
+import { playSuitOf } from '../../../server/cards.js';
+import { tiaoZhuActive } from '../tiaozhu.js';
+import { handGroups, groupBadgeCount } from '../handGroups.js';
+import { tapToggle, dragAdd } from '../selection.js';
+import { ProposeResetModal, ForceResetModal } from './ResetModals.jsx';
+
+const PHASE_HINTS = {
+  SEATING: '换座阶段：点击左侧玩家请求换座，全员确认座位后开始',
+  READY_CHECK: '等待全员准备…',
+  REVEAL_FIRST: '抢按「揭牌」成为翻牌人，系统翻牌定起揭人',
+  REVEALING: '揭牌定主：轮到你时点「揭牌」（空格），摸到级牌可随时「亮主」（数字键 1~N）',
+  FALLBACK_TRUMP: '无人亮主，逐张揭底牌定主…',
+  DEALING: '发牌中…',
+  KITTY_EXCHANGE: '庄家换底：从 33 张中点选 8 张埋回底牌',
+  CROSS_RIVER: '三主过河：主牌 ≤3 张可把主牌交给对家（换回 3 张副牌），不玩可跳过',
+  PLAYING: '出牌：点选手牌（可多选甩牌，主牌也可甩——算错只出最小一张），按「出牌」或空格打出',
+  SCORING: '结算中…',
+  ROUND_END: '本局结束',
+  GAME_OVER: '游戏结束',
+};
+
+// 手牌牌面档位（宽 px，与 PlayingCard 的尺寸档对应）：间距低于下限时整体降档
+const HAND_TIERS = [
+  { name: 'lg', w: 56 },
+  { name: 'md', w: 44 },
+  { name: 'sm', w: 32 },
+];
+
+// 中栏：十字形四方位牌桌 + 中央信息 + 控制按钮 + 我的手牌
+export default function TablePanel({ game, send, error }) {
+  const [selected, setSelected] = useState([]);
+  const [declareOptions, setDeclareOptions] = useState(null);
+
+  const you = game.you;
+  const bySeat = Object.fromEntries(game.players.map(p => [p.seat, p]));
+  const top = bySeat[(you.seat + 2) % 4]; // 对家
+  const left = bySeat[(you.seat + 1) % 4]; // 上家
+  const right = bySeat[(you.seat + 3) % 4]; // 下家
+
+  // 已打出的牌从选中集清除（出牌成功后保持干净）
+  useEffect(() => {
+    setSelected(prev => prev.filter(id => (you.hand ?? []).some(c => c.id === id)));
+  }, [you.hand]);
+
+  // 阶段切换时立即清空本地选中，防止用旧状态误操作（服务端另有 STALE_STATE 兜底）
+  useEffect(() => {
+    setSelected([]);
+  }, [game.phase]);
+
+  // 选中上限：换底 8 张、三主过河 3 张；出牌甩牌按手牌数量放开
+  const selectionCap =
+    game.phase === 'KITTY_EXCHANGE'
+      ? 8
+      : game.phase === 'CROSS_RIVER'
+        ? 3
+        : Infinity;
+
+  // 单击切换 / 拖动只加选（共用同一份纯逻辑，服务端另有校验兜底）
+  function toggleCard(id) {
+    setSelected(prev => tapToggle(prev, id, selectionCap));
+  }
+
+  function addDragSelection(id) {
+    setSelected(prev => dragAdd(prev, id, selectionCap));
+  }
+
+  // 键盘快捷键：空格（揭牌/出牌）、数字 1~N（亮主）。
+  // 输入框聚焦时由 shortcut.js 自动失效（打字按空格绝不触发）。
+  useEffect(() => {
+    const handler = e => {
+      const action = shortcutAction(e, {
+        phase: game.phase,
+        myRevealTurn:
+          game.phase === 'REVEALING' &&
+          game.round &&
+          game.round.drawnCount < 100 &&
+          !game.round.trumpSuit &&
+          game.round.revealTurnSeat === you.seat,
+        myPlayTurn:
+          game.phase === 'PLAYING' &&
+          game.round &&
+          !game.round.lastTrick &&
+          game.round.turnSeat === you.seat,
+        selectedIds: selected,
+        rankCardIds:
+          game.phase === 'REVEALING' && game.round
+            ? (you.hand ?? []).filter(c => c.rank === game.round.rankCard).map(c => c.id)
+            : [],
+      });
+      if (!action) return;
+      if (action.preventDefault) e.preventDefault();
+      if (action.type === 'drawCard') send({ type: 'drawCard' });
+      else if (action.type === 'play') send({ type: 'play', cardIds: action.cardIds });
+      else if (action.type === 'declareTrump') send({ type: 'declareTrump', cardId: action.cardId });
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [game, selected, you.seat, send]);
+
+  return (
+    <div className="table-spot relative flex h-full flex-col rounded-3xl border border-white/10 p-3">
+      {/* 出牌倒计时：牌桌右上角大号显示（与左栏卡片倒计时并存） */}
+      <CenterTurnTimer game={game} />
+      <TopBanner game={game} />
+
+      {/* 关键节点大图：翻牌定起揭人 / 亮主 / 揭底定主（中央牌桌停留展示） */}
+      <CenterEventOverlay game={game} />
+
+      <div className="grid min-h-0 flex-1 grid-cols-[1fr_auto_1fr] grid-rows-[auto_1fr_auto] gap-2">
+        <div className="col-start-2 row-start-1 flex justify-center">
+          <PlayZone player={top} game={game} />
+        </div>
+        <div className="col-start-1 row-start-2 flex items-center justify-end">
+          <PlayZone player={left} game={game} />
+        </div>
+        <div className="col-start-2 row-start-2 flex flex-col items-center justify-center gap-1.5">
+          <CenterInfo game={game} />
+          {/* 埋好的 8 张底牌：牌背列在牌桌中央，埋入的件（A/K）明牌亮出 */}
+          <KittyBacksRow game={game} />
+        </div>
+        <div className="col-start-3 row-start-2 flex items-center justify-start">
+          <PlayZone player={right} game={game} />
+        </div>
+        <div className="col-start-2 row-start-3 flex justify-center">
+          <PlayZone player={bySeat[you.seat]} game={game} isYou />
+        </div>
+      </div>
+
+      <ControlBar
+        game={game}
+        send={send}
+        error={error}
+        selected={selected}
+        onClear={() => setSelected([])}
+        onDeclareOptions={setDeclareOptions}
+      />
+
+      <HandArea
+        game={game}
+        selected={selected}
+        onToggle={toggleCard}
+        onDragAdd={addDragSelection}
+        onDeclareRank={cardId => send({ type: 'declareTrump', cardId })}
+      />
+
+      {/* 碾压判定面板：摊开四家剩余手牌 + 看结算按钮（不自动跳走） */}
+      {game.phase === 'DOMINANCE' && (
+        <DominancePanel game={game} onConfirm={() => send({ type: 'confirmDominance' })} />
+      )}
+
+      {/* 结算面板：SCORING / ROUND_END / GAME_OVER 覆盖在牌桌上 */}
+      {(game.phase === 'SCORING' || game.phase === 'ROUND_END' || game.phase === 'GAME_OVER') && (
+        <SettlementPanel game={game} send={send} />
+      )}
+
+      {declareOptions && (
+        <DeclareModal
+          options={declareOptions}
+          onPick={cardId => {
+            send({ type: 'declareTrump', cardId });
+            setDeclareOptions(null);
+          }}
+          onClose={() => setDeclareOptions(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// 牌桌中央右上角的出牌倒计时（大号醒目；最后 10 秒变红，提示音在左栏组件内）
+function CenterTurnTimer({ game }) {
+  const round = game.round;
+  const active =
+    game.phase === 'PLAYING' && round && !round.lastTrick && round.turnSeat !== null;
+  const now = useNow(active, 300);
+  const left = secondsLeft(round?.playDeadline, now);
+  if (!active || left === null) return null;
+  const player = game.players.find(p => p.seat === round.turnSeat);
+  const urgent = left <= 10;
+  return (
+    <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+      <span
+        className={`rounded-full px-4 py-2 text-lg font-black shadow-lg ${
+          urgent ? 'bg-rose-500 text-white' : 'bg-black/50 text-amber-300'
+        }`}
+      >
+        ⏱ {Math.floor(left / 60)}:{String(Math.ceil(left % 60)).padStart(2, '0')}
+      </span>
+      {player && (
+        <span className="pill bg-black/50 text-white/80">{PLAYER_EMOJI[player.id]} {player.nickname}</span>
+      )}
+    </div>
+  );
+}
+
+// 关键节点大图：全场只发生一次、决定后续行动顺序的事件，在中央牌桌大图停留展示。
+// 消息流是流水账（回溯用）；这里是让四家同步的当下通知（大图 + 换算过程 + 高亮结论）。
+// 翻到大小王作废时每一次都展示，绝不静默重翻。
+function CenterEventOverlay({ game }) {
+  const round = game.round;
+  if (!round) return null;
+  const flip = round.flipEvent;
+  const trump = round.trumpEvent;
+  const fbCard = round.fallbackTrumpCard;
+
+  const now = useNow(true, 200);
+  const showFlipJoker = game.phase === 'REVEAL_FIRST' && flip?.kind === 'JOKER';
+  const showFlipStarter =
+    game.phase === 'REVEALING' && flip?.kind === 'STARTER' && round.drawnCount === 0 && !round.trumpSuit;
+
+  // 亮主 / 揭底定主：DEALING 阶段 + 进入换底后继续停留 ~2.5 秒
+  const showTrump =
+    !!trump &&
+    (game.phase === 'DEALING' || (game.phase === 'KITTY_EXCHANGE' && now - trump.ts < 2500));
+  const [fbSeenAt, setFbSeenAt] = useState(null);
+  useEffect(() => {
+    if (fbCard) setFbSeenAt(Date.now());
+  }, [fbCard?.id]);
+  const showFallback =
+    !!fbCard &&
+    !trump &&
+    (game.phase === 'DEALING' ||
+      (game.phase === 'KITTY_EXCHANGE' && fbSeenAt !== null && now - fbSeenAt < 2500));
+  const showFallbackProgress = game.phase === 'FALLBACK_TRUMP';
+
+  if (!showFlipJoker && !showFlipStarter && !showTrump && !showFallback && !showFallbackProgress) {
+    return null;
+  }
+
+  const playerBySeat = seat => game.players.find(p => p.seat === seat);
+  const flipper = playerBySeat(game.flipperSeat);
+
+  let content = null;
+  if (showFlipJoker) {
+    content = (
+      <>
+        <PlayingCard suit={flip.card.suit} rank={flip.card.rank} size="xl" className="card-pop" />
+        <div className="mt-2 text-xl font-black text-amber-300">{cardLabel(flip.card)} 无点数</div>
+        <div className="text-sm font-bold text-white/80">作废重翻：接着翻下一张</div>
+      </>
+    );
+  } else if (showFlipStarter) {
+    const n = flip.card.rank === 14 ? 1 : flip.card.rank;
+    const r = n % 4;
+    const rel = r === 1 ? '翻牌人自己' : r === 2 ? '下家' : r === 3 ? '对家' : '上家';
+    const starter = playerBySeat(flip.starterSeat);
+    content = (
+      <>
+        <div className="text-sm font-bold text-white/70">
+          {flipper ? `${PLAYER_EMOJI[flipper.id]} ${flipper.nickname}` : '—'} 按下揭牌
+        </div>
+        <PlayingCard suit={flip.card.suit} rank={flip.card.rank} size="xl" className="card-pop" />
+        <div className="mt-1 font-black text-amber-300">
+          {cardLabel(flip.card)} = {n} → {n} ÷ 4 余 {r} → {rel}
+        </div>
+        <div className="mt-1 text-lg font-black text-white">
+          起揭人：
+          <span className="ml-2 rounded-full bg-amber-400 px-3 py-0.5 text-amber-950">
+            {starter ? `${PLAYER_EMOJI[starter.id]} ${starter.nickname}` : '—'}
+          </span>
+        </div>
+        <div className="mt-1 text-xs font-bold text-white/50">3 秒后自动开始揭牌，也可直接点「揭牌」</div>
+      </>
+    );
+  } else if (showTrump) {
+    const declarer = playerBySeat(trump.declarerSeat);
+    content = (
+      <>
+        <PlayingCard suit={trump.card.suit} rank={trump.card.rank} size="xl" className="card-pop" />
+        <div className="mt-2 text-xl font-black text-amber-300">
+          {declarer ? `${PLAYER_EMOJI[declarer.id]} ${declarer.nickname}` : ''} 亮 {cardLabel(trump.card)}，
+          主牌为 {SUIT_INFO[trump.card.suit].name}
+        </div>
+        {trump.wasFirstRound && (
+          <div className="text-sm font-bold text-white/80">{declarer?.nickname} 成为庄家</div>
+        )}
+      </>
+    );
+  } else if (showFallback) {
+    content = (
+      <>
+        <div className="text-sm font-bold text-white/70">无人亮主，揭底定主</div>
+        <div className="flex items-center gap-1">
+          {(round.fallbackRevealed ?? []).map(c => (
+            <div key={c.id} className={c.id === fbCard.id ? 'rounded-lg ring-2 ring-amber-300' : ''}>
+              <PlayingCard suit={c.suit} rank={c.rank} size="md" className="card-pop" />
+            </div>
+          ))}
+        </div>
+        <div className="mt-1 text-lg font-black text-amber-300">
+          主牌为 {SUIT_INFO[fbCard.suit].name}（{cardLabel(fbCard)} 定的主）
+        </div>
+      </>
+    );
+  } else if (showFallbackProgress) {
+    content = (
+      <>
+        <div className="text-sm font-bold text-white/70">逐张揭底牌（级牌优先定主，否则首张非王定主）</div>
+        <div className="flex items-center gap-1">
+          {(round.fallbackRevealed ?? []).map(c => (
+            <PlayingCard key={c.id} suit={c.suit} rank={c.rank} size="md" className="card-pop" />
+          ))}
+          {Array.from({ length: Math.max(0, 8 - (round.fallbackRevealed?.length ?? 0)) }).map((_, i) => (
+            <PlayingCard key={`back-${i}`} suit={null} rank={null} faceUp={false} size="md" className="opacity-60" />
+          ))}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
+      <div className="pointer-events-auto flex flex-col items-center rounded-3xl border-2 border-amber-300/60 bg-black/75 px-6 py-4 shadow-2xl">
+        {content}
+      </div>
+    </div>
+  );
+}
+
+function TopBanner({ game }) {
+  const round = game.round;
+  const declarer = game.players.find(p => p.seat === game.declarerSeat);
+  return (
+    <div className="mb-2 flex flex-wrap items-center justify-center gap-2">
+      <span className="pill bg-white/10 text-white/70">第 {round ? round.roundNumber : 1} 局</span>
+      <span className="pill bg-white/10 text-white/70">级牌：{round ? rankLabel(round.rankCard) : '2'}</span>
+      <span className="pill bg-amber-400/15 text-amber-300">
+        庄家：{declarer ? `${PLAYER_EMOJI[declarer.id]} ${declarer.nickname}` : '未定'}
+      </span>
+      {round && (game.phase === 'REVEALING' || game.phase === 'REVEAL_FIRST') && (
+        <span className="pill bg-white/10 text-white/70">底牌 8 张</span>
+      )}
+    </div>
+  );
+}
+
+function CenterInfo({ game }) {
+  const round = game.round;
+  const trumpSuit = round?.trumpSuit ?? null;
+  const pts = round?.defenderTrickPoints ?? 0;
+  const pct = Math.min(100, (pts / 80) * 100);
+  const now = useNow(game.phase === 'REVEALING');
+  const drawLeft = secondsLeft(round?.drawDeadline, now);
+  const graceLeft = secondsLeft(round?.graceDeadline, now);
+
+  return (
+    <div className="flex h-44 w-60 flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-center">
+      <div
+        className={`text-4xl font-black ${
+          trumpSuit ? (suitRed(trumpSuit) ? 'text-rose-400' : 'text-white/90') : 'text-white/30'
+        }`}
+      >
+        {trumpSuit ? suitSymbol(trumpSuit) : '?'}
+      </div>
+      <div className="text-xs font-bold text-white/60">
+        {round
+          ? trumpSuit
+            ? `主牌：${suitSymbol(trumpSuit)} · 打 ${rankLabel(round.rankCard)}`
+            : `打 ${rankLabel(round.rankCard)} · 主牌未定`
+          : '未开局'}
+      </div>
+
+      {game.phase === 'REVEAL_FIRST' && round.flipShown.length > 0 && (
+        <div className="flex items-center gap-1">
+          {round.flipShown.map(c => (
+            <PlayingCard key={c.id} suit={c.suit} rank={c.rank} size="sm" className="card-pop" />
+          ))}
+        </div>
+      )}
+      {game.phase === 'REVEALING' && (
+        <>
+          <div className="pill bg-white/10 text-white/80">已揭 {round.drawnCount}/100</div>
+          {round.drawnCount < 100 && drawLeft !== null && (
+            <div className="pill bg-amber-400/15 text-amber-300">⏱ {drawLeft.toFixed(1)}s</div>
+          )}
+          {round.drawnCount >= 100 && graceLeft !== null && (
+            <div className="pill bg-rose-400/20 text-rose-200">亮主宽限 {graceLeft.toFixed(1)}s</div>
+          )}
+        </>
+      )}
+      {game.phase === 'FALLBACK_TRUMP' && (
+        <div className="flex items-center gap-1">
+          {round.fallbackRevealed.map(c => (
+            <PlayingCard key={c.id} suit={c.suit} rank={c.rank} size="sm" className="card-pop" />
+          ))}
+        </div>
+      )}
+
+      <div className="pill bg-amber-400/15 text-amber-300">闲家 {pts} / 80</div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-amber-400 to-rose-400 transition-all duration-300"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="text-xs font-bold text-white/70">{PHASE_HINTS[game.phase]}</div>
+    </div>
+  );
+}
+
+// 碾压判定面板：摊开四家剩余手牌 + 说明 + 看结算按钮（不自动跳走）
+function DominancePanel({ game, onConfirm }) {
+  const dom = game.round?.dominance;
+  const hands = game.round?.allHandsRevealed ?? [];
+  if (!dom) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/55 p-4">
+      <div className="panel max-h-full w-[min(94%,520px)] overflow-y-auto p-5">
+        <h2 className="text-center text-xl font-black text-amber-300">碾压收尾</h2>
+        <p className="mt-2 text-center text-sm font-bold text-white/80">
+          剩余 <span className="text-amber-300">{dom.remainingTricks}</span> 轮全部由{' '}
+          <span className="text-amber-300">{dom.winningTeam === 0 ? '金队' : '青队'}</span> 赢下，
+          共 <span className="text-amber-300">{dom.remainingPoints}</span> 分
+          （{dom.pointsToDefender ? '计入闲家' : '庄家跑掉'}
+          {dom.kittyGrab ? '，闲家撬底 +20' : ''}）。
+        </p>
+        <div className="mt-3 space-y-1.5">
+          {hands.map(h => {
+            const p = game.players.find(x => x.seat === h.seat);
+            return (
+              <div key={h.seat} className="flex items-center gap-2 rounded-xl bg-white/5 p-1.5">
+                <span className="w-16 shrink-0 text-xs font-black text-white/70">
+                  {p?.nickname ?? h.seat}
+                </span>
+                <div className="flex flex-wrap gap-0.5">
+                  {h.cards.map(c => (
+                    <PlayingCard key={c.id} suit={c.suit} rank={c.rank} size="sm" />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-4 text-center">
+          <button className="btn-gold" onClick={onConfirm}>
+            看结算
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// 结算面板：把本局讲清楚（SCORING / ROUND_END 停留展示，GAME_OVER 常驻 + 再来一局）
+function SettlementPanel({ game, send }) {
+  const round = game.round;
+  const summary = game.rounds?.[game.rounds.length - 1];
+  const declarer = game.players.find(p => p.seat === summary?.declarerSeat);
+  const next = game.players.find(p => p.seat === summary?.nextDeclarerSeat);
+  const kitty = round?.kittyRevealed ?? [];
+  return createPortal(
+    <div className="fixed inset-0 z-40 grid place-items-center bg-black/55 p-4">
+      <div className="panel w-[min(94%,440px)] p-5">
+        <h2 className="text-center text-xl font-black text-amber-300">
+          {game.phase === 'GAME_OVER'
+            ? `🏆 ${game.gameWinnerTeam === 0 ? '金队' : '青队'}获胜！`
+            : `第 ${round?.roundNumber} 局结束`}
+        </h2>
+        <div className="mt-3 grid grid-cols-3 gap-2 text-center text-sm font-bold">
+          <div className="rounded-xl bg-white/5 p-2">
+            <div className="text-white/50">闲家台面</div>
+            <div className="text-lg font-black text-amber-300">{round?.defenderTrickPoints ?? 0}</div>
+          </div>
+          <div className="rounded-xl bg-white/5 p-2">
+            <div className="text-white/50">庄家跑掉</div>
+            <div className="text-lg font-black text-white/70">{round?.runAwayPoints ?? 0}</div>
+          </div>
+          <div className="rounded-xl bg-white/5 p-2">
+            <div className="text-white/50">底牌</div>
+            <div className="text-lg font-black text-sky-300">{round?.kittyPoints ?? 0}</div>
+          </div>
+        </div>
+        <div className="mt-2 text-center text-xs font-bold text-white/60">
+          闲家台面 + 跑掉 + 底牌 ={' '}
+          {(round?.defenderTrickPoints ?? 0) + (round?.runAwayPoints ?? 0) + (round?.kittyPoints ?? 0)} / 200
+          {summary && !summary.conservationOk && <span className="text-rose-300"> ⚠️ 守恒异常</span>}
+        </div>
+
+        <div className="mt-3 flex justify-center gap-1">
+          {kitty.map(c => (
+            <PlayingCard key={c.id} suit={c.suit} rank={c.rank} size="sm" className="card-pop" />
+          ))}
+        </div>
+        <div className="mt-1 text-center text-[11px] font-bold text-white/40">
+          底牌揭晓{summary?.kittyGrab ? ' · 闲家撬底 +20' : ''}
+        </div>
+
+        <div className="mt-3 rounded-xl bg-amber-400/10 p-3 text-center text-sm font-black text-amber-200">
+          最终 P = {round?.defenderPoints ?? 0}
+          <span className="ml-2 rounded-full bg-white/10 px-2 py-0.5">
+            {summary?.transfer ? '移庄' : '连庄'}
+          </span>
+          <span className="ml-2">
+            {summary && summary.upgradeCount > 0
+              ? `${summary.upgradedTeam === 0 ? '金队' : '青队'}升 ${summary.upgradeCount} 级`
+              : '双方不升级'}
+          </span>
+        </div>
+        {game.phase !== 'GAME_OVER' && summary && (
+          <p className="mt-2 text-center text-xs font-bold text-white/70">
+            下一局：{next?.nickname} 做庄 · 打 {levelLabel(game.teamLevels[summary.nextDeclarerSeat % 2])}
+            {game.phase === 'ROUND_END' ? ' · 即将进入准备…' : ''}
+          </p>
+        )}
+        <p className="mt-1 text-center text-[11px] font-bold text-white/40">
+          本局：{declarer?.nickname} 做庄 · 主{suitSymbol(round?.trumpSuit)}打 {rankLabel(round?.rankCard)}
+        </p>
+        {game.phase === 'GAME_OVER' && <RematchPanel game={game} send={send} />}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// 再来一局（提案制）：发起新开一局提案（四人全同意才执行）；管理员可强制重置
+function RematchPanel({ game, send }) {
+  const [showPropose, setShowPropose] = useState(false);
+  const [showForce, setShowForce] = useState(false);
+  return (
+    <div className="mt-3 rounded-xl bg-white/5 p-3 text-center">
+      <div className="flex justify-center gap-2">
+        <button className="btn-gold" onClick={() => setShowPropose(true)}>
+          🔄 提议新开一局
+        </button>
+        {game.you.isAdmin && (
+          <button
+            className="rounded-full bg-rose-500/80 px-5 py-2.5 font-black text-white transition hover:brightness-110"
+            onClick={() => setShowForce(true)}
+          >
+            ⛔ 强制重置
+          </button>
+        )}
+      </div>
+      <p className="mt-2 text-xs font-bold text-white/50">
+        新开一局需四人全部同意（任一人拒绝即取消，60 秒无响应自动取消）。
+      </p>
+      {showPropose && !game.resetProposal && (
+        <ProposeResetModal game={game} send={send} onClose={() => setShowPropose(false)} />
+      )}
+      {showForce && <ForceResetModal game={game} send={send} onClose={() => setShowForce(false)} />}
+    </div>
+  );
+}
+
+// 埋好的 8 张底牌：牌背列在牌桌中央；埋入的件（副牌 A/K）按规则明牌亮出
+function KittyBacksRow({ game }) {
+  const round = game.round;
+  if (!round || game.phase !== 'PLAYING' && game.phase !== 'DOMINANCE') return null;
+  const total = round.kittyCount ?? 0;
+  if (total <= 0) return null;
+  const revealed = round.kittyRevealedPieces ?? [];
+  return (
+    <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-black/25 px-3 py-1.5">
+      <span className="text-[10px] font-bold text-white/40">底牌</span>
+      <div className="flex">
+        {Array.from({ length: total }, (_, i) => {
+          const piece = revealed[i] ?? null; // 明牌亮出的件排在前面
+          return piece ? (
+            <PlayingCard
+              key={`kitty-${i}`}
+              suit={piece.suit}
+              rank={piece.rank}
+              size="sm"
+              className="card-pop"
+            />
+          ) : (
+            <PlayingCard
+              key={`kitty-${i}`}
+              suit={null}
+              rank={null}
+              faceUp={false}
+              size="sm"
+              className="-ml-3 first:ml-0"
+            />
+          );
+        })}
+      </div>
+      {revealed.length > 0 && (
+        <span className="text-[10px] font-bold text-amber-300">已亮 {revealed.length} 件</span>
+      )}
+    </div>
+  );
+}
+
+// 出牌区：揭牌提示 / 本轮已打出的牌 / 上一轮停留展示 + 赢家高亮；
+// 本轮未打完时，浅绿底标记当前牌面最大的人（与最终结算同一套判定）
+function PlayZone({ player, game, isYou }) {
+  const round = game.round;
+  const revealing =
+    game.phase === 'REVEALING' && round && round.drawnCount < 100 && !round.trumpSuit;
+  const isDrawer = revealing && round.revealTurnSeat === player.seat;
+  const play =
+    round?.currentTrick?.find(p => p.seat === player.seat) ??
+    round?.lastTrick?.plays?.find(p => p.seat === player.seat);
+  const isWinner = !!round?.lastTrick && round.lastTrick.winnerSeat === player.seat;
+
+  // 本轮进行中：当前牌面最大者浅绿高亮
+  const leading = useMemo(() => {
+    if (!round || !round.trumpSuit || !round.currentTrick || round.currentTrick.length === 0) return false;
+    if (round.lastTrick) return false; // 停留展示期以赢家高亮为准
+    const leader = trickLeader(round.currentTrick, {
+      trumpSuit: round.trumpSuit,
+      rankCard: round.rankCard,
+    });
+    return leader?.seat === player.seat;
+  }, [round, player.seat]);
+
+  // 聊天气泡：该玩家最近 3 秒内的发言显示在其方位
+  const now = useNow(true, 500);
+  const latestChat = [...(game.chat ?? [])]
+    .reverse()
+    .find(m => m.from === player.id);
+  const showBubble = latestChat && now - latestChat.ts < 3000;
+
+  // 「吊主」气泡：首家出主牌且上一轮非主牌（连续主牌只弹一次）
+  const tiaoZhu = tiaoZhuActive(round?.currentTrick ?? [], round?.trickHistory ?? []);
+  const showTiaoZhu = tiaoZhu && round?.currentTrick?.[0]?.seat === player.seat;
+  const hasPlay = !!play && play.cards.length > 0;
+
+  return (
+    <div
+      data-playzone={player.seat}
+      className={`relative flex flex-col items-center ${
+        hasPlay
+          ? `gap-1 rounded-2xl border-2 p-2 ${
+              isWinner
+                ? 'winner-glow border-amber-300/80 border-solid'
+                : leading
+                  ? 'border-solid border-emerald-300/70 bg-emerald-400/15'
+                  : 'border-dashed border-white/15 bg-black/10'
+            }`
+          : 'rounded-full bg-black/25 px-3 py-1'
+      }`}
+    >
+      {showBubble && (
+        <div className="chat-bubble absolute -top-5 left-1/2 z-30 max-w-48 -translate-x-1/2">
+          {latestChat.text}
+        </div>
+      )}
+      {showTiaoZhu && (
+        <div className="tiaozhu-bubble absolute -top-9 left-1/2 z-30 -translate-x-1/2">
+          吊主
+        </div>
+      )}
+      {play?.nii && (
+        <div className="nii-bubble absolute -top-14 left-1/2 z-30 -translate-x-1/2">
+          妮！
+        </div>
+      )}
+      <div className="flex items-center gap-1 text-xs font-black text-white/80">
+        {PLAYER_EMOJI[player.id]} {player.nickname}
+        {isYou ? '(我)' : ''}
+        {isWinner ? ' 🏆' : leading ? ' 👑' : ''}
+      </div>
+      {/* 出牌区自适应：没牌时只剩方位名一条细线；有牌按张数展开（容量 10 张，超出再压缩） */}
+      {hasPlay && (
+        <div className="flex items-center justify-center">
+          <div className="flex">
+            {play.cards.map((c, i) => (
+              <PlayingCard
+                key={c.id}
+                suit={c.suit}
+                rank={c.rank}
+                size="xl"
+                className={`card-pop ${i > 0 ? (play.cards.length > 10 ? '-ml-[54px]' : '-ml-12') : ''}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ControlBar({ game, send, error, selected, onClear, onDeclareOptions }) {
+  const you = game.you;
+  const round = game.round;
+  const now = useNow(game.phase === 'REVEALING');
+  const buttons = [];
+
+  // 出牌阶段的本地校验（与服务端同一份纯函数），用于禁用与提示
+  const verdict = useMemo(
+    () => (game.phase === 'PLAYING' ? checkSelection(game, selected) : null),
+    [game, selected]
+  );
+  const myPlayTurn =
+    game.phase === 'PLAYING' && round && !round.lastTrick && round.turnSeat === you.seat;
+
+  if (game.phase === 'SEATING') {
+    buttons.push(
+      <button
+        key="seat"
+        className="btn-gold"
+        disabled={you.seatLocked}
+        onClick={() => send({ type: 'confirmSeat' })}
+      >
+        {you.seatLocked ? '已确认座位 ✓' : '确认座位'}
+      </button>
+    );
+  } else if (game.phase === 'READY_CHECK') {
+    buttons.push(
+      <button key="ready" className="btn-gold" onClick={() => send({ type: 'ready' })}>
+        {you.ready ? '取消准备' : '准备'}
+      </button>
+    );
+  } else if (game.phase === 'REVEAL_FIRST') {
+    buttons.push(
+      <button
+        key="flipper"
+        className="btn-gold"
+        disabled={game.flipperSeat !== null}
+        onClick={() => send({ type: 'claimFlipper' })}
+      >
+        {game.flipperSeat === you.seat
+          ? '你已揭牌 ✓'
+          : game.flipperSeat !== null
+            ? '已有人揭牌'
+            : '揭牌'}
+      </button>
+    );
+  } else if (game.phase === 'REVEALING') {
+    const myTurn =
+      round && round.drawnCount < 100 && !round.trumpSuit && round.revealTurnSeat === you.seat;
+    const drawer = game.players.find(p => p.seat === round.revealTurnSeat);
+    buttons.push(
+      <button
+        key="draw"
+        className="btn-gold"
+        disabled={!myTurn}
+        onClick={() => send({ type: 'drawCard' })}
+      >
+        {myTurn ? '揭牌（空格）' : `等待 ${drawer?.nickname ?? '—'} 揭牌`}
+      </button>
+    );
+    if (round.drawnCount < 100) {
+      const left = secondsLeft(round.drawDeadline, now);
+      if (left !== null) {
+        buttons.push(
+          <span key="t" className="pill bg-amber-400/15 text-amber-300">
+            ⏱ {left.toFixed(1)}s
+          </span>
+        );
+      }
+    }
+    // 亮主：手里有未亮出的级牌即可按（与揭牌回合无关，宽限窗口内同样可用）
+    const rankCards = (you.hand ?? []).filter(c => c.rank === round.rankCard);
+    if (rankCards.length > 0) {
+      buttons.push(
+        <button
+          key="declare"
+          className="btn-gold"
+          onClick={() => {
+            const suits = [...new Set(rankCards.map(c => c.suit))];
+            if (suits.length === 1) send({ type: 'declareTrump', cardId: rankCards[0].id });
+            else onDeclareOptions(rankCards);
+          }}
+        >
+          亮主{rankCards.length > 1 ? `（按 1~${rankCards.length} 直接亮）` : '（按 1 直接亮）'}
+        </button>
+      );
+    }
+  } else if (game.phase === 'KITTY_EXCHANGE') {
+    if (game.declarerSeat === you.seat) {
+      buttons.push(
+        <button
+          key="bury"
+          className="btn-gold"
+          disabled={selected.length !== 8}
+          onClick={() => send({ type: 'buryKitty', cardIds: selected })}
+        >
+          埋底 {selected.length}/8
+        </button>
+      );
+    } else {
+      buttons.push(
+        <span key="wait" className="text-sm font-bold text-white/60">
+          等待庄家换底…
+        </span>
+      );
+    }
+  } else if (game.phase === 'CROSS_RIVER') {
+    // 三主过河：候选人点选「全部主牌 + 副牌补足 3 张」送对家；对家点选 3 张副牌回。
+    // 按钮禁用只做基础提示，服务端是唯一权威（对家副牌不足 3 张时服务端拒绝并说明）。
+    const cr = you.crossRiver ?? {};
+    const isTrumpId = id => {
+      const card = (you.hand ?? []).find(c => c.id === id);
+      return card ? playSuitOf(card, round.trumpSuit, round.rankCard) === 'TRUMP' : false;
+    };
+    if (cr.mustRespond) {
+      const valid = selected.length === 3 && selected.every(id => !isTrumpId(id));
+      buttons.push(
+        <button
+          key="cr-back"
+          className="btn-gold"
+          disabled={!valid}
+          onClick={() => send({ type: 'respondCrossRiver', cardIds: selected })}
+        >
+          回 3 张副牌（{selected.length}/3）
+        </button>
+      );
+    } else if (cr.eligible) {
+      const selTrumpCount = selected.filter(id => isTrumpId(id)).length;
+      const valid = selected.length === 3 && selTrumpCount === you.trumpCount;
+      buttons.push(
+        <button
+          key="cr-go"
+          className="btn-gold"
+          disabled={!valid}
+          onClick={() => send({ type: 'initiateCrossRiver', cardIds: selected })}
+        >
+          过河送出 3 张（{selected.length}/3）
+        </button>
+      );
+      buttons.push(
+        <button key="cr-skip" className="btn-gold-sm" onClick={() => send({ type: 'skipCrossRiver' })}>
+          跳过过河
+        </button>
+      );
+    } else if (cr.waiting) {
+      buttons.push(
+        <span key="cr-wait" className="pill bg-amber-400/15 text-amber-300">
+          已发起，等待对家回 3 张副牌…
+        </span>
+      );
+    } else {
+      const done = game.round?.crossRiver?.doneTeams ?? [];
+      buttons.push(
+        <span key="cr-idle" className="pill bg-white/10 text-white/70">
+          过河阶段{done.length > 0 ? `（已过河 ${done.length} 队）` : ''}，等待符合条件的人决定…
+        </span>
+      );
+    }
+  } else if (game.phase === 'PLAYING') {
+    const showVerdict = myPlayTurn && selected.length > 0 && verdict && !verdict.ok;
+    buttons.push(
+      <button
+        key="play"
+        className="btn-gold"
+        disabled={!myPlayTurn || selected.length === 0 || (verdict ? !verdict.ok : true)}
+        onClick={() => send({ type: 'play', cardIds: selected })}
+      >
+        {myPlayTurn
+          ? `出牌（空格）${selected.length > 0 ? ` · ${selected.length} 张` : ''}`
+          : round.lastTrick
+            ? '上一轮结算中…'
+            : `等待 ${game.players.find(p => p.seat === round.turnSeat)?.nickname ?? '—'} 出牌`}
+      </button>
+    );
+    if (showVerdict) {
+      buttons.push(
+        <span key="reason" className="max-w-64 rounded-full bg-rose-500/20 px-3 py-1 text-xs font-bold text-rose-200">
+          {verdict.reason}
+        </span>
+      );
+    }
+  }
+
+  // 清空选择：有选中时随时可一键取消（拖动只加选不清除，取消交给这里和单击）
+  if (
+    selected.length > 0 &&
+    (game.phase === 'PLAYING' || game.phase === 'KITTY_EXCHANGE' || game.phase === 'CROSS_RIVER')
+  ) {
+    buttons.push(
+      <button key="clear" className="btn-gold-sm" onClick={onClear}>
+        清空选择 ({selected.length})
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-3 py-2">
+      {buttons}
+      <ErrorToast error={error} />
+    </div>
+  );
+}
+
+// 服务端错误必须明显显示（绝不静默吞掉）：大号红字 + 摇动动画，5 秒后消失
+function ErrorToast({ error }) {
+  const [shown, setShown] = useState(null);
+  useEffect(() => {
+    if (!error) return;
+    setShown(error);
+    const t = setTimeout(() => setShown(null), 5000);
+    return () => clearTimeout(t);
+  }, [error]);
+  if (!shown) return null;
+  return (
+    <div className="error-toast rounded-full bg-rose-600/90 px-4 py-1.5 text-sm font-black text-white shadow-lg ring-2 ring-rose-300/60">
+      ⚠ {shown.reason}
+    </div>
+  );
+}
+
+// 我的手牌：加大号牌面（lg），大幅重叠排列（每张露约 36px 左缘，最右一张完整）；
+// 按组排列：主牌组在前，副牌组按红黑交替排序；组间间隔规则：
+//   · 主牌组 → 第一副牌组：大间隔（明显大于副牌组之间的间隔）
+//   · 同色相邻副牌组（无法交替时）：明显间隔
+//   · 其余副牌组之间：小间隔
+// 每组最后一张牌上方显示张数角标（>5 张才显示）。
+// 揭牌阶段可亮级牌自动抬起 + 数字角标（对应快捷键）。
+// 出牌/换底/过河阶段：单击 = 切换选中（已选则取消）；按住并拖动 = 只加选（add-only，
+// 拖回已选牌不会取消），位移超过 5px 进入拖动模式；触摸同样支持滑动多选。
+// 换底时庄家 33 张（底牌已并入，统一排序），从中点选 8 张埋回；
+// 过河时点选 3 张（发起者：全部主牌 + 副牌补足；对家：3 张副牌）。
+function HandArea({ game, selected, onToggle, onDragAdd, onDeclareRank }) {
+  const you = game.you;
+  const hand = you.hand ?? [];
+  const revealing = game.phase === 'REVEALING';
+  const selectable =
+    game.phase === 'PLAYING' && game.round && !game.round.lastTrick && game.round.turnSeat === you.seat;
+  const exchangeSelectable =
+    game.phase === 'KITTY_EXCHANGE' && game.declarerSeat === you.seat;
+  const cross = you.crossRiver ?? {};
+  const crossSelectable =
+    game.phase === 'CROSS_RIVER' && (cross.eligible || cross.mustRespond);
+  const interactive = selectable || exchangeSelectable || crossSelectable;
+
+  // 分组（输入已排序手牌；主牌组在最前）
+  const groups = useMemo(
+    () => handGroups(hand, game.round?.trumpSuit ?? null, game.round?.rankCard),
+    [hand, game.round?.trumpSuit, game.round?.rankCard]
+  );
+
+  // 动态间距布局（33 张换底峰值必须完整放下，绝不允许溢出/横向滚动）：
+  //   间距 = (可用宽度 − 每组末张完整宽度 − 组间隔总和) ÷ (张数 − 组数)
+  // 组间隔 = 间距 + 小增量（普通 +8 上限 20；主副分界 +16 上限 32）——
+  //   分组主要靠颜色交替与张数角标，间隔只给“比组内略大”的提示。
+  // 间距低于下限（18px，容得下“10”+花色符号）时整体缩小牌面档位，仍不够则压到极限。
+  const rowRef = useRef(null);
+  const [avail, setAvail] = useState(0);
+  // hasRow 依赖：手牌行是在揭牌后才挂载的，挂载时立即测量并开始观察（窗口变化实时重算）
+  const hasRow = hand.length > 0;
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const update = () => setAvail(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener('resize', update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, [hasRow]);
+
+  // 间距按阶段峰值锁定（换底 33、其余 25），阶段内固定不变、出牌不重算——
+  // 手牌越打越少时行宽随张数线性缩短（右端锚定），不会每轮跳一次位置。
+  // 只有窗口尺寸变化（ResizeObserver）或阶段切换（峰值变化）才重算。
+  const peak = game.phase === 'KITTY_EXCHANGE' ? 33 : 25;
+  const layout = useMemo(() => {
+    if (hand.length === 0) return null;
+    // 组数按峰值 4 组估算（主牌组 + 3 门副牌组；主副分界 1 条、其余组间 2 条），
+    // 与当前实际组数无关 —— 保证某个花色打完后间距仍不变。
+    const G = 4;
+    const g3 = 1; // 主副分界
+    const g2 = 2; // 其余组间
+    const denom = peak - G; // 间距系数
+    const MIN_SPACING = 18; // 刚好容得下“10”+花色符号
+    for (const tier of HAND_TIERS) {
+      // 组间隔 = 组内间距 + 小增量，带绝对上限：
+      //   普通组间 +8px 上限 20px；主副分界 +16px 上限 32px。
+      // 固定点迭代（组间隔依赖间距，间距又依赖组间隔，3 次即收敛）。
+      let s = MIN_SPACING;
+      for (let i = 0; i < 4; i++) {
+        const gapN = Math.min(s + 8, 20);
+        const gapT = Math.min(s + 16, 32);
+        s = (avail - G * tier.w - gapN * g2 - gapT * g3) / denom;
+      }
+      if (s >= MIN_SPACING - 1e-6) {
+        return {
+          size: tier.name,
+          w: tier.w,
+          s,
+          gap2: Math.min(s + 8, 20),
+          gap3: Math.min(s + 16, 32),
+        };
+      }
+    }
+    // 所有档位都低于下限：用最小牌面 + 极限压缩（间距可低于下限，但绝不溢出）
+    const tier = HAND_TIERS[HAND_TIERS.length - 1];
+    const s = Math.max(4, (avail - G * tier.w - 8 * g2 - 16 * g3) / denom);
+    return {
+      size: tier.name,
+      w: tier.w,
+      s,
+      gap2: Math.min(s + 8, 20),
+      gap3: Math.min(s + 16, 32),
+    };
+  }, [peak, avail, hand.length]);
+
+  // 拖动多选（add-only）：按下记录起点，位移超过阈值进入拖动模式（起点牌也加选），
+  // 滑过的牌全部加选；未超过阈值松手 = 单击切换。状态全走 ref，窗口监听器不闭包过期。
+  const dragRef = useRef(null); // { pointerId, x0, y0, moved, originId }
+  const liveRef = useRef({ interactive, onToggle, onDragAdd });
+  liveRef.current = { interactive, onToggle, onDragAdd };
+
+  useEffect(() => {
+    const DRAG_THRESHOLD = 5;
+    const move = e => {
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < DRAG_THRESHOLD) return;
+      if (!d.moved) {
+        d.moved = true;
+        if (liveRef.current.interactive) liveRef.current.onDragAdd?.(d.originId);
+      }
+      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('[data-card-id]');
+      if (el && liveRef.current.interactive) liveRef.current.onDragAdd?.(el.dataset.cardId);
+    };
+    const up = e => {
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      dragRef.current = null;
+      if (!d.moved && liveRef.current.interactive) liveRef.current.onToggle?.(d.originId);
+    };
+    // 手势被系统取消（如手掌误触）：不算单击，也不做任何选中
+    const cancel = e => {
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      dragRef.current = null;
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+    };
+  }, []);
+
+  const startDrag = (e, id) => {
+    if (!interactive) return;
+    if (dragRef.current) return; // 已有拖动进行中（多指触控只认第一根）
+    e.preventDefault();
+    dragRef.current = {
+      pointerId: e.pointerId,
+      x0: e.clientX,
+      y0: e.clientY,
+      moved: false,
+      originId: id,
+    };
+  };
+
+  // 揭牌阶段：可亮级牌角标（1..N，与数字快捷键对应）
+  let rankIndex = 0;
+  const rankBadges = new Map();
+  if (revealing && game.round) {
+    for (const c of hand) {
+      if (c.rank === game.round.rankCard) {
+        rankIndex += 1;
+        rankBadges.set(c.id, rankIndex);
+      }
+    }
+  }
+
+  // groupIndex 为组内序号（组间间隔不参与重叠），组首张不向左重叠
+  const renderCard = (c, groupIndex, group, isLastInGroup) => {
+    const badge = rankBadges.get(c.id);
+    const isSelected = selected.includes(c.id);
+    const lifted = badge !== undefined || isSelected;
+    const countBadge = isLastInGroup ? groupBadgeCount(group) : null;
+    // 重叠量 = 牌宽 − 露出间距（动态计算，不写死）
+    const overlap = layout ? layout.w - layout.s : 34;
+    return (
+      <div
+        key={c.id}
+        data-card-id={c.id}
+        data-suit={c.suit}
+        data-rank={c.rank}
+        className={`relative shrink-0 transition-transform duration-150 ${
+          lifted ? 'z-10 -translate-y-3' : ''
+        } ${interactive ? 'touch-none' : ''}`}
+        style={groupIndex > 0 ? { marginLeft: -overlap } : undefined}
+      >
+        {badge !== undefined && (
+          // 角标可直接点按亮主（手机上无键盘，对应数字快捷键）
+          <button
+            className="absolute -top-2 left-1/2 z-20 grid h-6 w-6 -translate-x-1/2 place-items-center rounded-full bg-amber-400 text-sm font-black text-amber-950 shadow-md transition hover:scale-110"
+            title={`亮主（快捷键 ${badge}）`}
+            onPointerDown={e => e.stopPropagation()}
+            onClick={e => {
+              e.stopPropagation();
+              onDeclareRank?.(c.id);
+            }}
+          >
+            {badge}
+          </button>
+        )}
+        {countBadge !== null && (
+          <span className="absolute -top-2 right-0 z-20 rounded-full bg-black/70 px-1.5 py-0.5 text-[11px] font-black leading-none text-white/85 ring-1 ring-white/25">
+            {countBadge}
+          </span>
+        )}
+        <PlayingCard
+          suit={c.suit}
+          rank={c.rank}
+          selected={isSelected}
+          size={layout?.size ?? 'lg'}
+          onPointerDown={e => startDrag(e, c.id)}
+          className={`${interactive ? 'cursor-pointer hover:-translate-y-1' : ''}`}
+        />
+      </div>
+    );
+  };
+
+  // 按组切片渲染 + 组间间隔（宽度 = 间距倍数：主副分界 3 倍、其余组间 2 倍）
+  const rows = [];
+  let pos = 0;
+  for (let g = 0; g < groups.length; g++) {
+    const group = groups[g];
+    const cards = hand.slice(pos, pos + group.count);
+    if (g > 0) {
+      const isTrumpGap = groups[g - 1].suit === 'TRUMP' && group.suit !== 'TRUMP';
+      rows.push(
+        <div
+          key={`gap-${g}`}
+          className="h-12 shrink-0"
+          style={{ width: layout ? (isTrumpGap ? layout.gap3 : layout.gap2) : 24 }}
+          title={isTrumpGap ? '主牌组与副牌组分界' : '花色组间隔'}
+        />
+      );
+    }
+    for (let i = 0; i < cards.length; i++) {
+      rows.push(renderCard(cards[i], i, group, i === cards.length - 1));
+    }
+    pos += group.count;
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/15 p-2">
+      <div className="mb-1 flex items-center justify-between text-xs font-bold text-white/50">
+        <span>
+          {exchangeSelectable
+            ? `我的手牌 + 底牌（点选 8 张埋回，已选 ${selected.length}/8）`
+            : crossSelectable
+              ? cross.mustRespond
+                ? `回给对家：点选 3 张副牌（已选 ${selected.length}/3）`
+                : `过河送出：全部主牌 + 副牌补足 3 张（已选 ${selected.length}/3）`
+              : '我的手牌'}
+        </span>
+        <span>{hand.length} 张</span>
+      </div>
+      {hand.length === 0 ? (
+        <div className="flex min-h-24 items-center justify-center gap-2">
+          <PlayingCard suit={null} rank={null} faceUp={false} className="opacity-40" />
+          <span className="text-xs font-bold text-white/40">揭牌后手牌显示在这里</span>
+        </div>
+      ) : (
+        /* 动态间距布局：全部牌完整放下、最右一张完整露出、无横向滚动。
+           顶部预留抬起 + 角标空间（pt-5），不设 overflow hidden，避免抬起的牌被裁掉 */
+        <div ref={rowRef} className="flex items-end justify-end pb-2 pt-5">{rows}</div>
+      )}
+    </div>
+  );
+}
+
+// 多花色级牌时选择亮哪一张
+function DeclareModal({ options, onPick, onClose }) {
+  const bySuit = {};
+  for (const c of options) {
+    (bySuit[c.suit] ??= []).push(c);
+  }
+  return (
+    <Modal title="选择亮主花色" onClose={onClose}>
+      <div className="grid grid-cols-2 gap-2">
+        {Object.entries(bySuit).map(([suit, cards]) => (
+          <button
+            key={suit}
+            className="rounded-xl border border-white/15 bg-white/5 p-3 font-black transition hover:bg-white/15"
+            onClick={() => onPick(cards[0].id)}
+          >
+            <span className={suitRed(suit) ? 'text-rose-400' : 'text-white/90'}>
+              {suitSymbol(suit)}
+            </span>
+            <span className="ml-1 text-white/80">{SUIT_INFO[suit].name}</span>
+            <span className="ml-1 text-xs text-white/50">{cards.length} 张</span>
+          </button>
+        ))}
+      </div>
+      <p className="mt-3 text-xs font-bold text-white/50">
+        亮主一次性，先按先得；选择后立即定主并停止揭牌。也可直接按数字键 1~N。
+      </p>
+    </Modal>
+  );
+}

@@ -1,0 +1,229 @@
+@import "tailwindcss";
+
+@theme {
+  --color-felt-900: #171130;
+  --color-felt-800: #241b45;
+  --color-felt-700: #2e2458;
+  --color-felt-600: #3a2d66;
+  --color-ivory: #f7f1e3;
+  --color-gold-300: #fcd34d;
+  --color-gold-400: #fbbf24;
+  --color-gold-500: #f59e0b;
+  --color-gold-600: #d97706;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC",
+    system-ui, -apple-system, sans-serif;
+  color: #fff;
+  /* 深紫渐变背景，中央略亮形成聚光 */
+  background:
+    radial-gradient(1100px 640px at 50% 34%, rgba(96, 74, 168, 0.5) 0%, rgba(46, 36, 88, 0) 70%),
+    radial-gradient(120% 120% at 50% 0%, #2e2458 0%, #241b45 45%, #171130 100%);
+  background-attachment: fixed;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-2xl border border-white/10 bg-white/5 shadow-lg backdrop-blur-sm;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold;
+  }
+  .btn-gold {
+    @apply rounded-full bg-gradient-to-b from-gold-300 to-gold-600 px-6 py-2.5 text-base font-black text-amber-950 shadow-md transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40;
+  }
+  .btn-gold-sm {
+    @apply rounded-full bg-gradient-to-b from-gold-300 to-gold-600 px-3 py-1 text-xs font-black text-amber-950 shadow-md transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40;
+  }
+  .btn-icon {
+    @apply grid h-9 w-9 place-items-center rounded-full bg-white/10 text-base transition hover:bg-white/20;
+  }
+  /* 移动端浮层开关：56px 拇指可点 */
+  .btn-float {
+    @apply grid h-14 w-14 place-items-center rounded-full bg-gradient-to-b from-gold-300 to-gold-600 text-2xl font-black text-amber-950 shadow-lg transition active:scale-95;
+  }
+  /* 牌面：米白/象牙色，圆角 */
+  .card-face {
+    background: linear-gradient(160deg, #fdf8ec 0%, #f2ead6 100%);
+  }
+  /* 牌背：紫色 + 淡色水印 + 描金边框 */
+  .card-back {
+    background:
+      radial-gradient(circle at 50% 50%, rgba(212, 175, 55, 0.18) 0%, rgba(212, 175, 55, 0) 70%),
+      linear-gradient(135deg, #4c3a8f 0%, #2e2458 100%);
+    border: 1.5px solid #d4af37;
+    box-shadow: inset 0 0 0 1px rgba(212, 175, 55, 0.35);
+  }
+  /* 牌桌聚光 */
+  .table-spot {
+    background: radial-gradient(
+      900px 500px at 50% 42%,
+      rgba(122, 96, 210, 0.35) 0%,
+      rgba(46, 36, 88, 0.25) 55%,
+      rgba(23, 17, 48, 0.4) 100%
+    );
+  }
+}
+
+/* 翻牌入场动画（<300ms，不影响节奏） */
+.card-pop {
+  animation: card-pop-in 250ms ease both;
+}
+@keyframes card-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 当前揭牌人发光提示 */
+.drawer-glow {
+  animation: drawer-glow-pulse 1.2s ease-in-out infinite;
+}
+@keyframes drawer-glow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 6px rgba(251, 191, 36, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(251, 191, 36, 0.7);
+  }
+}
+
+/* 一轮赢家出牌区高亮（停留展示期间，服务端计时 1.5s） */
+.winner-glow {
+  animation: winner-glow-pulse 0.75s ease-in-out infinite;
+}
+
+/* 服务端错误提示：明显晃动，绝不静默 */
+.error-toast {
+  animation: error-shake 0.3s ease 2;
+}
+@keyframes error-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+@keyframes winner-glow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 10px rgba(251, 191, 36, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(251, 191, 36, 0.9);
+  }
+}
+
+/* 牌桌聊天气泡（整体放大一号）：250ms 弹入，2.6s 后淡出（组件 3s 时卸载） */
+.chat-bubble {
+  background: rgba(255, 255, 255, 0.92);
+  color: #1e1b2e;
+  border-radius: 1rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 15px;
+  font-weight: 800;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  animation: bubble-in 0.25s ease both, bubble-out 0.4s ease 2.6s forwards;
+}
+.chat-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid rgba(255, 255, 255, 0.92);
+}
+
+/* 「吊主」气泡：金色高亮（同弹入/淡出动画，与聊天气泡错位显示互不遮挡） */
+.tiaozhu-bubble {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #451a03;
+  border-radius: 1rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 15px;
+  font-weight: 900;
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(251, 191, 36, 0.65);
+  animation: bubble-in 0.25s ease both, bubble-out 0.4s ease 2.6s forwards;
+}
+.tiaozhu-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid #f59e0b;
+}
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px) scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+@keyframes bubble-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* 「妮！」彩蛋气泡：粉色高亮（打出 Q 时 40% 触发，服务端掷骰四家一致） */
+.nii-bubble {
+  background: linear-gradient(135deg, #f9a8d4, #ec4899);
+  color: #500724;
+  border-radius: 1rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 15px;
+  font-weight: 900;
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(236, 72, 153, 0.65);
+  animation: bubble-in 0.25s ease both, nii-wiggle 0.5s ease 0.15s 3, bubble-out 0.4s ease 2.6s forwards;
+}
+.nii-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid #ec4899;
+}
+@keyframes nii-wiggle {
+  0%,
+  100% {
+    transform: translate(-50%, 0) rotate(0deg);
+  }
+  25% {
+    transform: translate(-50%, 0) rotate(-8deg);
+  }
+  75% {
+    transform: translate(-50%, 0) rotate(8deg);
+  }
+}
