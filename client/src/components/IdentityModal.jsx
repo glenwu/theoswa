@@ -11,6 +11,7 @@ const IDENTITIES = [
 // 身份选择模态框：已被占用的身份置灰不可选
 export default function IdentityModal({ notice, onPick }) {
   const [occupied, setOccupied] = useState([]);
+  const [bots, setBots] = useState([]);
 
   useEffect(() => {
     let timer;
@@ -19,6 +20,7 @@ export default function IdentityModal({ notice, onPick }) {
         const res = await fetch('/api/occupancy');
         const data = await res.json();
         setOccupied(data.occupied ?? []);
+        setBots(data.bots ?? []);
       } catch {
         /* 网络未就绪时忽略 */
       }
@@ -41,6 +43,7 @@ export default function IdentityModal({ notice, onPick }) {
         <div className="mt-5 grid grid-cols-2 gap-3">
           {IDENTITIES.map(({ id, nickname }) => {
             const busy = occupied.includes(id);
+            const isBot = bots.includes(id);
             return (
               <button
                 key={id}
@@ -50,7 +53,9 @@ export default function IdentityModal({ notice, onPick }) {
               >
                 <span className="text-3xl">{PLAYER_EMOJI[id]}</span>
                 <span>{nickname}</span>
-                <span className="text-xs text-white/50">{busy ? '已在房间' : `身份 ${id}`}</span>
+                <span className="text-xs text-white/50">
+                  {isBot ? '电脑控制' : busy ? '已在房间' : `身份 ${id}`}
+                </span>
               </button>
             );
           })}

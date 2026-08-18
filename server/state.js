@@ -15,6 +15,59 @@ import {
   AUTO_LAST_MS,
 } from './constants.js';
 
+function finiteNumber(value, fallback, min = -Infinity, max = Infinity) {
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+function normalizedPlayerLearning(profile = {}) {
+  return {
+    reviewedPlays: Math.floor(finiteNumber(profile.reviewedPlays, 0, 0)),
+    pieceCaution: finiteNumber(profile.pieceCaution, 1, 1, 3),
+    pointCaution: finiteNumber(profile.pointCaution, 1, 1, 3),
+    overplayCaution: finiteNumber(profile.overplayCaution, 1, 1, 3),
+    coverCaution: finiteNumber(profile.coverCaution, 1, 1, 3),
+    controlCaution: finiteNumber(profile.controlCaution, 1, 1, 3),
+  };
+}
+
+// 电脑学习档案的持久化迁移。旧版是 { playerId: profile }，新版拆成
+// shared（所有电脑共享的经验）和 players（个人微调），恢复旧存档时自动兼容。
+export function normalizeBotLearning(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const sharedSource = source.shared && typeof source.shared === 'object' ? source.shared : {};
+  const legacyPlayers = Object.fromEntries(
+    Object.entries(source).filter(([key, profile]) =>
+      key !== 'shared' && key !== 'players' && profile && typeof profile === 'object'
+    )
+  );
+  const explicitPlayers = source.players && typeof source.players === 'object'
+    ? source.players
+    : {};
+  const players = {};
+  for (const [playerId, profile] of Object.entries({ ...legacyPlayers, ...explicitPlayers })) {
+    players[playerId] = normalizedPlayerLearning(profile);
+  }
+
+  return {
+    shared: {
+      roundsReviewed: Math.floor(finiteNumber(sharedSource.roundsReviewed, 0, 0)),
+      playsReviewed: Math.floor(finiteNumber(sharedSource.playsReviewed, 0, 0)),
+      pieceCaution: finiteNumber(sharedSource.pieceCaution, 1, 1, 3),
+      pointCaution: finiteNumber(sharedSource.pointCaution, 1, 1, 3),
+      overplayCaution: finiteNumber(sharedSource.overplayCaution, 1, 1, 3),
+      coverCaution: finiteNumber(sharedSource.coverCaution, 1, 1, 3),
+      controlCaution: finiteNumber(sharedSource.controlCaution, 1, 1, 3),
+      dealerBottomWeight: finiteNumber(sharedSource.dealerBottomWeight, 1, 1, 2.5),
+      defenderBottomWeight: finiteNumber(sharedSource.defenderBottomWeight, 1, 1, 2.5),
+      dealerRounds: Math.floor(finiteNumber(sharedSource.dealerRounds, 0, 0)),
+      dealerBottomSaved: Math.floor(finiteNumber(sharedSource.dealerBottomSaved, 0, 0)),
+      defenderRounds: Math.floor(finiteNumber(sharedSource.defenderRounds, 0, 0)),
+      defenderBottomGrabbed: Math.floor(finiteNumber(sharedSource.defenderBottomGrabbed, 0, 0)),
+    },
+    players,
+  };
+}
+
 // 洗牌（可注入 rng 便于测试）
 export function shuffleArray(arr, rng = Math.random) {
   const a = arr.slice();
@@ -43,6 +96,7 @@ export function createInitialState(rng = Math.random) {
       ready: false,
       seatLocked: false,
       connected: false,
+      isBot: false,
       hand: [], // 服务端全量持有；广播时按玩家裁剪
     })),
     declarerSeat: null, // Seat | null；只有亮牌成功或轮转产生新庄家时才被赋值
@@ -58,6 +112,8 @@ export function createInitialState(rng = Math.random) {
     log: [],            // 系统播报（全员公开）
     chat: [],           // 玩家聊天
     gameWinnerTeam: null,
+    // 电脑局末复盘累积的共享/个人参数；只来自历史已完成决策，不包含任何隐藏手牌。
+    botLearning: normalizeBotLearning(),
     // 请求清档标记（新开一局执行后由网络层消费）
     saveClearRequested: false,
     // 洗牌随机源（测试注入种子；不对外广播）
@@ -179,11 +235,16 @@ export function normalizeState(state) {
     log: [],
     chat: [],
     saveClearRequested: false,
+    botLearning: {},
     niiRandom: Math.random, // 彩蛋随机源不持久化，恢复时用独立随机源
   };
   for (const [key, value] of Object.entries(defaults)) {
     if (state[key] === undefined) state[key] = value;
   }
+  for (const player of state.players) {
+    player.isBot = player.isBot === true;
+  }
+  state.botLearning = normalizeBotLearning(state.botLearning);
   return state;
 }
 

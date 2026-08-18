@@ -69,7 +69,15 @@ export default function App() {
 
     const conn = createConnection(identity, {
       onState: setGame,
-      onError: (e) => setError(e),
+      onError: (e) => {
+        if (e.code === 'BOT_UNAVAILABLE') {
+          setNotice(e.reason);
+          setGame(null);
+          setIdentity(null);
+          return;
+        }
+        setError(e);
+      },
       onKicked: (reason) => {
         setNotice(reason);
         setGame(null);

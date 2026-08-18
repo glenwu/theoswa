@@ -13,7 +13,9 @@
     "client": "npm run dev -w client",
     "build": "npm run build -w client",
     "start:prod": "npm run build && node server/index.js",
-    "test": "node --test \"server/test/*.test.js\""
+    "test": "node --test \"server/test/*.test.js\"",
+    "simulate:bots": "node server/simulate-bots.js",
+    "train:bots": "node server/train-bots.js"
   },
   "engines": {
     "node": ">=18"

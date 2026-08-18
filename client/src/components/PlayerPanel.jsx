@@ -21,6 +21,11 @@ export default function PlayerPanel({ game, send }) {
       <div className="border-b border-white/10 p-3 text-center">
         <div className="text-lg font-black text-amber-300">潮汕升级</div>
         <div className="text-xs font-bold text-white/50">两副牌 · 四人两队</div>
+        {(game.phase === 'SEATING' || game.phase === 'READY_CHECK') && (
+          <div className="mt-1 text-[11px] font-bold text-cyan-200/70">
+            点击掉线位置添加电脑；点击电脑可移除
+          </div>
+        )}
       </div>
 
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
@@ -155,6 +160,45 @@ function HistoryModal({ game, onClose }) {
                   {' · 下一局 '}{next?.nickname} 做庄 · 打 {levelLabel(game.teamLevels[s.nextDeclarerSeat % 2])}
                   {s.conservationOk ? '' : ' ⚠️守恒异常'}
                 </div>
+                {s.botReview && (
+                  <details className="mt-2 rounded-lg bg-cyan-400/10 px-2 py-1.5 text-cyan-100/80">
+                    <summary className="cursor-pointer font-black text-cyan-200">
+                      🤖 AI 复盘：检查 {s.botReview.reviewedPlays} 手
+                      {s.botReview.issueCount > 0
+                        ? ` · 发现 ${s.botReview.issueCount} 个可改进选择`
+                        : ' · 未发现明显劣选'}
+                    </summary>
+                    {s.botReview.learning && (
+                      <div className="mt-1 text-cyan-100/70">
+                        共享学习累计 {s.botReview.learning.roundsReviewed} 局、
+                        {s.botReview.learning.playsReviewed} 手
+                        {s.botReview.learning.dealerBottomRate !== null
+                          ? ` · 庄家保底 ${Math.round(s.botReview.learning.dealerBottomRate * 100)}%`
+                          : ''}
+                        {s.botReview.learning.defenderBottomRate !== null
+                          ? ` · 闲家扣底 ${Math.round(s.botReview.learning.defenderBottomRate * 100)}%`
+                          : ''}
+                      </div>
+                    )}
+                    {s.botReview.issueCount > 0 && (
+                      <>
+                        <div className="mt-1 text-cyan-100/60">
+                          送件 {s.botReview.counts?.pieceHelp ?? 0} ·
+                          冒险送分 {s.botReview.counts?.unsafePoint ?? 0} ·
+                          三手漏分 {s.botReview.counts?.lastSeatPoint ?? 0} ·
+                          首轮失去主动 {s.botReview.counts?.openingControl ?? 0} ·
+                          浪费保底牌 {s.botReview.counts?.controlWaste ?? 0} ·
+                          用牌过大 {s.botReview.counts?.overplay ?? 0}
+                        </div>
+                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                          {(s.botReview.examples ?? []).map((example, index) => (
+                            <li key={index}>{example}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </details>
+                )}
               </div>
             );
           })}
@@ -255,8 +299,13 @@ function PlayerCard({ player, isYou, game, send }) {
   const outgoing = game.swapProposals.find(
     sp => sp.fromSeat === game.you.seat && sp.toSeat === player.seat
   );
-  const canInteract =
+  const canManageBot =
+    (game.phase === 'SEATING' || game.phase === 'READY_CHECK') &&
+    !isYou &&
+    (player.isBot || !player.connected);
+  const canSwap =
     game.phase === 'SEATING' && !isYou && !player.seatLocked && !game.you.seatLocked;
+  const canInteract = canManageBot || canSwap;
 
   // 揭牌倒计时：当前揭牌人的卡片上实时显示（3 秒超时由服务端自动摸）
   const revealing =
@@ -287,12 +336,17 @@ function PlayerCard({ player, isYou, game, send }) {
 
   function onClick() {
     if (!canInteract) return;
+    if (canManageBot) {
+      send({ type: player.isBot ? 'removeBot' : 'addBot', playerId: player.id });
+      return;
+    }
     if (incoming) send({ type: 'acceptSwap', fromSeat: player.seat });
     else send({ type: 'proposeSwap', targetSeat: player.seat });
   }
 
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`w-full rounded-2xl border-2 p-2.5 text-left transition ${colors.border} ${
         isYou
@@ -314,6 +368,9 @@ function PlayerCard({ player, isYou, game, send }) {
             </span>
             {player.isDeclarer && <span title="庄家">👑</span>}
             {player.isFlipper && <span title="翻牌人">🃏</span>}
+            {player.isBot && (
+              <span className="pill bg-cyan-400/20 text-cyan-200">🤖 电脑</span>
+            )}
             {isYou && <span className="text-sm text-amber-300">（我）</span>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -322,7 +379,7 @@ function PlayerCard({ player, isYou, game, send }) {
             </span>
             {/* 准备/确认状态只在对应阶段显示；换底/过河换成阶段相关状态，避免误以为卡住 */}
             {statusPill(game, player)}
-            {!player.connected && (
+            {!player.connected && !player.isBot && (
               <span className="pill bg-rose-500/25 text-rose-200">掉线</span>
             )}
             <span className="pill bg-white/10 text-white/70">牌 {player.handCount}</span>
@@ -353,6 +410,11 @@ function PlayerCard({ player, isYou, game, send }) {
       {outgoing && (
         <div className="mt-1.5 rounded-full bg-amber-400/15 px-2 py-0.5 text-center text-xs font-black text-amber-300">
           已发送换座请求，等待 {player.nickname} 确认……
+        </div>
+      )}
+      {canManageBot && (
+        <div className="mt-1.5 rounded-full bg-cyan-400/15 px-2 py-0.5 text-center text-xs font-black text-cyan-200">
+          {player.isBot ? '点击移除电脑玩家' : '点击让电脑加入这个位置'}
         </div>
       )}
     </button>

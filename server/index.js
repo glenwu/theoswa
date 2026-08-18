@@ -4,8 +4,9 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { GameEngine } from './game-engine.js';
+import { BotController } from './bot-controller.js';
 import { viewerState } from './viewer.js';
-import { PLAYER_IDS, SUIT_NAMES, KITTY_SIZE, HAND_SIZE, ADMIN_RESET_TOKEN } from './constants.js';
+import { PLAYER_IDS, SUIT_NAMES, KITTY_SIZE, HAND_SIZE } from './constants.js';
 import { createInitialState, createRoundState, playerBySeat, pushLog } from './state.js';
 import { sortHand, SUITS } from './cards.js';
 import { rebuildPieces } from './pieces.js';
@@ -14,6 +15,9 @@ import { loadSavedGame, saveGame, clearSave, SAVE_FILE } from './persist.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8787);
+// 服务端专用口令，不能放进前后端共享的 constants.js：浏览器没有 process.env，
+// 而且管理员口令不应被打包进客户端代码。
+const ADMIN_RESET_TOKEN = process.env.ADMIN_RESET_TOKEN ?? 'Y';
 
 // 持久化恢复：启动时若有 12 小时内的存档，自动恢复（进程重启不丢战果）
 function reviveState(saved) {
@@ -21,7 +25,7 @@ function reviveState(saved) {
   state.rng = mulberry32(state.rngState ?? state.seed ?? 1);
   state.timing = { ...createInitialState().timing, ...(state.timing ?? {}) };
   for (const p of state.players) {
-    p.connected = false; // 重启后所有人都需要重新连接
+    p.connected = p.isBot === true; // 真人需重连；服务端电脑恢复后继续在线
     p.ready = false;
   }
   return state;
@@ -66,6 +70,15 @@ const engine = new GameEngine({
   broadcast: () => broadcast(),
 });
 const state = engine.state;
+const botController = new BotController({
+  engine,
+  difficulty: process.env.BOT_DIFFICULTY ?? 'expert',
+  // 未配置时按动作类型使用带轻微随机的思考时间；配置后固定为该毫秒数。
+  delayMs: process.env.BOT_DELAY_MS === undefined
+    ? null
+    : Number(process.env.BOT_DELAY_MS),
+});
+engine.attachBotController(botController);
 
 if (!restored) {
   console.log(`[潮汕升级] 本局种子 SEED=${seed}（用 SEED=${seed} 可复现整局）`);
@@ -83,7 +96,8 @@ app.get('/api/health', (req, res) => res.json({ ok: true, phase: state.phase, se
 app.get('/api/occupancy', (req, res) => {
   res.json({
     phase: state.phase,
-    occupied: state.players.filter(p => p.connected).map(p => p.id),
+    occupied: state.players.filter(p => p.connected || p.isBot).map(p => p.id),
+    bots: state.players.filter(p => p.isBot).map(p => p.id),
   });
 });
 
@@ -203,6 +217,10 @@ wss.on('connection', (ws) => {
     if (msg.type === 'join') {
       const id = msg.playerId;
       if (!PLAYER_IDS.includes(id)) return sendError(ws, 'UNKNOWN_PLAYER', '未知身份');
+      const joiningPlayer = state.players.find(p => p.id === id);
+      if (joiningPlayer?.isBot) {
+        return sendError(ws, 'BOT_UNAVAILABLE', '该身份当前由电脑控制，请先在大厅移除电脑');
+      }
       const old = connections.get(id);
       if (old && old !== ws) {
         // 同身份新连接顶替旧连接（断线重连天然可用）
@@ -217,7 +235,12 @@ wss.on('connection', (ws) => {
       } else if (state.adminIds.includes(id)) {
         state.adminIds = state.adminIds.filter(x => x !== id); // 不带口令重连 → 撤销
       }
-      engine.applyAction({ type: 'join' }, id);
+      const result = engine.applyAction({ type: 'join' }, id);
+      if (!result.ok) {
+        connections.delete(id);
+        playerId = null;
+        return sendError(ws, result.error.code, result.error.reason);
+      }
       return;
     }
 

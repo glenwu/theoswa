@@ -102,6 +102,7 @@ export function viewerState(state, viewerId) {
       seat: p.seat,
       team: p.team,
       connected: p.connected,
+      isBot: p.isBot === true,
       ready: p.ready,
       seatLocked: p.seatLocked,
       handCount: Array.isArray(p.hand) ? p.hand.length : 0, // 只给张数，不给牌
@@ -134,6 +135,7 @@ export function viewerState(state, viewerId) {
       seat: you.seat,
       team: you.team,
       connected: you.connected,
+      isBot: you.isBot === true,
       ready: you.ready,
       seatLocked: you.seatLocked,
       isAdmin: Array.isArray(state.adminIds) && state.adminIds.includes(you.id),

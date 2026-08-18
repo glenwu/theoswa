@@ -42,6 +42,7 @@ export const ErrorCode = {
   PROPOSAL_ACTIVE: 'PROPOSAL_ACTIVE',
   ALREADY_VOTED: 'ALREADY_VOTED',
   FORBIDDEN: 'FORBIDDEN',
+  BOT_UNAVAILABLE: 'BOT_UNAVAILABLE',
   // 阶段7（三主过河）
   CROSS_RIVER_NOT_ELIGIBLE: 'CROSS_RIVER_NOT_ELIGIBLE',
   CROSS_RIVER_TEAM_ACTIVE: 'CROSS_RIVER_TEAM_ACTIVE',
@@ -83,10 +84,56 @@ function clearProposalsFor(state, seat) {
 export function handleJoin(state, action, actorId) {
   if (!PLAYERS.some(p => p.id === actorId)) return fail(ErrorCode.UNKNOWN_PLAYER, '未知身份');
   const me = playerById(state, actorId);
+  if (me.isBot) return fail(ErrorCode.BOT_UNAVAILABLE, '该身份当前由电脑控制，请先在大厅移除电脑');
   if (!me.connected) {
     me.connected = true;
     pushLog(state, `${me.nickname} 进入房间`);
   }
+  return succeed();
+}
+
+// ---- 电脑玩家（仅开局前可增删）----
+
+function botLobbyAllowed(state) {
+  return state.phase === 'SEATING' || state.phase === 'READY_CHECK';
+}
+
+function humanManager(state, actorId) {
+  const actor = playerById(state, actorId);
+  return actor && actor.connected && !actor.isBot ? actor : null;
+}
+
+export function handleAddBot(state, action, actorId) {
+  if (!botLobbyAllowed(state)) return fail(ErrorCode.WRONG_PHASE, '只能在开局前添加电脑');
+  const actor = humanManager(state, actorId);
+  if (!actor) return fail(ErrorCode.FORBIDDEN, '只有房间中的真人玩家可以添加电脑');
+  const target = playerById(state, action.playerId);
+  if (!target) return fail(ErrorCode.UNKNOWN_PLAYER, '未知身份');
+  if (target.connected || target.isBot) {
+    return fail(ErrorCode.BOT_UNAVAILABLE, '该位置已经有人或电脑');
+  }
+  target.isBot = true;
+  target.connected = true;
+  target.ready = false;
+  if (state.phase === 'READY_CHECK') target.seatLocked = true;
+  clearProposalsFor(state, target.seat);
+  pushLog(state, `${actor.nickname} 将 ${target.nickname} 设为电脑玩家`);
+  return succeed();
+}
+
+export function handleRemoveBot(state, action, actorId) {
+  if (!botLobbyAllowed(state)) return fail(ErrorCode.WRONG_PHASE, '只能在开局前移除电脑');
+  const actor = humanManager(state, actorId);
+  if (!actor) return fail(ErrorCode.FORBIDDEN, '只有房间中的真人玩家可以移除电脑');
+  const target = playerById(state, action.playerId);
+  if (!target) return fail(ErrorCode.UNKNOWN_PLAYER, '未知身份');
+  if (!target.isBot) return fail(ErrorCode.BOT_UNAVAILABLE, '该位置不是电脑玩家');
+  target.isBot = false;
+  target.connected = false;
+  target.ready = false;
+  if (state.phase === 'SEATING') target.seatLocked = false;
+  clearProposalsFor(state, target.seat);
+  pushLog(state, `${actor.nickname} 移除了电脑玩家 ${target.nickname}`);
   return succeed();
 }
 
@@ -648,6 +695,8 @@ function checkTransitions(state) {
 const HANDLERS = {
   join: handleJoin,
   leave: handleLeave,
+  addBot: handleAddBot,
+  removeBot: handleRemoveBot,
   proposeSwap: handleProposeSwap,
   acceptSwap: handleAcceptSwap,
   declineSwap: handleDeclineSwap,
