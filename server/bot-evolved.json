@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "cross-entropy evolutionary self-play",
+  "fairness": {
+    "hiddenCardsUsedByPolicy": false,
+    "pairedTeamSwap": true,
+    "fixedSeeds": true,
+    "holdoutSeedsDisjoint": true
+  },
+  "trainedAt": "2026-08-17T19:24:07.686Z",
+  "durationSeconds": 902.6,
+  "promoted": true,
+  "tuning": {
+    "preserveWeight": 0.73362,
+    "coverRiskWeight": 1.4485,
+    "pointExposureWeight": 0.77674,
+    "pieceProtectionWeight": 0.83321,
+    "takeoverWeight": 0.89717,
+    "emptyTrumpPenaltyWeight": 1.02725,
+    "voidCreationWeight": 1.87624,
+    "bottomControlWeight": 0.89381,
+    "conventionPriorWeight": 1.97493,
+    "leadStrategyPriorWeight": 0.91603,
+    "earlyThrowMinLength": 3,
+    "pieceProbeMinLength": 6,
+    "opponentThreatThreshold": 2
+  },
+  "candidateTuning": {
+    "preserveWeight": 0.73362,
+    "coverRiskWeight": 1.4485,
+    "pointExposureWeight": 0.77674,
+    "pieceProtectionWeight": 0.83321,
+    "takeoverWeight": 0.89717,
+    "emptyTrumpPenaltyWeight": 1.02725,
+    "voidCreationWeight": 1.87624,
+    "bottomControlWeight": 0.89381,
+    "conventionPriorWeight": 1.97493,
+    "leadStrategyPriorWeight": 0.91603,
+    "earlyThrowMinLength": 3,
+    "pieceProbeMinLength": 6,
+    "opponentThreatThreshold": 2
+  },
+  "baselineTuning": {
+    "preserveWeight": 1,
+    "coverRiskWeight": 1,
+    "pointExposureWeight": 1,
+    "pieceProtectionWeight": 1,
+    "takeoverWeight": 1,
+    "emptyTrumpPenaltyWeight": 1,
+    "voidCreationWeight": 1,
+    "bottomControlWeight": 1,
+    "conventionPriorWeight": 1,
+    "leadStrategyPriorWeight": 1,
+    "earlyThrowMinLength": 4,
+    "pieceProbeMinLength": 5,
+    "opponentThreatThreshold": 2
+  },
+  "training": {
+    "generations": 18,
+    "population": 18,
+    "pairedSeeds": 24,
+    "metrics": {
+      "games": 48,
+      "averageUtility": 53.49,
+      "winRate": 0.6667,
+      "dealerBottomRate": 0.8333,
+      "defenderKittyGrabRate": 0.2917,
+      "averageDefenderPoints": 82.5
+    }
+  },
+  "validation": {
+    "pairedSeeds": 100,
+    "minimumUtility": 0.5,
+    "candidate": {
+      "games": 200,
+      "averageUtility": 10.1,
+      "winRate": 0.525,
+      "dealerBottomRate": 0.62,
+      "defenderKittyGrabRate": 0.38,
+      "averageDefenderPoints": 86.2
+    },
+    "baseline": {
+      "games": 200,
+      "averageUtility": 0,
+      "winRate": 0.5,
+      "dealerBottomRate": 0.61,
+      "defenderKittyGrabRate": 0.39,
+      "averageDefenderPoints": 85.2
+    }
+  }
+}

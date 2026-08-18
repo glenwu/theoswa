@@ -51,10 +51,6 @@ export const RESET_PROPOSAL_MS = 60000; // 新开一局提案：60 秒无人响�
 export const CROSS_RIVER_DECIDE_MS = 15000; // 三主过河：发起/跳过的决定窗口（无人发起则窗口结束自动继续）
 export const CROSS_RIVER_PICK_MS = 30000;   // 三主过河：对家回 3 张副牌的超时（超时自动挑最小 3 张副牌）
 export const AUTO_LAST_MS = 600;        // 最后一轮自动打出：每张牌之间的间隔（走完整动画，不闪跳）
-// 管理员强制重置口令：带 ?RESET=<此值> 进入才启用。
-// 公网部署务必改成只有四人知道的串：可用环境变量 ADMIN_RESET_TOKEN 覆盖（systemd 的 Environment= 里配），
-// 或在源码里改这个默认值（默认 'Y' 仅供内网测试——公网 URL 人人可扫）。
-export const ADMIN_RESET_TOKEN = process.env.ADMIN_RESET_TOKEN ?? 'Y';
 
 export const SUIT_NAMES = Object.freeze({
   S: '黑桃',

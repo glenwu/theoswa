@@ -26,6 +26,7 @@ export class GameEngine {
     this.broadcast = broadcast ?? (() => {});
     if (timings) Object.assign(this.state.timing, timings);
     this.timers = new Map();
+    this.botController = null;
     // 构造后立即对齐计时器（覆盖“引擎创建时已处于某阶段”的情形）
     this.scheduleTimers();
   }
@@ -39,7 +40,15 @@ export class GameEngine {
 
   afterAction() {
     this.scheduleTimers();
+    // 局末复盘在广播前写入 RoundSummary，因此四端会同步看到同一份结果。
+    this.botController?.observeState();
     this.broadcast();
+    this.botController?.schedule();
+  }
+
+  attachBotController(controller) {
+    this.botController = controller;
+    controller.schedule();
   }
 
   // 按阶段重排计时器（幂等：先清后建，同名覆盖）
