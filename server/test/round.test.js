@@ -303,3 +303,78 @@ test('piecesView：件状态四家一致（除 mine），且不携带 cardId', (
   const anyView = viewerState(state, 'T');
   assert.equal(anyView.round.piecesView.H, undefined);
 });
+
+// ---- 揭牌阶段手牌实时整理（接线测试）----
+// 纯函数 sortHandForReveal 单独测过；这里测的是「它真的被 drawOneCard 用上了」——
+// 排序函数写好却没接上，是最容易漏掉的一类 bug。
+
+function revealingState(deckTop) {
+  const state = createInitialState(() => 0.5);
+  state.phase = 'REVEALING';
+  state.declarerSeat = null;
+  const r = createRoundState(1, null);
+  r.rankCard = 2;
+  r.revealTurnSeat = 0;
+  // deck 是从尾部 pop 的，所以倒序放入
+  r.deck = [...deckTop].reverse();
+  state.round = r;
+  for (const p of state.players) p.hand = [];
+  return state;
+}
+
+test('揭牌：每摸一张就整理手牌（鬼最左 + 黑梅方红 + 级牌提前）', () => {
+  const drawOrder = [
+    { id: 'h9', suit: 'H', rank: 9 },
+    { id: 'c3', suit: 'C', rank: 3 },
+    { id: 'j16', suit: 'JOKER', rank: 16 },
+    { id: 's2', suit: 'S', rank: 2 },
+    { id: 's14', suit: 'S', rank: 14 },
+  ];
+  const state = revealingState(drawOrder);
+  // 全部摸给座 0（每次都把轮转掰回来，只验排序）
+  for (let i = 0; i < drawOrder.length; i++) {
+    state.round.revealTurnSeat = 0;
+    drawOneCard(state, 0);
+  }
+  assert.deepEqual(
+    playerBySeat(state, 0).hand.map(c => c.id),
+    ['j16', 's2', 's14', 'c3', 'h9'],
+    '摸牌顺序是乱的，手上应已排好'
+  );
+});
+
+test('揭牌：整理不改变张数，也不动别人的手牌', () => {
+  const drawOrder = [
+    { id: 'd5', suit: 'D', rank: 5 },
+    { id: 'h7', suit: 'H', rank: 7 },
+  ];
+  const state = revealingState(drawOrder);
+  drawOneCard(state, 0);
+  drawOneCard(state, state.round.revealTurnSeat);
+  assert.equal(playerBySeat(state, 0).hand.length, 1);
+  assert.equal(state.round.drawnCount, 2);
+  const others = state.players.filter(p => p.seat !== 0 && p.seat !== 3);
+  assert.ok(others.every(p => p.hand.length === 0), '只有摸牌的人手上有牌');
+});
+
+test('发牌收尾（DEALING）不套用揭牌排序，仍按主/副重排', () => {
+  const state = revealingState([]);
+  state.phase = 'DEALING';
+  state.declarerSeat = 0;
+  const r = state.round;
+  r.trumpSuit = 'H';
+  r.kitty = [];
+  r.revealTurnSeat = 0;
+  r.deck = [
+    { id: 'c9', suit: 'C', rank: 9 },
+    { id: 'h5', suit: 'H', rank: 5 },
+    { id: 'j16', suit: 'JOKER', rank: 16 },
+    { id: 's4', suit: 'S', rank: 4 },
+  ];
+  completeDeal(state);
+  const hand = playerBySeat(state, 0).hand;
+  // 主牌（♥ + 鬼）必须排在副牌前面 —— 这是 sortHand 的口径，不是揭牌口径
+  const firstSide = hand.findIndex(c => c.suit !== 'H' && c.suit !== 'JOKER');
+  const lastTrump = hand.map(c => c.suit === 'H' || c.suit === 'JOKER').lastIndexOf(true);
+  assert.ok(lastTrump < firstSide || firstSide === -1, '主牌组整体在副牌之前');
+});

@@ -2,6 +2,7 @@ import {
   buildDeck,
   separateKitty,
   sortHand,
+  sortHandForReveal,
   cardLabel,
 } from './cards.js';
 import {
@@ -39,11 +40,19 @@ export function beginRound(state) {
   return state.round;
 }
 
-// 揭牌一次：给 seat 摸一张（调用方保证合法性），逆时针轮转到下家
+// 揭牌一次：给 seat 摸一张（调用方保证合法性），逆时针轮转到下家。
+// 揭牌阶段每摸一张就重排一次手牌（鬼最左 + 固定花色顺序，级牌提到本组最前），
+// 否则手牌是摸牌顺序 = 随机顺序，看着很乱、也没法快速数某门有几张。
+// 第一局与第二局起走的都是 REVEALING，所以两种情况都会整理。
+// completeDeal 的补发在 DEALING 阶段进行，那时主牌已定，由 sortHand 按主/副重排。
 export function drawOneCard(state, seat) {
   const r = state.round;
   const card = r.deck.pop();
-  playerBySeat(state, seat).hand.push(card);
+  const player = playerBySeat(state, seat);
+  player.hand.push(card);
+  if (state.phase === 'REVEALING') {
+    player.hand = sortHandForReveal(player.hand, r.rankCard);
+  }
   r.drawnCount += 1;
   r.revealTurnSeat = nextSeat(seat);
   return card;

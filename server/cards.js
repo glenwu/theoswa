@@ -96,6 +96,43 @@ export function alternatingSuitOrder(trumpSuit) {
   return red.length > 0 ? [black[0], red[0], black[1]] : black;
 }
 
+// ---- 揭牌阶段（主牌未定）的排序 ----
+// 定主之后用下面的 sortHand（按主/副重排）；揭牌途中主牌还没定，四门都还是副牌，
+// 用固定花色顺序排：黑桃 → 梅花 → 方块 → 红桃，鬼单独一组排最左。
+// 固定顺序而不是 alternatingSuitOrder：揭牌时没有"主牌花色"可以剔除，
+// 而且顺序必须稳定 —— 每摸一张牌都重排一次，顺序一变玩家就找不到牌了。
+export const REVEAL_SUIT_ORDER = Object.freeze(['S', 'C', 'D', 'H']);
+
+// 揭牌阶段的分组归属：只有鬼自成一组，其余牌按本花色分组。
+// ⚠️ 级牌（如打2时的各门 2）仍归它自己的花色，不抽出来单独成组 ——
+// 要不要亮某门主，看的就是那门有多少张，把 2 抽走会让这个判断失真。
+export function revealGroupOf(card) {
+  return card.suit === 'JOKER' ? 'TRUMP' : card.suit;
+}
+
+// 揭牌阶段的手牌排序：鬼（大鬼→小鬼）最左，其余按 REVEAL_SUIT_ORDER 分组；
+// 组内点数降序，但级牌提到本组最前 —— 它是随时可能被亮出去的那张，要一眼找得到。
+export function sortHandForReveal(hand, rankCard) {
+  const jokers = [];
+  const bySuit = { S: [], C: [], D: [], H: [] };
+  for (const card of hand) {
+    if (card.suit === 'JOKER') jokers.push(card);
+    else bySuit[card.suit].push(card);
+  }
+  jokers.sort((a, b) => b.rank - a.rank); // 大鬼(16) 在小鬼(15) 前
+  const out = [...jokers];
+  for (const suit of REVEAL_SUIT_ORDER) {
+    bySuit[suit].sort((a, b) => {
+      const aRank = a.rank === rankCard ? 1 : 0;
+      const bRank = b.rank === rankCard ? 1 : 0;
+      if (aRank !== bRank) return bRank - aRank; // 级牌提到本组最前
+      return b.rank - a.rank;                    // 其余点数降序
+    });
+    out.push(...bySuit[suit]);
+  }
+  return out;
+}
+
 // 手牌自动排序：主牌组最左（大王→小王→主级牌→副级牌→主花色 A..3），
 // 副牌按红黑交替顺序分组，组内 A..3 降序。
 // 主牌组与副牌组之间的间隔由调用方用 countTrump 计算。

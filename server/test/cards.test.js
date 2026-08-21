@@ -10,6 +10,8 @@ import {
   sortHand,
   countTrump,
   SUITS,
+  sortHandForReveal,
+  revealGroupOf,
 } from '../cards.js';
 import { rankOfLevel } from '../level.js';
 
@@ -133,4 +135,79 @@ test('cardStrength：大王/小王在所有级牌与主牌之上', () => {
   const ctx = { trumpSuit: 'C', rankCard: 14 }; // 打 A 主梅花
   assert.ok(cardStrength(card('JOKER', 16), ctx) > cardStrength(card('C', 14), ctx));
   assert.ok(cardStrength(card('C', 14), ctx) > cardStrength(card('S', 14), ctx), '主A 大于 副A');
+});
+
+// ---- 揭牌阶段排序（主牌未定）----
+
+test('揭牌排序：鬼最左（大鬼在前），其余按 黑桃→梅花→方块→红桃', () => {
+  const hand = [
+    { id: 'h9', suit: 'H', rank: 9 },
+    { id: 's5', suit: 'S', rank: 5 },
+    { id: 'j15', suit: 'JOKER', rank: 15 },
+    { id: 'd7', suit: 'D', rank: 7 },
+    { id: 'c3', suit: 'C', rank: 3 },
+    { id: 'j16', suit: 'JOKER', rank: 16 },
+  ];
+  assert.deepEqual(
+    sortHandForReveal(hand, 2).map(c => c.id),
+    ['j16', 'j15', 's5', 'c3', 'd7', 'h9']
+  );
+});
+
+test('揭牌排序：组内点数降序，级牌提到本组最前', () => {
+  const hand = [
+    { id: 's3', suit: 'S', rank: 3 },
+    { id: 's14', suit: 'S', rank: 14 },
+    { id: 's2', suit: 'S', rank: 2 }, // 打2 → ♠2 是级牌
+    { id: 's9', suit: 'S', rank: 9 },
+  ];
+  assert.deepEqual(
+    sortHandForReveal(hand, 2).map(c => c.id),
+    ['s2', 's14', 's9', 's3'],
+    '级牌在最前，其余 A>9>3'
+  );
+});
+
+test('揭牌排序：打 5 时 5 是级牌、2 不是（级牌随本局级别变）', () => {
+  const hand = [
+    { id: 'c2', suit: 'C', rank: 2 },
+    { id: 'c5', suit: 'C', rank: 5 },
+    { id: 'c13', suit: 'C', rank: 13 },
+  ];
+  assert.deepEqual(
+    sortHandForReveal(hand, 5).map(c => c.id),
+    ['c5', 'c13', 'c2'],
+    '♣5 提到最前，其余 K>2'
+  );
+});
+
+test('揭牌排序：四门的级牌各自留在本花色组，不抽出来单独成组', () => {
+  const hand = [
+    { id: 'h2', suit: 'H', rank: 2 },
+    { id: 's2', suit: 'S', rank: 2 },
+    { id: 'd2', suit: 'D', rank: 2 },
+    { id: 'c2', suit: 'C', rank: 2 },
+    { id: 's7', suit: 'S', rank: 7 },
+  ];
+  assert.deepEqual(
+    sortHandForReveal(hand, 2).map(c => c.id),
+    ['s2', 's7', 'c2', 'd2', 'h2'],
+    '♠2 与 ♠7 同组，各门 2 归各门'
+  );
+});
+
+test('揭牌排序：张数与内容守恒（只重排，不增删）', () => {
+  const hand = buildDeck().slice(0, 25);
+  const sorted = sortHandForReveal(hand, 2);
+  assert.equal(sorted.length, hand.length);
+  assert.deepEqual(
+    sorted.map(c => c.id).sort(),
+    hand.map(c => c.id).sort()
+  );
+});
+
+test('revealGroupOf：只有鬼自成一组，级牌归本花色', () => {
+  assert.equal(revealGroupOf({ suit: 'JOKER', rank: 16 }), 'TRUMP');
+  assert.equal(revealGroupOf({ suit: 'S', rank: 2 }), 'S');
+  assert.equal(revealGroupOf({ suit: 'H', rank: 14 }), 'H');
 });
