@@ -18,7 +18,7 @@ import { trickLeader } from '../../../server/trick.js';
 import { playSuitOf } from '../../../server/cards.js';
 import { tiaoZhuActive } from '../tiaozhu.js';
 import { roundStory } from '../roundStory.js';
-import { handGroups, groupBadgeCount } from '../handGroups.js';
+import { handGroups, groupBadgeCount, partitionByWidth } from '../handGroups.js';
 import { tapToggle, dragAdd, toggleGroup } from '../selection.js';
 import { ProposeResetModal, ForceResetModal } from './ResetModals.jsx';
 
@@ -1411,39 +1411,46 @@ function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclar
     );
   };
 
-  // 按组切片渲染 + 组间间隔（宽度 = 间距倍数：主副分界 3 倍、其余组间 2 倍）
-  const rows = [];
+  // 按组切片渲染 + 组间间隔（宽度 = 间距倍数：主副分界 3 倍、其余组间 2 倍）。
+  // 每组连同它前面的间隔打包成一个 segment，并算出该组占宽 ——
+  // 分行时以 segment 为最小单位，绝不把同一花色组拦腰截断。
+  const segS = layout?.s ?? EXPOSE_W;
+  const segW = layout?.w ?? HAND_TIERS[0].w;
+  const segments = [];
   let pos = 0;
   for (let g = 0; g < groups.length; g++) {
     const group = groups[g];
     const cards = hand.slice(pos, pos + group.count);
+    const els = [];
+    let gapWidth = 0;
     if (g > 0) {
       const isTrumpGap = groups[g - 1].suit === 'TRUMP' && group.suit !== 'TRUMP';
-      rows.push(
+      gapWidth = layout ? (isTrumpGap ? layout.gap3 : layout.gap2) : 24;
+      els.push(
         <div
           key={`gap-${g}`}
           className="h-12 shrink-0"
-          style={{ width: layout ? (isTrumpGap ? layout.gap3 : layout.gap2) : 24 }}
+          style={{ width: gapWidth }}
           title={isTrumpGap ? '主牌组与副牌组分界' : '花色组间隔'}
         />
       );
     }
     const groupIds = cards.map(c => c.id);
     for (let i = 0; i < cards.length; i++) {
-      rows.push(renderCard(cards[i], i, group, i === cards.length - 1, groupIds));
+      els.push(renderCard(cards[i], i, group, i === cards.length - 1, groupIds));
     }
+    // 组宽 = 前置间隔 + (张数-1) 张只露左缘 + 末张露全宽
+    segments.push({ els, width: gapWidth + Math.max(0, cards.length - 1) * segS + segW });
     pos += group.count;
   }
 
-  // 两行模式：按累计宽度把 rows 切成两段（组间隔的空 div 也计入宽度）
-  const rowChunks = useMemo(() => {
-    const R = layout?.rows ?? 1;
-    if (R <= 1 || rows.length === 0) return [rows];
-    const per = Math.ceil(rows.length / R);
-    return Array.from({ length: R }, (_, i) => rows.slice(i * per, (i + 1) * per)).filter(
-      chunk => chunk.length > 0
-    );
-  }, [rows, layout?.rows]);
+  // 分行：把 segment 划到 layout.rows 行，目标是「最宽的一行尽可能窄」。
+  // 以花色组为最小单位，绝不拦腰截断（曾经按元素个数平均切，把黑桃切成两半）。
+  const rowChunks = (() => {
+    if (segments.length === 0) return [[]];
+    const ranges = partitionByWidth(segments.map(seg => seg.width), layout?.rows ?? 1);
+    return ranges.map(([a, b]) => segments.slice(a, b).flatMap(seg => seg.els));
+  })();
 
   return (
     <div className="rounded-2xl border border-white/10 bg-black/15 p-2">

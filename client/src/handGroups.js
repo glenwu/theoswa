@@ -43,3 +43,50 @@ export function needWideGap(prev, next) {
     prev.color === next.color
   );
 }
+
+// 把若干「花色组」划成 rows 行，使【最宽的一行】尽可能窄（最优划分，DP）。
+// 返回每行的 [起, 止) 下标区间。
+//
+// ⚠️ 不能用贪心（逐组累加、超过「总宽/行数」就换行）：
+// 贪心会把一整组挤到下一行，造出一条超宽的行 —— 实测出现过某行 423px 而可用宽只有 320px，
+// 第二行直接溢出到屏幕两侧。最优划分把同样的组重新分配后是 300/240，两行都放得下。
+//
+// 组是最小单位：绝不把同一花色拦腰截断（截断后同花色分处两行，极难读）。
+export function partitionByWidth(widths, rows) {
+  const n = widths.length;
+  if (n === 0) return [];
+  const R = Math.max(1, Math.min(rows, n));
+  if (R === 1) return [[0, n]];
+
+  const prefix = [0];
+  for (let i = 0; i < n; i++) prefix.push(prefix[i] + widths[i]);
+  const spanW = (a, b) => prefix[b] - prefix[a]; // [a, b)
+
+  // dp[r][i]：用 r 行覆盖前 i 组时，最宽那行的最小值；cut 记录回溯用的切点
+  const dp = Array.from({ length: R + 1 }, () => new Array(n + 1).fill(Infinity));
+  const cut = Array.from({ length: R + 1 }, () => new Array(n + 1).fill(0));
+  dp[0][0] = 0;
+  for (let r = 1; r <= R; r++) {
+    for (let i = r; i <= n; i++) {
+      for (let j = r - 1; j < i; j++) {
+        const val = Math.max(dp[r - 1][j], spanW(j, i));
+        if (val < dp[r][i]) {
+          dp[r][i] = val;
+          cut[r][i] = j;
+        }
+      }
+    }
+  }
+
+  const bounds = [n];
+  let i = n;
+  for (let r = R; r >= 1; r--) {
+    i = cut[r][i];
+    bounds.unshift(i);
+  }
+  const out = [];
+  for (let k = 0; k < bounds.length - 1; k++) {
+    if (bounds[k + 1] > bounds[k]) out.push([bounds[k], bounds[k + 1]]);
+  }
+  return out;
+}

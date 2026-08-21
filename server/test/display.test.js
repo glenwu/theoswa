@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { handGroups, groupBadgeCount, needWideGap } from '../../client/src/handGroups.js';
+import { handGroups, groupBadgeCount, needWideGap, partitionByWidth } from '../../client/src/handGroups.js';
 import { tiaoZhuActive } from '../../client/src/tiaozhu.js';
 import { tapToggle, dragAdd, selectionCapFor } from '../../client/src/selection.js';
 
@@ -120,4 +120,49 @@ test('单击切换：未选加选、已选取消（换底同样受 8 张上限�
   sel = ['1', '2', '3', '4', '5', '6', '7', '8'];
   assert.deepEqual(tapToggle(sel, '9', buryCap), sel, '第 9 张加不进去');
   assert.equal(tapToggle(sel, '1', buryCap).length, 7, '已选可取消');
+});
+
+// ---- 手牌分行：以花色组为最小单位的最优划分 ----
+
+const spans = (widths, rows) =>
+  partitionByWidth(widths, rows).map(([a, b]) => widths.slice(a, b).reduce((x, y) => x + y, 0));
+
+test('分行：最宽的一行尽可能窄（不是贪心）', () => {
+  // 真实回归场景：主牌117 / ♥183 / ♠103 / ♦137，两行。
+  // 贪心（超过总宽一半就换行）会切成 117 / 423 —— 第二行远超可用宽度，溢出到屏幕两侧。
+  // 最优划分应为 300 / 240。
+  assert.deepEqual(spans([117, 183, 103, 137], 2), [300, 240]);
+});
+
+test('分行：组是最小单位，绝不拦腰截断', () => {
+  const ranges = partitionByWidth([117, 183, 103, 137], 2);
+  // 区间必须首尾相接且覆盖全部组，没有任何组被拆到两个区间里
+  assert.deepEqual(ranges, [[0, 2], [2, 4]]);
+  assert.equal(ranges[0][1], ranges[1][0], '区间首尾相接');
+  assert.equal(ranges.at(-1)[1], 4, '覆盖到最后一组');
+});
+
+test('分行：单行时原样返回', () => {
+  assert.deepEqual(partitionByWidth([50, 60, 70], 1), [[0, 3]]);
+});
+
+test('分行：组数少于行数时不产生空行', () => {
+  const ranges = partitionByWidth([100, 100], 3);
+  assert.equal(ranges.length, 2, '只有 2 组就只排 2 行');
+  assert.ok(ranges.every(([a, b]) => b > a), '没有空区间');
+});
+
+test('分行：空输入不炸', () => {
+  assert.deepEqual(partitionByWidth([], 2), []);
+});
+
+test('分行：极端不均也要挑最优切点', () => {
+  // 一个超大组 + 若干小组：大组只能自己占一行
+  assert.deepEqual(spans([500, 10, 10, 10], 2), [500, 30]);
+  // 均匀四组两行 → 对半
+  assert.deepEqual(spans([100, 100, 100, 100], 2), [200, 200]);
+});
+
+test('分行：三行时同样最优', () => {
+  assert.deepEqual(spans([100, 100, 100, 100, 100, 100], 3), [200, 200, 200]);
 });
