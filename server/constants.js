@@ -19,6 +19,7 @@ export const PHASES = Object.freeze([
   'KITTY_EXCHANGE', // 庄家换底
   'CROSS_RIVER',    // 三主过河（主牌 ≤3 者可发起，无人符合自动跳过）
   'PLAYING',        // 出牌
+  'DOMINANCE',      // 碾压收尾：充分条件命中，摊开四家剩余手牌待确认（confirmDominance 后结算）
   'SCORING',        // 局末结算
   'ROUND_END',      // 本局小结
   'GAME_OVER',
@@ -45,12 +46,37 @@ export const FALLBACK_REVEAL_MS = 800;  // 揭底定主：逐张翻底牌间隔
 export const DEALING_MS = 600;          // 剩余牌一次性发完的展示停留
 export const TRICK_SETTLE_MS = 1500;    // 一轮结束后收牌停留（服务端计时，四端同步）
 export const SCORING_MS = 600;          // 局末结算展示停留
-export const ROUND_END_MS = 3000;       // 本局小结面板停留，随后进入下一局准备
+// 本局小结停留：给四个人复盘的时间（看得分构成、看底牌、回顾这局怎么赢/怎么输）。
+// 四人都点「看完了」可提前进入下一局；没点满就等满这 100 秒。
+export const ROUND_END_MS = 100000;
 export const PLAY_TIMEOUT_MS = 60000;   // 出牌限时：超时服务端自动打出最小合法牌（宽松，可调）
 export const RESET_PROPOSAL_MS = 60000; // 新开一局提案：60 秒无人响应自动取消
 export const CROSS_RIVER_DECIDE_MS = 15000; // 三主过河：发起/跳过的决定窗口（无人发起则窗口结束自动继续）
 export const CROSS_RIVER_PICK_MS = 30000;   // 三主过河：对家回 3 张副牌的超时（超时自动挑最小 3 张副牌）
 export const AUTO_LAST_MS = 600;        // 最后一轮自动打出：每张牌之间的间隔（走完整动画，不闪跳）
+
+// 阶段节奏的唯一出口：环境变量覆盖，缺省一律取上面的常量。
+// ⚠️ 绝不要在 index.js 或别处再写一遍这些数字。
+// 曾经 index.js 自带一份 `process.env.X ?? <字面量>`，改了上面的常量却不生效 ——
+// 单测断言常量本身没问题，跑起来的服务端却还用着旧值，极难发现。
+export function timingsFromEnv(env = process.env) {
+  const num = (v, fallback) => (v === undefined || v === '' ? fallback : Number(v));
+  return {
+    flipMs: num(env.FLIP_MS, REVEAL_FLIP_MS),
+    drawMs: num(env.DRAW_MS, REVEAL_DRAW_MS),
+    graceMs: num(env.GRACE_MS, REVEAL_GRACE_MS),
+    fallbackMs: num(env.FALLBACK_MS, FALLBACK_REVEAL_MS),
+    dealingMs: num(env.DEALING_MS, DEALING_MS),
+    settleMs: num(env.SETTLE_MS, TRICK_SETTLE_MS),
+    scoringMs: num(env.SCORING_MS, SCORING_MS),
+    roundEndMs: num(env.ROUND_END_MS, ROUND_END_MS),
+    playMs: num(env.PLAY_MS, PLAY_TIMEOUT_MS),
+    resetProposalMs: num(env.RESET_PROPOSAL_MS, RESET_PROPOSAL_MS),
+    crossRiverDecideMs: num(env.CROSS_RIVER_MS, CROSS_RIVER_DECIDE_MS),
+    crossRiverPickMs: num(env.CROSS_PICK_MS, CROSS_RIVER_PICK_MS),
+    autoLastMs: num(env.LAST_MS, AUTO_LAST_MS),
+  };
+}
 
 export const SUIT_NAMES = Object.freeze({
   S: '黑桃',

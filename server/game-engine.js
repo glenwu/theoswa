@@ -10,7 +10,7 @@ import {
   drawOneCard,
   completeDeal,
 } from './round.js';
-import { settleNoTrump } from './flow.js';
+import { settleNoTrump, advanceToReadyCheck } from './flow.js';
 import { settleFallbackTrump } from './reveal.js';
 import { cardLabel } from './cards.js';
 import { pickAutoCards } from './trick.js';
@@ -117,11 +117,15 @@ export class GameEngine {
       // 结算展示 → 本局小结
       this.setTimer('scoring', t.scoringMs, () => {
         s.phase = 'ROUND_END';
+        // 小结停留用绝对时刻：四端倒计时一致，存档恢复后也能接着走
+        r.roundEndDeadline = Date.now() + t.roundEndMs;
+        r.roundEndConfirms = [];
         this.afterAction();
       });
     } else if (s.phase === 'ROUND_END') {
-      // 本局小结停留 → 下一局准备
-      this.setTimer('roundEnd', t.roundEndMs, () => this.enterReadyCheck());
+      // 本局小结停留 → 下一局准备（四人都点「看完了」会提前走，见 handleConfirmRoundEnd）
+      if (!r.roundEndDeadline) r.roundEndDeadline = now + t.roundEndMs;
+      this.setTimer('roundEnd', Math.max(0, r.roundEndDeadline - now), () => this.enterReadyCheck());
     }
   }
 
@@ -236,13 +240,7 @@ export class GameEngine {
   // 本局小结结束 → 下一局准备。
   // 跨局只保留：座位、两队级别、declarerSeat（轮转产生）；其余随新局 beginRound 整体重建。
   enterReadyCheck() {
-    const s = this.state;
-    if (s.phase !== 'ROUND_END') return;
-    s.phase = 'READY_CHECK';
-    for (const p of s.players) p.ready = false;
-    s.round = null; // 无进行中的局；全员准备后 beginRound 整体重建 RoundState
-    pushLog(s, '新一局准备中，全员准备后开始。');
-    this.afterAction();
+    if (advanceToReadyCheck(this.state)) this.afterAction();
   }
 
   // 出牌超时：服务端自动打出最小合法牌（不判负、不跳过，牌局照常走完）

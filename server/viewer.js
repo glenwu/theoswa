@@ -58,6 +58,9 @@ function clipRound(round, viewerSeat) {
     settleDeadline: round.settleDeadline,
     trickHistory: round.trickHistory,
     dominance: round.dominance ?? null,
+    // 本局小结：已确认的座位（公开）+ 停留截止时刻（四端同步倒计时）
+    roundEndConfirms: [...(round.roundEndConfirms ?? [])],
+    roundEndDeadline: round.roundEndDeadline ?? null,
     defenderTrickPoints: round.defenderTrickPoints,
     runAwayPoints: round.runAwayPoints,
     defenderPoints: round.defenderPoints,

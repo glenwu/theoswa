@@ -1,5 +1,18 @@
 import { createRoundState, pushLog } from './state.js';
 
+// 本局小结结束 → 下一局准备。
+// 两条路径都走这里：四人全部点完「看完了」（actions），或 100 秒停留到期（engine）。
+// 跨局只保留座位、两队级别、declarerSeat（已由 finishRound 轮转好）；
+// 其余随新局 beginRound 整体重建，杜绝跨局状态污染。
+export function advanceToReadyCheck(state) {
+  if (state.phase !== 'ROUND_END') return false;
+  state.phase = 'READY_CHECK';
+  for (const p of state.players) p.ready = false;
+  state.round = null;
+  pushLog(state, '新一局准备中，全员准备后开始。');
+  return true;
+}
+
 // 每局 READY_CHECK 结束后走向揭牌的分支。
 // 判据是“庄家是否已确定”，与第几局无关：
 // 第一局流局后 declarerSeat 保持 null，再开一局仍走 REVEAL_FIRST（不会误入 REVEALING）。

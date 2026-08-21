@@ -1,6 +1,6 @@
-import { PLAYERS, QUICK_PHRASES, KITTY_SIZE, REVEAL_TOTAL, SUIT_NAMES, CROSS_RIVER_DECIDE_MS, CROSS_RIVER_PICK_MS } from './constants.js';
+import { PLAYERS, PLAYER_COUNT, QUICK_PHRASES, KITTY_SIZE, REVEAL_TOTAL, SUIT_NAMES, CROSS_RIVER_DECIDE_MS, CROSS_RIVER_PICK_MS } from './constants.js';
 import { playerById, playerBySeat, pushLog, resetGameState } from './state.js';
-import { chooseRevealEntry } from './flow.js';
+import { chooseRevealEntry, advanceToReadyCheck } from './flow.js';
 import { beginRound, drawOneCard } from './round.js';
 import { isRankCard, cardLabel, sortHand } from './cards.js';
 import { rebuildPieces, pieceStatusesFor, migratePlayedPieces, trumpDumpVerdict, relocateTableCards } from './pieces.js';
@@ -591,6 +591,27 @@ export function handleConfirmDominance(state, action, actorId) {
   return succeed();
 }
 
+// ---- 本局小结确认（ROUND_END）----
+// 小结停留 100 秒，给四个人复盘。谁看完了点一下；四个人都点完就提前进入下一局。
+// 不强制 —— 没点满就等满 100 秒，掉线的人不会把全场卡住。
+
+export function handleConfirmRoundEnd(state, action, actorId) {
+  if (state.phase !== 'ROUND_END') return fail(ErrorCode.WRONG_PHASE, '当前阶段无需确认小结');
+  const r = state.round;
+  if (!r) return fail(ErrorCode.WRONG_PHASE, '本局小结已结束');
+  const me = playerById(state, actorId);
+  if (r.roundEndConfirms.includes(me.seat)) {
+    return fail(ErrorCode.ALREADY_VOTED, '你已经确认过了');
+  }
+  r.roundEndConfirms.push(me.seat);
+  pushLog(state, `${me.nickname} 看完本局小结（${r.roundEndConfirms.length}/4）`);
+  if (r.roundEndConfirms.length >= PLAYER_COUNT) {
+    pushLog(state, '四人都已看完小结，提前进入下一局。');
+    advanceToReadyCheck(state);
+  }
+  return succeed();
+}
+
 // ---- 新开一局（提案制：四人全同意才执行；任一人拒绝立即取消；60 秒超时取消）----
 
 function executeReset(state, { reshuffleSeats, forced, actorName }) {
@@ -711,6 +732,7 @@ const HANDLERS = {
   skipCrossRiver: handleSkipCrossRiver,
   play: handlePlay,
   confirmDominance: handleConfirmDominance,
+  confirmRoundEnd: handleConfirmRoundEnd,
   proposeReset: handleProposeReset,
   voteReset: handleVoteReset,
   forceReset: handleForceReset,

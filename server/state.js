@@ -167,6 +167,8 @@ export function createRoundState(roundNumber, declarerSeat) {
     settleDeadline: null,   // 收牌停留截止时刻（服务端计时，四端同步）
     trickHistory: [],
     dominance: null,        // 碾压判定（充分条件命中后填入，DOMINANCE 阶段展示）
+    roundEndConfirms: [],   // 本局小结已点「看完了」的座位；集齐 4 个提前进入下一局
+    roundEndDeadline: null, // 小结停留截止时刻（服务端计时，四端同步倒计时）
     defenderTrickPoints: 0, // 闲家台面抓分（纯牌面分，守恒校验用）
     runAwayPoints: 0,       // 庄家赢下、作废跑掉的分
     defenderPoints: null,   // 局末最终 P（含撬底加成），SCORING 时填入
