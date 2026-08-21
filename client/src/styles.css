@@ -227,3 +227,38 @@ body {
     transform: translate(-50%, 0) rotate(8deg);
   }
 }
+
+/* 「谱掉你」彩蛋气泡：打出大鬼且非最后一轮时 80% 触发（服务端掷骰，四家一致）。
+   用琥珀金而不是「妮！」的粉色 —— 两个彩蛋可能同时出现（一手甩牌里既有 Q 又有大鬼），
+   颜色和高度都要分得开。 */
+.pudiao-bubble {
+  background: linear-gradient(135deg, #fde68a, #f59e0b);
+  color: #451a03;
+  border-radius: 1rem;
+  padding: 0.4rem 0.8rem;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  box-shadow: 0 2px 12px rgba(245, 158, 11, 0.7);
+  animation: bubble-in 0.25s ease both, pudiao-pop 0.45s ease 0.15s 2, bubble-out 0.4s ease 2.8s forwards;
+}
+.pudiao-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid #f59e0b;
+}
+@keyframes pudiao-pop {
+  0%,
+  100% {
+    transform: translate(-50%, 0) scale(1);
+  }
+  40% {
+    transform: translate(-50%, -4px) scale(1.14);
+  }
+}

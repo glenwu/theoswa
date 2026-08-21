@@ -134,16 +134,21 @@ export default function TablePanel({ game, send, error }) {
       <TopBanner game={game} />
 
       {/* 关键节点大图：翻牌定起揭人 / 亮主 / 揭底定主（中央牌桌停留展示） */}
-      <CenterEventOverlay game={game} />
+      <CenterEventOverlay game={game} send={send} />
 
       <div className="grid min-h-0 flex-1 grid-cols-[1fr_auto_1fr] grid-rows-[auto_1fr_auto] gap-2">
-        <div className="col-start-2 row-start-1 flex justify-center">
-          <PlayZone player={top} game={game} />
+        {/* 上下两行用固定行高（不是 min-h）：出牌区在「只有名字的小药丸」(24px) 与
+            「带牌面的大框」(136px，挂了亮主标记时 140px) 之间切换，auto 行会把中间的
+            信息区顶得上下抖动。min-h 不够——140px 会顶破它，仍有 4px 抖动，实测过。
+            9.5rem = 152px 留足余量；内容再高也只是溢出显示，绝不推动这一行。
+            牌面尺寸仍可随屏幕变化 —— 变的是牌，不是这一行占的位置。 */}
+        <div className="col-start-2 row-start-1 flex h-[9.5rem] items-center justify-center">
+          <PlayZone player={top} game={game} side="top" />
         </div>
         {/* 左右出牌区在各自那一栏里居中：即「中央信息区边缘 → 牌桌外缘」这段空间的正中，
             而不是贴着中央信息区。贴中间会显得挤，四个方位也不对称。 */}
         <div className="col-start-1 row-start-2 flex items-center justify-center">
-          <PlayZone player={left} game={game} />
+          <PlayZone player={left} game={game} side="left" />
         </div>
         <div className="col-start-2 row-start-2 flex flex-col items-center justify-center gap-1.5">
           <CenterInfo game={game} />
@@ -151,10 +156,10 @@ export default function TablePanel({ game, send, error }) {
           <KittyBacksRow game={game} />
         </div>
         <div className="col-start-3 row-start-2 flex items-center justify-center">
-          <PlayZone player={right} game={game} />
+          <PlayZone player={right} game={game} side="right" />
         </div>
-        <div className="col-start-2 row-start-3 flex justify-center">
-          <PlayZone player={bySeat[you.seat]} game={game} isYou />
+        <div className="col-start-2 row-start-3 flex h-[9.5rem] items-center justify-center">
+          <PlayZone player={bySeat[you.seat]} game={game} side="self" isYou />
         </div>
       </div>
 
@@ -229,7 +234,7 @@ function CenterTurnTimer({ game }) {
 // 关键节点大图：全场只发生一次、决定后续行动顺序的事件，在中央牌桌大图停留展示。
 // 消息流是流水账（回溯用）；这里是让四家同步的当下通知（大图 + 换算过程 + 高亮结论）。
 // 翻到大小王作废时每一次都展示，绝不静默重翻。
-function CenterEventOverlay({ game }) {
+function CenterEventOverlay({ game, send }) {
   const round = game.round;
   if (!round) return null;
   const flip = round.flipEvent;
@@ -238,8 +243,13 @@ function CenterEventOverlay({ game }) {
 
   const now = useNow(true, 200);
   const showFlipJoker = game.phase === 'REVEAL_FIRST' && flip?.kind === 'JOKER';
+  // 起揭人定出后阶段仍停在 REVEAL_FIRST（停留供四家看清），此时展示大图 + 「知道了」
   const showFlipStarter =
-    game.phase === 'REVEALING' && flip?.kind === 'STARTER' && round.drawnCount === 0 && !round.trumpSuit;
+    flip?.kind === 'STARTER' &&
+    !round.trumpSuit &&
+    (game.phase === 'REVEAL_FIRST'
+      ? round.flipDone
+      : game.phase === 'REVEALING' && round.drawnCount === 0);
 
   // 亮主 / 揭底定主：DEALING 阶段 + 进入换底后继续停留 ~2.5 秒
   const showTrump =
@@ -292,7 +302,7 @@ function CenterEventOverlay({ game }) {
             {starter ? `${PLAYER_EMOJI[starter.id]} ${starter.nickname}` : '—'}
           </span>
         </div>
-        <div className="mt-1 text-xs font-bold text-white/50">3 秒后自动开始揭牌，也可直接点「揭牌」</div>
+        {game.phase === 'REVEAL_FIRST' && <FlipHoldConfirm game={game} send={send} />}
       </>
     );
   } else if (showTrump) {
@@ -345,6 +355,50 @@ function CenterEventOverlay({ game }) {
     <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
       <div className="pointer-events-auto flex flex-col items-center rounded-3xl border-2 border-amber-300/60 bg-black/75 px-6 py-4 shadow-2xl">
         {content}
+      </div>
+    </div>
+  );
+}
+
+// 起揭人定出后的「知道了」确认条：倒计时 + 已确认人数 + 自己的按钮。
+// 服务端持有截止时刻与确认名单，这里只做展示与发送意图。
+function FlipHoldConfirm({ game, send }) {
+  const round = game.round;
+  const confirms = round?.flipConfirms ?? [];
+  const now = useNow(true, 500);
+  const left = secondsLeft(round?.flipHoldDeadline, now);
+  const mine = confirms.includes(game.you.seat);
+  return (
+    <div className="mt-3 w-full rounded-xl bg-white/10 p-2">
+      <div className="flex items-center justify-center gap-2 text-xs font-bold text-white/60">
+        <span>已知道 {confirms.length}/4</span>
+        <span className="flex gap-1">
+          {[...game.players]
+            .sort((a, b) => a.seat - b.seat)
+            .map(p => (
+              <span
+                key={p.id}
+                title={`${p.nickname}${confirms.includes(p.seat) ? ' 已知道' : ' 还在看'}`}
+                className={`pill ${
+                  confirms.includes(p.seat)
+                    ? 'bg-emerald-400/25 text-emerald-200'
+                    : 'bg-white/10 text-white/40'
+                }`}
+              >
+                {PLAYER_EMOJI[p.id]}
+              </span>
+            ))}
+        </span>
+        {left !== null && (
+          <span className={left <= 3 ? 'text-rose-300' : 'text-white/50'}>
+            · {Math.ceil(left)} 秒后自动开揭
+          </span>
+        )}
+      </div>
+      <div className="mt-2 flex justify-center">
+        <button className="btn-gold" disabled={mine} onClick={() => send({ type: 'confirmFlip' })}>
+          {mine ? '已知道，等其他人…' : '知道了'}
+        </button>
       </div>
     </div>
   );
@@ -686,7 +740,7 @@ function KittyBacksRow({ game }) {
 
 // 出牌区：揭牌提示 / 本轮已打出的牌 / 上一轮停留展示 + 赢家高亮；
 // 本轮未打完时，浅绿底标记当前牌面最大的人（与最终结算同一套判定）
-function PlayZone({ player, game, isYou }) {
+function PlayZone({ player, game, side = 'top', isYou }) {
   const round = game.round;
   const revealing =
     game.phase === 'REVEALING' && round && round.drawnCount < 100 && !round.trumpSuit;
@@ -718,6 +772,7 @@ function PlayZone({ player, game, isYou }) {
   const tiaoZhu = tiaoZhuActive(round?.currentTrick ?? [], round?.trickHistory ?? []);
   const showTiaoZhu = tiaoZhu && round?.currentTrick?.[0]?.seat === player.seat;
   const hasPlay = !!play && play.cards.length > 0;
+  const sideways = side === 'left' || side === 'right';
 
   // 亮主标记：谁把主牌亮出来的。
   // trumpEvent 是有人手持级牌亮主（第二局起亮主者可以是闲家，与庄家无关）；
@@ -756,6 +811,12 @@ function PlayZone({ player, game, isYou }) {
           妮！
         </div>
       )}
+      {/* 大鬼彩蛋：比「妮！」再高一档，两个同时出现时不叠在一起 */}
+      {play?.pudiao && (
+        <div className="pudiao-bubble absolute -top-[4.75rem] left-1/2 z-30 -translate-x-1/2">
+          谱掉你
+        </div>
+      )}
       <div className="flex items-center gap-1 text-xs font-black text-white/80">
         {PLAYER_EMOJI[player.id]} {player.nickname}
         {isYou ? '(我)' : ''}
@@ -773,14 +834,25 @@ function PlayZone({ player, game, isYou }) {
       {/* 出牌区自适应：没牌时只剩方位名一条细线；有牌按张数展开（容量 10 张，超出再压缩） */}
       {hasPlay && (
         <div className="flex items-center justify-center">
-          <div className="flex">
+          {/* 左右两侧在竖屏手机上改为竖向叠放：竖屏横向空间本来就窄，
+              甩牌多张时横排会把中间牌桌挤没。单张时横竖一样，无影响。
+              仅限竖屏 + 窄屏，横屏和桌面保持原来的横排。 */}
+          <div className={`flex ${sideways ? 'portrait:max-md:flex-col' : ''}`}>
             {play.cards.map((c, i) => (
               <PlayingCard
                 key={c.id}
                 suit={c.suit}
                 rank={c.rank}
                 size="xl"
-                className={`card-pop ${i > 0 ? (play.cards.length > 10 ? '-ml-[54px]' : '-ml-12') : ''}`}
+                className={`card-pop ${
+                  i === 0
+                    ? ''
+                    : sideways
+                      ? `${play.cards.length > 10 ? '-ml-[54px]' : '-ml-12'} portrait:max-md:ml-0 portrait:max-md:-mt-[4.5rem]`
+                      : play.cards.length > 10
+                        ? '-ml-[54px]'
+                        : '-ml-12'
+                }`}
               />
             ))}
           </div>
