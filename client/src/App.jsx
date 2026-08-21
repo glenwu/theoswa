@@ -154,7 +154,15 @@ function GameLayout({ game, send, error }) {
 
       {/* 中栏：牌桌 + 手牌 */}
       <main className="min-w-0 flex-1">
-        <TablePanel game={game} send={send} error={error} />
+        {/* 窄屏浮层开关不再钉在屏幕两角（那里正好压着手牌），
+            改为跟在出牌按钮两侧，由 ControlBar 渲染 */}
+        <TablePanel
+          game={game}
+          send={send}
+          error={error}
+          onTogglePlayers={() => setShowPlayers(v => !v)}
+          onToggleChat={() => setShowChat(v => !v)}
+        />
       </main>
 
       {/* 右栏：消息与聊天（300px，消息多换行没关系——本来就是可滚动的流水账） */}
@@ -162,19 +170,6 @@ function GameLayout({ game, send, error }) {
         <ChatPanel game={game} send={send} />
       </aside>
 
-      {/* 窄屏浮层开关（拇指可点的 56px 大按钮） */}
-      <button
-        className="btn-float fixed bottom-4 left-4 z-40 md:hidden"
-        onClick={() => setShowPlayers(v => !v)}
-      >
-        👥
-      </button>
-      <button
-        className="btn-float fixed bottom-4 right-4 z-40 lg:hidden"
-        onClick={() => setShowChat(v => !v)}
-      >
-        💬
-      </button>
       {showPlayers && (
         <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setShowPlayers(false)}>
           <div className="h-full w-64 p-2" onClick={e => e.stopPropagation()}>

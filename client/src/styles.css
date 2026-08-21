@@ -49,6 +49,10 @@ body {
   .btn-float {
     @apply grid h-14 w-14 place-items-center rounded-full bg-gradient-to-b from-gold-300 to-gold-600 text-2xl font-black text-amber-950 shadow-lg transition active:scale-95;
   }
+  /* 小号浮层开关：跟在出牌按钮两侧，平时半透明不抢戏，碰到才实心 */
+  .btn-float-sm {
+    @apply grid h-10 w-10 place-items-center rounded-full bg-gradient-to-b from-gold-300 to-gold-600 text-lg font-black text-amber-950 opacity-70 shadow-md transition hover:opacity-100 focus-visible:opacity-100 active:scale-95 active:opacity-100;
+  }
   /* 牌面：米白/象牙色，圆角 */
   .card-face {
     background: linear-gradient(160deg, #fdf8ec 0%, #f2ead6 100%);

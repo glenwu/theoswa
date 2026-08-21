@@ -55,11 +55,17 @@ const HAND_TIERS = [
 // 18px 刚好容得下“10”+ 花色符号（点数看得清就够）。
 // 这是定值，不随视口宽度变化 —— 视口再宽，牌也始终叠在一起、左对齐。
 const EXPOSE_W = 18;
-// 极窄视口（手机竖屏）放不下峰值张数时允许压到的下限，保证不横向溢出
+// 竖屏窄屏的目标露出宽度：比横屏更宽。竖屏两侧有浮层按钮夹着，手牌行本来就窄，
+// 与其把 30 多张挤成一条细缝，不如多占一行、把每张露得更开，手指也更好点。
+const PORTRAIT_EXPOSE_W = 26;
+// 实在放不下时允许压到的下限，保证绝不横向溢出
 const MIN_EXPOSE_W = 8;
+// 最多分几行：竖屏可以到 3 行（纵向有的是空间），横屏/桌面最多 2 行
+const MAX_ROWS_PORTRAIT = 2;
+const MAX_ROWS_WIDE = 2;
 
 // 中栏：十字形四方位牌桌 + 中央信息 + 控制按钮 + 我的手牌
-export default function TablePanel({ game, send, error }) {
+export default function TablePanel({ game, send, error, onTogglePlayers, onToggleChat }) {
   const [selected, setSelected] = useState([]);
   const [declareOptions, setDeclareOptions] = useState(null);
 
@@ -177,6 +183,8 @@ export default function TablePanel({ game, send, error }) {
         selected={selected}
         onClear={() => setSelected([])}
         onDeclareOptions={setDeclareOptions}
+        onTogglePlayers={onTogglePlayers}
+        onToggleChat={onToggleChat}
       />
 
       <HandArea
@@ -889,7 +897,7 @@ function PlayZone({ player, game, side = 'top', isYou }) {
   );
 }
 
-function ControlBar({ game, send, error, selected, onClear, onDeclareOptions }) {
+function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, onTogglePlayers, onToggleChat }) {
   const you = game.you;
   const round = game.round;
   const now = useNow(game.phase === 'REVEALING');
@@ -1087,7 +1095,22 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions }) 
 
   return (
     <div className="flex flex-col items-center gap-1.5 py-2">
-      <div className="flex flex-wrap items-center justify-center gap-3">{buttons}</div>
+      {/* 窄屏的左右栏开关跟在主按钮两侧：原来钉在屏幕两个下角，正好压着手牌。
+          平时 70% 不透明不抢戏，碰到/按下才实心。
+          显示条件沿用原来的断点：玩家列表 <768px 才需要，聊天 <1024px 才需要。 */}
+      <div className="flex w-full flex-wrap items-center justify-center gap-3">
+        {onTogglePlayers && (
+          <button type="button" className="btn-float-sm md:hidden" title="玩家列表" onClick={onTogglePlayers}>
+            👥
+          </button>
+        )}
+        <div className="flex flex-wrap items-center justify-center gap-3">{buttons}</div>
+        {onToggleChat && (
+          <button type="button" className="btn-float-sm lg:hidden" title="消息与聊天" onClick={onToggleChat}>
+            💬
+          </button>
+        )}
+      </div>
       {hints.length > 0 && (
         <div className="flex flex-wrap items-center justify-center gap-2">{hints}</div>
       )}
@@ -1155,6 +1178,16 @@ function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclar
   //   不溢出/不横向滚动这条底线优先于“固定露出”。
   const rowRef = useRef(null);
   const [avail, setAvail] = useState(0);
+  // 与 CSS 的 portrait:max-lg: 断点保持一致（手机竖屏 + iPad 竖屏）。
+  // 布局算法要按屏幕形态换参数，纯 CSS 做不到，这里用 matchMedia 拿到同一个判断。
+  const [compactPortrait, setCompactPortrait] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(orientation: portrait) and (max-width: 1023px)');
+    const sync = () => setCompactPortrait(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
   // hasRow 依赖：手牌行是在揭牌后才挂载的，挂载时立即测量并开始观察（窗口变化实时重算）
   const hasRow = hand.length > 0;
   useEffect(() => {
@@ -1183,34 +1216,48 @@ function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclar
     const G = 4;
     const g3 = 1; // 主副分界
     const g2 = 2; // 其余组间
-    const denom = peak - G; // 只露出左缘的张数（每组末张露全宽）
+    const denom = Math.max(1, peak - G); // 只露出左缘的张数（每组末张露全宽）
     const gapsFor = s => ({ gap2: Math.min(s + 8, 20), gap3: Math.min(s + 16, 32) });
-    // 峰值张数所需总宽：G 张露全宽 + 其余按露出宽度叠 + 组间隔
-    const widthFor = (tier, s) => {
-      const { gap2, gap3 } = gapsFor(s);
-      return G * tier.w + s * denom + gap2 * g2 + gap3 * g3;
+    const FIXED_GAPS = 20 * g2 + 32 * g3; // 露出宽度够大时组间隔已封顶，按上限估算
+
+    const target = compactPortrait ? PORTRAIT_EXPOSE_W : EXPOSE_W;
+    const maxRows = compactPortrait ? MAX_ROWS_PORTRAIT : MAX_ROWS_WIDE;
+
+    if (avail === 0) {
+      // 首帧未测量：先按最大档给出目标露出，ResizeObserver 测到后再重算
+      const t0 = HAND_TIERS[0];
+      return { size: t0.name, w: t0.w, s: target, rows: 1, ...gapsFor(target) };
+    }
+
+    // 反解：给定（行数, 牌面档位），这一行最多能给多大的露出宽度？
+    // 单行：G 张全宽 + denom 张只露 s + 组间隔 ≤ avail
+    // 多行：总宽均摊到每行，再留一张全宽的余量（每行末张要露全）
+    const maxExposeFor = (tier, rows) => {
+      const budget = rows <= 1 ? avail : (avail - tier.w) * rows;
+      return (budget - G * tier.w - FIXED_GAPS) / denom;
     };
 
-    for (const tier of HAND_TIERS) {
-      // avail === 0 是首帧未测量：先按最大档给出固定露出，测量后再重算
-      if (avail === 0 || widthFor(tier, EXPOSE_W) <= avail) {
-        return { size: tier.name, w: tier.w, s: EXPOSE_W, rows: 1, ...gapsFor(EXPOSE_W) };
+    // 择优：行数越少越好；同行数下优先大牌面，只要它的露出宽度还够读
+    // （COMFORT 以下就宁可换小一档换取更宽的间隔）。
+    const COMFORT = 16;
+    let best = null;
+    for (let rows = 1; rows <= maxRows; rows++) {
+      for (const tier of HAND_TIERS) {
+        const s = Math.min(target, maxExposeFor(tier, rows));
+        if (s < MIN_EXPOSE_W) continue;
+        const cand = { size: tier.name, w: tier.w, s, rows };
+        if (s >= COMFORT) return { ...cand, ...gapsFor(s) }; // 够读就收，不再往小降
+        // 还不够读：记下目前最宽的一个，等所有组合都试完再用
+        if (!best || s > best.s) best = cand;
       }
     }
-    // 最小档单行仍放不下：先试「拆成两行」而不是继续压缩露出宽度。
-    // 一行挤到 8px 露出时点数已经快看不清了；宁可占两行高度，也要让每张牌读得出来。
-    // 两行按峰值一半估算所需宽度（实际分行由渲染时按累计宽度切）。
+    if (best) return { ...best, ...gapsFor(best.s) };
+
+    // 所有组合都低于下限：最小档 + 最多行数 + 压到下限（绝不横向溢出）
     const tier = HAND_TIERS[HAND_TIERS.length - 1];
-    const halfDenom = Math.ceil(peak / 2) - G;
-    const twoRowWidth = G * tier.w + EXPOSE_W * Math.max(1, halfDenom) + 20 * g2 + 32 * g3;
-    if (twoRowWidth <= avail) {
-      return { size: tier.name, w: tier.w, s: EXPOSE_W, rows: 2, ...gapsFor(EXPOSE_W) };
-    }
-    // 两行也放不下：压缩露出宽度，绝不横向溢出
-    const raw = (avail - G * tier.w - 20 * g2 - 32 * g3) / Math.max(1, halfDenom);
-    const s = Math.max(MIN_EXPOSE_W, Math.min(EXPOSE_W, raw));
-    return { size: tier.name, w: tier.w, s, rows: 2, ...gapsFor(s) };
-  }, [peak, avail, hand.length]);
+    const s = Math.max(MIN_EXPOSE_W, Math.min(target, maxExposeFor(tier, maxRows)));
+    return { size: tier.name, w: tier.w, s, rows: maxRows, ...gapsFor(s) };
+  }, [peak, avail, hand.length, compactPortrait]);
 
   // 拖动多选（add-only）：按下记录起点，位移超过阈值进入拖动模式（起点牌也加选），
   // 滑过的牌全部加选；未超过阈值松手 = 单击切换。状态全走 ref，窗口监听器不闭包过期。
@@ -1376,9 +1423,12 @@ function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclar
 
   // 两行模式：按累计宽度把 rows 切成两段（组间隔的空 div 也计入宽度）
   const rowChunks = useMemo(() => {
-    if (!layout || layout.rows !== 2 || rows.length === 0) return [rows];
-    const half = Math.ceil(rows.length / 2);
-    return [rows.slice(0, half), rows.slice(half)];
+    const R = layout?.rows ?? 1;
+    if (R <= 1 || rows.length === 0) return [rows];
+    const per = Math.ceil(rows.length / R);
+    return Array.from({ length: R }, (_, i) => rows.slice(i * per, (i + 1) * per)).filter(
+      chunk => chunk.length > 0
+    );
   }, [rows, layout?.rows]);
 
   return (
@@ -1405,7 +1455,12 @@ function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclar
            顶部预留抬起 + 角标空间（pt-5），不设 overflow hidden，避免抬起的牌被裁掉 */
         <div ref={rowRef} className="flex flex-col gap-1 pb-2 pt-5">
           {rowChunks.map((chunk, i) => (
-            <div key={i} className="flex items-end justify-start">{chunk}</div>
+            <div
+              key={i}
+              className={`flex items-end ${compactPortrait ? 'justify-center' : 'justify-start'}`}
+            >
+              {chunk}
+            </div>
           ))}
         </div>
       )}
