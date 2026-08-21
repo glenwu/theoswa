@@ -5,3 +5,8 @@ screenshots/
 server/savegame.json
 .DS_Store
 *.log
+
+# 规则文档（潮汕升级-开发提示词-v2.md）是唯一权威，但刻意不进公开仓库。
+# 这条规则是防呆：即使有人把它拷进仓库目录，git 也不会收。
+*提示词*.md
+*开发提示词*
