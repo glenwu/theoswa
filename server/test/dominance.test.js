@@ -128,7 +128,7 @@ test('碾压确认：剩余分全部判给 A 队、最后一轮赢家记为 A �
   const summary = state.rounds[0];
   assert.equal(summary.defenderTrickPoints, 15, '剩余 15 分计入闲家（金队）');
   assert.equal(summary.kittyGrab, true, '最后一轮赢家是金队（闲家方）→ 撬底');
-  assert.equal(summary.defenderPoints, 15 + 5 + 20, 'P = 台面15 + 底牌5 + 20 = 40');
+  assert.equal(summary.defenderPoints, 15 + 5, 'P = 台面15 + 底牌5 = 20（撬底不再加 20）');
   assert.equal(summary.transfer, true, '撬底无条件移庄');
   assert.equal(summary.upgradeCount, 0, 'P_final<80 → 双方不升级');
 });
@@ -224,10 +224,11 @@ test('碾压不触发：条件未齐时照常出牌（checkDominance 返回 null
   assert.equal(state.phase, 'PLAYING', '照常出牌');
 });
 
-test('settleRound 对拍基线：确认对拍用的期望公式一致', () => {
+test('settleRound 对拍基线：撬底的 P_final = 台面 + 底牌（不再有 +20）', () => {
   const r = settleRound({ defenderTrickPoints: 15, kittyPoints: 15, kittyGrab: true, declarerTeam: 1 });
-  assert.equal(r.defenderPoints, 15 + 15 + 20);
-  assert.equal(r.transfer, true);
+  assert.equal(r.defenderPoints, 30);
+  assert.equal(r.transfer, true, '撬底无条件移庄');
+  assert.equal(r.upgradeCount, 0, '不够 80 分不升级');
 });
 
 // ---- 存活性回归：碾压必须在「每一轮结算之后」真的被触发（文档 §6.7.1）----

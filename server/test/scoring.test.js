@@ -37,22 +37,22 @@ test('移庄升级表：80-99 升0、100-119 升1、120-139 升2、140-159 升3�
 });
 
 // 规则变更（Glen 2026-08-20）：撬底且够 80 分，档位整体 +1 级
-test('撬底：闲家 60 分 → P=80，移庄，闲家升 1 级', () => {
-  const r = settleRound({ defenderTrickPoints: 60, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
-  assert.equal(r.defenderPoints, 80);
+test('撬底：台面 80 分 → P=80，移庄，闲家升 1 级', () => {
+  const r = settleRound({ defenderTrickPoints: 80, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
+  assert.equal(r.defenderPoints, 80, '撬底不再额外加 20');
   assert.equal(r.transfer, true);
   assert.equal(r.upgradeCount, 1, '撬底够 80 分至少升 1 级（未撬底的 80 分才是 0 级）');
 });
 
-test('验收12：闲家 30 分且撬底（底牌无分）→ P=50，移庄，双方均不升级（庄家不得升2级）', () => {
-  const r = settleRound({ defenderTrickPoints: 30, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
+test('撬底但不够 80：台面 50 分 → 移庄，双方均不升级（庄家不得升2级）', () => {
+  const r = settleRound({ defenderTrickPoints: 50, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
   assert.equal(r.defenderPoints, 50);
   assert.equal(r.transfer, true, '撬底无条件移庄');
   assert.equal(r.upgradeCount, 0, '庄家不得因守住而升 2 级');
 });
 
-test('撬底：闲家 80 分 → P=100，移庄，闲家升 2 级', () => {
-  const r = settleRound({ defenderTrickPoints: 80, kittyPoints: 0, kittyGrab: true, declarerTeam: 1 });
+test('撬底：台面 100 分 → P=100，移庄，闲家升 2 级', () => {
+  const r = settleRound({ defenderTrickPoints: 100, kittyPoints: 0, kittyGrab: true, declarerTeam: 1 });
   assert.equal(r.defenderPoints, 100);
   assert.equal(r.transfer, true);
   assert.equal(r.upgradedTeam, 0, '闲家队');
@@ -62,7 +62,7 @@ test('撬底：闲家 80 分 → P=100，移庄，闲家升 2 级', () => {
 // 撬底档位比未撬底整体高一级 —— 这个差值是规则的核心，单独钉死
 test('撬底档位 = 未撬底档位 + 1（同一 P 下逐档对照）', () => {
   for (const P of [80, 95, 100, 119, 120, 140, 160]) {
-    const grabbed = settleRound({ defenderTrickPoints: P - 20, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
+    const grabbed = settleRound({ defenderTrickPoints: P, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
     const plain = settleRound({ defenderTrickPoints: P, kittyPoints: 0, kittyGrab: false, declarerTeam: 0 });
     assert.equal(grabbed.defenderPoints, P, `撬底 P_final 应为 ${P}`);
     assert.equal(grabbed.upgradeCount, plain.upgradeCount + 1, `P=${P}：撬底应比未撬底多 1 级`);
@@ -75,7 +75,7 @@ test('撬底档位 = 未撬底档位 + 1（同一 P 下逐档对照）', () => {
 test('撬底档位逐档：80→1、100→2、120→3、140→4、160→5、180→6、200→7', () => {
   const tiers = [[80, 1], [100, 2], [120, 3], [140, 4], [160, 5], [180, 6], [200, 7]];
   for (const [P, level] of tiers) {
-    const r = settleRound({ defenderTrickPoints: P - 20, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
+    const r = settleRound({ defenderTrickPoints: P, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
     assert.equal(r.defenderPoints, P);
     assert.equal(r.upgradeCount, level, `P_final=${P} 应升 ${level} 级`);
   }
@@ -84,43 +84,43 @@ test('撬底档位逐档：80→1、100→2、120→3、140→4、160→5、180�
 test('撬底档位：每档 20 分内级数不变（档位边界不飘）', () => {
   for (const [lo, hi, level] of [[80, 99, 1], [100, 119, 2], [140, 159, 4], [180, 199, 6]]) {
     for (const P of [lo, lo + 7, hi]) {
-      const r = settleRound({ defenderTrickPoints: P - 20, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
+      const r = settleRound({ defenderTrickPoints: P, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
       assert.equal(r.upgradeCount, level, `P_final=${P} 落在 ${lo}-${hi} 档，应升 ${level} 级`);
     }
   }
 });
 
-// 理论上限：闲家把台面 200 分全抓走并撬底 → P_final = 200 + 底牌 + 20 最多 220
-test('撬底档位上限：P_final=220（闲家通吃 + 撬底）→ 8 级，不溢出不报错', () => {
+// 理论上限：全场总分就是 200，闲家通吃时 P_final 恰好 200 —— 档位表正好收口在 7 级
+test('撬底档位上限：P_final=200（闲家通吃）→ 7 级；不可能再高', () => {
   const r = settleRound({ defenderTrickPoints: 180, kittyPoints: 20, kittyGrab: true, declarerTeam: 0 });
-  assert.equal(r.defenderPoints, 220);
-  assert.equal(r.upgradeCount, 8);
+  assert.equal(r.defenderPoints, 200, '台面 180 + 底牌 20 = 200，不再有 +20');
+  assert.equal(r.upgradeCount, 7);
   assert.equal(r.transfer, true);
 });
 
 test('撬底但 P_final < 80 → 仍然只移庄、双方不升级（+1 级不适用）', () => {
   for (const P of [20, 50, 79]) {
-    const r = settleRound({ defenderTrickPoints: P - 20, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
+    const r = settleRound({ defenderTrickPoints: P, kittyPoints: 0, kittyGrab: true, declarerTeam: 0 });
     assert.equal(r.defenderPoints, P);
     assert.equal(r.transfer, true, '撬底无条件移庄');
     assert.equal(r.upgradeCount, 0, `P=${P} 不够 80，不升级`);
   }
 });
 
-test('验收5：底牌 K+5（15 分），闲家撬底 → P = 台面分 + 15 + 20', () => {
+test('底牌 K+5（15 分）撬底 → P = 台面分 + 底牌分（无 +20）', () => {
   const r = settleRound({ defenderTrickPoints: 40, kittyPoints: 15, kittyGrab: true, declarerTeam: 0 });
-  assert.equal(r.defenderPoints, 75, '40 + 15 + 20');
+  assert.equal(r.defenderPoints, 55, '40 + 15，不再有 +20');
   assert.equal(r.transfer, true);
   assert.equal(r.upgradeCount, 0, 'P_final<80 不升级');
 });
 
 test('撬底且 P_final 足够高：底牌分也参与升级档位', () => {
-  // 台面 60 + 底牌 15 + 20 = 95 → 移庄，闲家升 floor(15/20)+1 = 1
-  const r1 = settleRound({ defenderTrickPoints: 60, kittyPoints: 15, kittyGrab: true, declarerTeam: 0 });
+  // 台面 80 + 底牌 15 = 95 → 移庄，闲家升 floor(15/20)+1 = 1
+  const r1 = settleRound({ defenderTrickPoints: 80, kittyPoints: 15, kittyGrab: true, declarerTeam: 0 });
   assert.equal(r1.defenderPoints, 95);
   assert.equal(r1.upgradeCount, 1);
-  // 台面 70 + 底牌 15 + 20 = 105 → 升 floor(25/20)+1 = 2 级
-  const r2 = settleRound({ defenderTrickPoints: 70, kittyPoints: 15, kittyGrab: true, declarerTeam: 0 });
+  // 台面 90 + 底牌 15 = 105 → 升 floor(25/20)+1 = 2 级
+  const r2 = settleRound({ defenderTrickPoints: 90, kittyPoints: 15, kittyGrab: true, declarerTeam: 0 });
   assert.equal(r2.defenderPoints, 105);
   assert.equal(r2.upgradeCount, 2);
 });

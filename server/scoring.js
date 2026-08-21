@@ -28,9 +28,13 @@ export function checkConservation(defenderTrickPoints, runAwayPoints, kittyPoint
 }
 
 // 计分升级（权威公式，一字不差）：
-//   P_final = defenderTrickPoints + (kittyGrab ? kittyPoints + 20 : 0)
+//   P_final = defenderTrickPoints + (kittyGrab ? kittyPoints : 0)
 //   撬底 → 无条件移庄；P_final≥80 闲家升 floor((P_final-80)/20) + 1，
 //          否则（P_final<80）双方都不升（庄家不得因守住而升）
+//
+// ⚠️ 撬底【不再额外加 20 分】（Glen 2026-08-21 裁定，再次覆盖文档 §6.9）。
+// 底牌分照常计入闲家，但那个 +20 的加成取消了。
+// 校验点：全场总分就是 200，闲家通吃时 P_final 恰好 200 → 7 级，档位表正好收口。
 //   未撬底且 P≥80 → 移庄，闲家升 floor((P-80)/20)
 //   未撬底且 P<80 → 连庄，庄家升：P=0 → 5 级；1~79 → ceil((80-P)/20)
 //
@@ -50,7 +54,7 @@ export function settleRound({
   declarerCrossedRiver = false,
   trumpsInKitty = 0,
 }) {
-  const P_final = defenderTrickPoints + (kittyGrab ? kittyPoints + 20 : 0);
+  const P_final = defenderTrickPoints + (kittyGrab ? kittyPoints : 0);
 
   if (kittyGrab) {
     const crossRiverPenalty = declarerCrossedRiver ? trumpsInKitty : 0;

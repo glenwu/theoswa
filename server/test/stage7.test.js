@@ -338,18 +338,17 @@ test('过河：引擎计时（对家回牌超时自动完成 + 决定窗口结�
 
 test('过河惩罚：庄家触发过河 + 被撬底 + 底牌 8 张主牌 + P_final=90 → 闲家升 9 级', () => {
   const r = settleRound({
-    defenderTrickPoints: 70, kittyPoints: 0, kittyGrab: true, declarerTeam: 0,
+    defenderTrickPoints: 90, kittyPoints: 0, kittyGrab: true, declarerTeam: 0,
     declarerCrossedRiver: true, trumpsInKitty: 8,
   });
-  assert.equal(r.defenderPoints, 90);
-  // 撬底档位 +1 生效后：正常 1 级 + 惩罚 8 级
+  assert.equal(r.defenderPoints, 90, '撬底不再加 20');
   assert.equal(r.upgradeCount, 9, '1（正常，撬底够80）+ 8（过河惩罚）');
   assert.equal(r.crossRiverPenalty, 8);
 });
 
 test('过河惩罚：庄家埋 8 张主牌但未触发过河 → 无额外惩罚（只剩撬底本身的 1 级）', () => {
   const r = settleRound({
-    defenderTrickPoints: 70, kittyPoints: 0, kittyGrab: true, declarerTeam: 0,
+    defenderTrickPoints: 90, kittyPoints: 0, kittyGrab: true, declarerTeam: 0,
     declarerCrossedRiver: false, trumpsInKitty: 8,
   });
   assert.equal(r.crossRiverPenalty, 0, '没触发过河就不该有惩罚');
@@ -369,8 +368,8 @@ test('过河惩罚：finishRound 集成（底牌 8 主无分、被撬底、庄�
   const state = playingState('H', 2);
   state.round.kitty = [3, 4, 6, 7, 8, 9, 11, 12].map((r, i) => c(`k${i}`, 'H', r)); // 8 张主牌 0 分
   state.round.declarerCrossedRiver = true;
-  state.round.defenderTrickPoints = 70;
-  state.round.runAwayPoints = 200 - 70; // 底牌 0 分 → 守恒
+  state.round.defenderTrickPoints = 90; // 撬底不再加 20，台面就得是 90 才有 P_final=90
+  state.round.runAwayPoints = 200 - 90; // 底牌 0 分 → 台面 + 跑掉 = 200，守恒
   state.round.trickHistory = [{ trickNo: 1, winnerSeat: 1, plays: [], points: 0 }]; // 闲家赢 → 撬底
   const summary = finishRound(state);
   assert.equal(summary.kittyGrab, true);
@@ -427,9 +426,10 @@ test('妮彩蛋：打出 Q 用独立随机源掷骰（0.39 触发 / 0.4 不触�
 
   let rolls = 0;
   state.niiRandom = () => { rolls += 1; return 0.39; };
+  // 甩两张 Q：现在【不触发】—— 彩蛋只认单张 Q（甩牌是一手战术，不是「打了个 Q」）
   assert.equal(applyAction(state, { type: 'play', cardIds: ['q1', 'q2'] }, seat0Id(state)).ok, true);
-  assert.equal(state.round.currentTrick[0].nii, true, '40% 命中 → 触发');
-  assert.equal(rolls, 1, '一次出牌含多张 Q 也只掷一次');
+  assert.equal(state.round.currentTrick[0].nii, undefined, '甩牌里夹着 Q 不触发');
+  assert.equal(rolls, 0, '不满足条件时根本不掷骰');
   assert.equal(state.rng.state(), rngStateBefore, '彩蛋掷骰不推进发牌种子流（SEED 复现不受影响）');
 });
 

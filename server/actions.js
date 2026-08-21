@@ -505,7 +505,12 @@ export function handlePlay(state, action, actorId) {
 
   // 「妮！」彩蛋：打出 Q（任意花色）时 40% 概率触发（服务端独立随机源掷骰，
   // 四家看到的结果一致；一次出牌含多张 Q 也只掷一次）。
-  const nii = playedCards.some(c => c.rank === 12) && (state.niiRandom ?? Math.random)() < 0.4;
+  // 「妮！」彩蛋：只有【单张】Q 才触发。甩牌里夹着 Q 不算 —— 甩牌是一手战术，
+  // 不是「打了个 Q」这个动作，弹彩蛋会盖住甩牌本身的注意力。
+  const nii =
+    playedCards.length === 1 &&
+    playedCards[0].rank === 12 &&
+    (state.niiRandom ?? Math.random)() < 0.4;
   // 「谱掉你」彩蛋：打出大鬼且不是最后一轮时 80% 触发。
   // 最后一轮谁出什么都没得选，甩狠话就没意思了 —— 手上的牌正好被这一手打空即为最后一轮
   //（四家手牌数恒等，我打空了就是大家都打空了）。
