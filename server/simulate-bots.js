@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { inferPublicBeliefs } from './bot-belief.js';
 import { botLearningProfile, BotReviewJournal } from './bot-review.js';
 import { assessBottomProtection, decideBotAction, normalizeBotDifficulty } from './bot-policy.js';
-import { EVOLVED_BOT_TUNING } from './bot-tuning.js';
+import { evolvedBotTuning } from './bot-tuning.js';
 import { cardPoints, cardStrength, playSuitOf } from './cards.js';
 import { GameEngine } from './game-engine.js';
 import { mulberry32 } from './rng.js';
@@ -226,7 +226,7 @@ export async function simulateRound({
   timeoutMs = 15_000,
   fixedDeclarerSeat = null,
   declarationMode = 'patient',
-  tuning = EVOLVED_BOT_TUNING,
+  tuning = evolvedBotTuning(),
   tuningByTeam = null,
 }) {
   const state = createInitialState(mulberry32(seed));

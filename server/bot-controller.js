@@ -1,8 +1,14 @@
 import { decideBotAction, normalizeBotDifficulty } from './bot-policy.js';
 import { inferPublicBeliefs } from './bot-belief.js';
 import { BotReviewJournal, botLearningProfile } from './bot-review.js';
-import { EVOLVED_BOT_TUNING } from './bot-tuning.js';
+import { evolvedBotTuning } from './bot-tuning.js';
 import { viewerState } from './viewer.js';
+
+// 动作被拒后的自愈重试：GameEngine 只在动作成功时触发 afterAction，
+// 失败时不会再调 schedule()，电脑就此永久停手。出牌阶段还有 playMs 兜底，
+// 但 SEATING / READY_CHECK 没有任何计时器，一次被拒就是整局卡死。
+export const BOT_RETRY_BASE_MS = 400;
+export const BOT_MAX_RETRIES = 4;
 
 const DELAY_RANGES = {
   lobby: [600, 1100],
@@ -39,13 +45,17 @@ export class BotController {
   constructor({
     engine,
     delayMs = null,
+    retryBaseMs = BOT_RETRY_BASE_MS,
+    maxRetries = BOT_MAX_RETRIES,
     difficulty = 'expert',
-    tuning = EVOLVED_BOT_TUNING,
+    tuning = evolvedBotTuning(), // 默认参数在调用时求值 → 天然惰性
     rng = Math.random,
     onError,
   } = {}) {
     this.engine = engine;
     this.delayMs = Number.isFinite(delayMs) ? Math.max(0, delayMs) : null;
+    this.retryBaseMs = Number.isFinite(retryBaseMs) ? Math.max(0, retryBaseMs) : BOT_RETRY_BASE_MS;
+    this.maxRetries = Number.isFinite(maxRetries) ? Math.max(0, maxRetries) : BOT_MAX_RETRIES;
     this.rng = rng;
     this.difficulty = normalizeBotDifficulty(difficulty);
     this.tuning = tuning;
@@ -54,6 +64,7 @@ export class BotController {
       console.error(`[电脑玩家] ${playerId} 操作失败：${error.reason}`);
     });
     this.timer = null;
+    this.retries = 0; // 连续被拒次数；任何一次重新排程都清零
   }
 
   nextDecision() {
@@ -85,6 +96,7 @@ export class BotController {
 
   schedule() {
     this.stop();
+    this.retries = 0; // 状态推进了（不管是电脑还是真人推的），重试计数作废
     const decision = this.nextDecision();
     if (!decision) return;
     const delay = this.delayMs ?? botDelayForDecision(decision, this.rng);
@@ -101,10 +113,22 @@ export class BotController {
       { ...decision.action, phase: decision.phase },
       decision.playerId
     );
-    if (!result.ok) {
-      this.reviewJournal.discard(reviewRecord);
-      this.onError(decision.playerId, result.error);
+    if (result.ok) return; // 成功 → afterAction 会调 schedule() 接着排下一步
+
+    // 失败时引擎不会 afterAction，必须自己重排，否则电脑永久停手。
+    // 有界退避：连续失败到上限就放手，把局面交回真人（而不是无限空转）。
+    this.reviewJournal.discard(reviewRecord);
+    this.onError(decision.playerId, result.error);
+    this.retries += 1;
+    if (this.retries > this.maxRetries) {
+      this.onError(decision.playerId, {
+        code: 'BOT_STUCK',
+        reason: `连续 ${this.maxRetries} 次动作被拒，已停止自动操作，请真人接手或移除该电脑`,
+      });
+      return;
     }
+    this.timer = setTimeout(() => this.run(), this.retryBaseMs * 2 ** (this.retries - 1));
+    this.timer.unref?.();
   }
 
   observeState() {

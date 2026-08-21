@@ -1198,6 +1198,10 @@ export function decideBotAction(view) {
     const cards = choosePlayCards(view);
     if (cards.length > 0) return { type: 'play', cardIds: cards.map(card => card.id) };
   }
+  // 本局小结：电脑直接确认。否则三个电脑不点，真人每局都得干等满 100 秒。
+  if (view.phase === 'ROUND_END' && round && !(round.roundEndConfirms ?? []).includes(you.seat)) {
+    return { type: 'confirmRoundEnd' };
+  }
   if (view.phase === 'DOMINANCE' && round?.dominance) {
     return { type: 'confirmDominance' };
   }

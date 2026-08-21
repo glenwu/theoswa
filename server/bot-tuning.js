@@ -18,4 +18,18 @@ export function loadEvolvedBotTuning(filePath = process.env.BOT_TUNING_FILE) {
   }
 }
 
-export const EVOLVED_BOT_TUNING = Object.freeze(loadEvolvedBotTuning());
+// 惰性 + 记忆化：import 本模块不应该产生磁盘 IO。
+// 之前是顶层 `Object.freeze(loadEvolvedBotTuning())`，任何人 import 一下
+// （包括只想用类型或常量的测试）都会立刻读盘，且 BOT_TUNING_FILE 在 import
+// 之后再设就不生效了。改成首次真正需要时才读，读一次缓存住。
+let cachedTuning = null;
+
+export function evolvedBotTuning() {
+  cachedTuning ??= Object.freeze(loadEvolvedBotTuning());
+  return cachedTuning;
+}
+
+// 测试用：丢弃缓存，让下一次 evolvedBotTuning() 重新读盘
+export function resetEvolvedBotTuningCache() {
+  cachedTuning = null;
+}

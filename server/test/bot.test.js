@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createInitialState, normalizeState } from '../state.js';
 import { applyAction, ErrorCode } from '../actions.js';
+import { PHASES } from '../constants.js';
 import { viewerState } from '../viewer.js';
 import {
   assessBottomProtection,
@@ -714,6 +715,7 @@ test('第三手会封住最后一家用 10/K 吃分；朋友求件时仍优先�
   const journal = new BotReviewJournal();
   journal.record(exposed, { type: 'play', cardIds: ['spade-6'] });
   const learningState = {
+    phase: 'SCORING', // 复盘只在局末生成（bot-review 的保密闸门会校验这一点）
     rounds: [{ roundNumber: 1, declarerSeat: 0, kittyGrab: true }],
     round: { roundNumber: 1, trickHistory: [{ trickNo: 1, winnerSeat: 1 }] },
     botLearning: {},
@@ -809,6 +811,7 @@ test('局末复盘汇总逐手风险，并把教训共享给下一局的所有�
   defenderView.you.nickname = '电脑乙';
   journal.record(defenderView, { type: 'play', cardIds: ['club-3'] });
   const state = {
+    phase: 'SCORING', // 复盘只在局末生成（bot-review 的保密闸门会校验这一点）
     rounds: [{ roundNumber: 1, declarerSeat: 0, kittyGrab: true }],
     round: {
       roundNumber: 1,
@@ -838,7 +841,8 @@ test('局末复盘汇总逐手风险，并把教训共享给下一局的所有�
 
 test('每局结果都会累计庄闲保底/扣底样本，并在失败时调整尾盘权重', () => {
   const journal = new BotReviewJournal();
-  const state = { rounds: [], round: null, botLearning: {} };
+  // 复盘只在局末生成（bot-review 的保密闸门会校验这一点）
+  const state = { phase: 'SCORING', rounds: [], round: null, botLearning: {} };
 
   const dealerView = playView({ seat: 0, hand: [card('s3-r1', 'S', 3)] });
   journal.record(dealerView, { type: 'play', cardIds: ['s3-r1'] });
@@ -1041,4 +1045,147 @@ test('一个真人加三个电脑可以自动完成整场游戏', { timeout: 15_
     '每局结束后都生成电脑逐手复盘'
   );
   assert.deepEqual(botErrors, []);
+});
+
+// ---- 电脑动作被拒后的自愈（回归：曾经一次被拒就永久停手，大厅阶段会锁死整局）----
+
+function stuckControllerFixture({ ok = false } = {}) {
+  const state = createInitialState(mulberry32(7));
+  for (const player of state.players) {
+    player.isBot = true;
+    player.connected = true;
+  }
+  const attempts = [];
+  const engine = {
+    state,
+    applyAction(action, playerId) {
+      attempts.push({ type: action.type, playerId });
+      return ok
+        ? { ok: true }
+        : { ok: false, error: { code: 'WRONG_PHASE', reason: '测试强制拒绝' } };
+    },
+  };
+  const errors = [];
+  const controller = new BotController({
+    engine,
+    delayMs: 1,
+    retryBaseMs: 1,
+    maxRetries: 3,
+    onError: (playerId, error) => errors.push(error),
+  });
+  return { controller, attempts, errors, state };
+}
+
+test('电脑动作被拒后会退避重试，而不是永久停手', async t => {
+  const { controller, attempts, errors } = stuckControllerFixture();
+  t.after(() => controller.stop());
+
+  controller.schedule();
+  await sleep(120);
+
+  // 修复前：只会尝试 1 次然后彻底不动。修复后：1 次首发 + maxRetries 次重试。
+  assert.equal(attempts.length, 4, `应为 1 次首发 + 3 次重试，实际 ${attempts.length}`);
+  assert.ok(attempts.every(a => a.type === attempts[0].type), '重试的是同一个动作');
+});
+
+test('电脑连续被拒到上限后停手并报 BOT_STUCK，不会无限空转', async t => {
+  const { controller, attempts, errors } = stuckControllerFixture();
+  t.after(() => controller.stop());
+
+  controller.schedule();
+  await sleep(120);
+  const settled = attempts.length;
+  await sleep(120); // 再等一轮，确认真的停了
+
+  assert.equal(attempts.length, settled, '到上限后不再继续尝试');
+  assert.equal(errors.at(-1).code, 'BOT_STUCK', '最后一条错误是 BOT_STUCK');
+  assert.equal(controller.timer, null, '没有遗留的重试计时器');
+});
+
+test('动作成功时不进重试路径，重试计数保持为 0', async t => {
+  const { controller, attempts, errors } = stuckControllerFixture({ ok: true });
+  t.after(() => controller.stop());
+
+  controller.schedule();
+  await sleep(60);
+
+  assert.equal(attempts.length, 1, '成功后由 afterAction→schedule 接管，不自行重排');
+  assert.deepEqual(errors, [], '成功不应产生错误回调');
+  assert.equal(controller.retries, 0);
+});
+
+test('真人推进状态后，电脑的重试计数清零（不会带着旧账继续退避）', async t => {
+  const { controller } = stuckControllerFixture();
+  t.after(() => controller.stop());
+
+  controller.schedule();
+  await sleep(120);
+  assert.ok(controller.retries > 0, '先积累失败计数');
+
+  controller.schedule(); // 模拟真人动作触发的 afterAction → schedule()
+  assert.equal(controller.retries, 0);
+});
+
+// ---- 复盘保密闸门（examples 含牌名且全场广播，只能在局末生成）----
+
+test('局未打完就生成电脑复盘会直接抛错（字符串牌名绕不过递归扫描器，靠这道闸门兜住）', () => {
+  const state = createInitialState(mulberry32(11));
+  state.phase = 'PLAYING';
+  state.round = { roundNumber: 1, trickHistory: [] };
+  // 手上还有牌 = 这一局还没打完，牌面尚未全部公开
+  state.players[0].hand = [{ id: 'x1', suit: 'S', rank: 14 }];
+  state.rounds = [{ roundNumber: 1 }];
+
+  const journal = new BotReviewJournal();
+  journal.records = [{ roundNumber: 1, playerId: 'T', team: 0, trickNo: 3, issues: [] }];
+
+  assert.throws(
+    () => journal.finalizeCompletedRounds(state),
+    /安全底线.*第 1 局结束前/,
+    '局中生成复盘必须抛错'
+  );
+  assert.equal(state.rounds[0].botReview, undefined, '抛错后不得残留 botReview');
+});
+
+test('局末（手牌已清空 / SCORING）生成复盘正常放行', () => {
+  const state = createInitialState(mulberry32(11));
+  state.phase = 'SCORING';
+  state.round = { roundNumber: 1, trickHistory: [] };
+  for (const player of state.players) player.hand = [];
+  state.rounds = [{ roundNumber: 1 }];
+
+  const journal = new BotReviewJournal();
+  journal.records = [{ roundNumber: 1, playerId: 'T', team: 0, trickNo: 3, issues: [] }];
+
+  journal.finalizeCompletedRounds(state);
+  assert.equal(state.rounds[0].botReview.reviewedPlays, 1);
+});
+
+test('复盘描述的是更早已结束的局时，不受当前局阶段影响', () => {
+  const state = createInitialState(mulberry32(11));
+  state.phase = 'PLAYING'; // 第 2 局正在打
+  state.round = { roundNumber: 2, trickHistory: [] };
+  state.players[0].hand = [{ id: 'x1', suit: 'S', rank: 14 }];
+  state.rounds = [{ roundNumber: 1 }]; // 第 1 局早已结束
+
+  const journal = new BotReviewJournal();
+  journal.records = [{ roundNumber: 1, playerId: 'T', team: 0, trickNo: 3, issues: [] }];
+
+  journal.finalizeCompletedRounds(state);
+  assert.equal(state.rounds[0].botReview.reviewedPlays, 1);
+});
+
+test('PHASES 常量覆盖代码中实际会出现的每一个阶段（含 DOMINANCE）', () => {
+  // 回归：DOMINANCE 曾在 actions.js 里被赋值却没进 PHASES，
+  // 让这个自称「唯一真源」的常量表实际上是残缺的。
+  assert.ok(PHASES.includes('DOMINANCE'), 'PHASES 必须包含 DOMINANCE');
+  assert.equal(new Set(PHASES).size, PHASES.length, 'PHASES 不得有重复项');
+  assert.ok(
+    PHASES.indexOf('DOMINANCE') > PHASES.indexOf('PLAYING'),
+    'DOMINANCE 排在 PLAYING 之后'
+  );
+  assert.ok(
+    PHASES.indexOf('DOMINANCE') < PHASES.indexOf('SCORING'),
+    'DOMINANCE 排在 SCORING 之前'
+  );
 });

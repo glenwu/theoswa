@@ -289,6 +289,35 @@ export function inspectBotPlay(view, action) {
   return record;
 }
 
+// 局末已结算的阶段：此时该局 108 张牌（含底牌）全部已公开。
+const CONCLUDED_PHASES = new Set(['SCORING', 'ROUND_END', 'GAME_OVER']);
+
+// 保密不变量：botReview.examples 里带牌名（电脑当时留在手上没打出去的牌），
+// 而 summary 会随 viewer 的 rounds 字段全场广播。这些牌只有在该局打完、
+// 牌面全部公开之后才算公开信息。
+//
+// ⚠️ viewer.js 的递归扫描器只认 { id, suit, rank } 形状的对象，
+// 对字符串形式的牌名（"♠K"）完全看不见 —— 这条通道只能在这里自己把关。
+// 谁要是把复盘改成「每轮实时」，这里会直接抛错，而不是静默泄底。
+function assertRoundConcluded(state, summary) {
+  const current = state.round;
+  // 描述的是更早已结束的局（state.round 已换成新局或为 null）→ 必然安全
+  if (!current || current.roundNumber !== summary.roundNumber) return;
+  // 两条独立证据，任一成立即可：阶段已进入结算，或四家手牌已全部打空。
+  // players 可能缺失（单测的精简 state），这时只认阶段，不崩。
+  const handsEmpty =
+    Array.isArray(state.players) &&
+    state.players.length > 0 &&
+    state.players.every(p => (p.hand?.length ?? 0) === 0);
+  const concluded = CONCLUDED_PHASES.has(state.phase) || handsEmpty;
+  if (!concluded) {
+    throw new Error(
+      `[安全底线] 试图在第 ${summary.roundNumber} 局结束前生成电脑复盘（phase=${state.phase}）：` +
+        'examples 含牌名且会全场广播，只能在牌面全部公开后生成'
+    );
+  }
+}
+
 export class BotReviewJournal {
   constructor() {
     this.records = [];
@@ -313,6 +342,7 @@ export class BotReviewJournal {
       if (this.finalizedSummaries.has(summary)) continue;
       const records = this.records.filter(record => record.roundNumber === summary.roundNumber);
       if (records.length === 0) continue;
+      assertRoundConcluded(state, summary);
       const trickHistory = state.round?.roundNumber === summary.roundNumber
         ? state.round.trickHistory ?? []
         : [];

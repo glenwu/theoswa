@@ -6,7 +6,7 @@ import {
   DEFAULT_BOT_TUNING,
   normalizeBotTuning,
 } from './bot-policy.js';
-import { DEFAULT_BOT_TUNING_FILE, EVOLVED_BOT_TUNING } from './bot-tuning.js';
+import { DEFAULT_BOT_TUNING_FILE, evolvedBotTuning } from './bot-tuning.js';
 import { mulberry32 } from './rng.js';
 import { simulateRound } from './simulate-bots.js';
 
@@ -184,7 +184,7 @@ export async function trainBots({
 } = {}) {
   const startedAt = new Date();
   const rng = mulberry32(seed);
-  const baseline = normalizeBotTuning(EVOLVED_BOT_TUNING);
+  const baseline = normalizeBotTuning(evolvedBotTuning());
   let mean = { ...baseline };
   let deviation = Object.fromEntries(Object.entries(BOT_TUNING_BOUNDS).map(([key, [min, max]]) => [
     key,
