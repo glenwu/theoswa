@@ -165,7 +165,14 @@ test('对拍：碾压结算结果 与 bot 老老实实打完剩余轮次 完全�
   const lowest = (cards, n) =>
     [...cards].sort((a, b) => cardStrength(a, ctx) - cardStrength(b, ctx)).slice(0, n);
   for (let trick = 0; trick < 3; trick++) {
-    stateB.round.lastTrick = null;
+    stateB.round.lastTrick = null; // 模拟收牌停留结束
+    // 分支B 要的就是「不走碾压捷径、老老实实打完」这个反事实对照。
+    // 碾压检测会在每轮结算后正确触发（曾因守卫误含 lastTrick 而恒不触发），
+    // 这里显式忽略它、把局面按回 PLAYING 继续打完，才能和分支A 对拍。
+    if (stateB.phase === 'DOMINANCE') {
+      stateB.phase = 'PLAYING';
+      stateB.round.dominance = null;
+    }
     for (let i = 0; i < 4; i++) {
       const p = playerBySeat(stateB, stateB.round.turnSeat);
       const lead = stateB.round.currentTrick[0] ?? null;
@@ -221,4 +228,48 @@ test('settleRound 对拍基线：确认对拍用的期望公式一致', () => {
   const r = settleRound({ defenderTrickPoints: 15, kittyPoints: 15, kittyGrab: true, declarerTeam: 1 });
   assert.equal(r.defenderPoints, 15 + 15 + 20);
   assert.equal(r.transfer, true);
+});
+
+// ---- 存活性回归：碾压必须在「每一轮结算之后」真的被触发（文档 §6.7.1）----
+// 曾经的 bug：dominance.js 的守卫写成 `if (r.lastTrick || r.currentTrick.length > 0) return null`，
+// 而 handlePlay 在一轮打完时先置 r.lastTrick 再调 checkDominance —— 守卫必然命中，
+// 每轮结算后的检测恒返回 null，碾压收尾在真实对局中永不触发。
+// 其余碾压测试都手写 `state.phase = 'DOMINANCE'` 再往下断言，全都测不到这一段。
+test('碾压：一轮打完后由 handlePlay 自动进入 DOMINANCE（不靠手写 phase）', () => {
+  // 关键：碾压条件必须「第 1 轮打完之后」才成立，否则测不到每轮结算处的那个检测点。
+  // 金队(0/2) 各留一张低黑桃，青队(1/3) 的 ♠9 一开始压得过它 → 打之前不成立；
+  // 第 1 轮把黑桃全打完后，金队只剩主牌、青队无主牌 → 成立。
+  const state = playingState(
+    {
+      0: [c('a0', 'S', 14), c('a1', 'JOKER', 16)], // ♠A + 大鬼(主)
+      2: [c('a2', 'S', 3), c('a3', 'JOKER', 15)],  // ♠3 + 小鬼(主)
+      1: [c('b0', 'S', 9), c('b1', 'C', 4)],       // ♠9 压得过 ♠3
+      3: [c('b2', 'S', 5), c('b3', 'C', 6)],
+    },
+    { declarerSeat: 1, leadSeat: 0 } // 庄家=青队，金队为闲家方
+  );
+
+  assert.equal(checkDominance(state), null, '第 1 轮打之前不成立（青队 ♠9 > 金队 ♠3）');
+
+  // 逆时针出齐一轮：0 → 3 → 2 → 1
+  for (const [seat, cardId] of [[0, 'a0'], [3, 'b2'], [2, 'a2'], [1, 'b0']]) {
+    const p = playerBySeat(state, seat);
+    const res = applyAction(state, { type: 'play', cardIds: [cardId] }, p.id);
+    assert.equal(res.ok, true, `seat${seat} 出牌失败：${res.error?.reason}`);
+  }
+
+  assert.equal(state.round.trickHistory[0].winnerSeat, 0, '金队赢下第 1 轮');
+  assert.equal(state.phase, 'DOMINANCE', '一轮结算后必须自动进入 DOMINANCE');
+  assert.ok(state.round.dominance, '碾压判定结果已写入 round.dominance');
+  assert.equal(state.round.dominance.winningTeam, 0);
+});
+
+test('碾压：一轮打到一半（currentTrick 非空）绝不判定', () => {
+  const state = dominantState(); // 这副牌在轮次间隙判定是成立的
+  assert.ok(checkDominance(state), '间隙判定成立（对照组）');
+
+  applyAction(state, { type: 'play', cardIds: ['s1'] }, playerBySeat(state, 0).id);
+  assert.equal(state.round.currentTrick.length, 1, '一轮才出了一张');
+  assert.equal(checkDominance(state), null, '轮次进行中不得判定');
+  assert.equal(state.phase, 'PLAYING');
 });

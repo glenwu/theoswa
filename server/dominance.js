@@ -15,7 +15,12 @@ export function checkDominance(state) {
   const r = state.round;
   // PLAYING 或 CROSS_RIVER（过河换牌后、进入出牌前也要判定——用换牌之后的手牌）
   if (!r || !(state.phase === 'PLAYING' || state.phase === 'CROSS_RIVER') || !r.trumpSuit) return null;
-  if (r.lastTrick || r.currentTrick.length > 0) return null; // 只在轮次间隙判定
+  // 只在轮次间隙判定：真正表示「一轮打到一半」的只有 currentTrick 非空。
+  // ⚠️ 不要把 r.lastTrick 加回这个守卫。lastTrick 非空 + currentTrick 为空，
+  // 恰恰就是「一轮刚结算完」的那个间隙——而文档 §6.7.1 要求的正是
+  // 「检测在每一轮结算之后执行」。曾经把 lastTrick 也算作"不判定"，
+  // 导致 handlePlay 里每轮结算后的那次检测恒返回 null，碾压收尾实际永不触发。
+  if (r.currentTrick.length > 0) return null;
   const ctx = { trumpSuit: r.trumpSuit, rankCard: r.rankCard };
   const isTrump = c => playSuitOf(c, ctx.trumpSuit, ctx.rankCard) === 'TRUMP';
   const suitOf = c => playSuitOf(c, ctx.trumpSuit, ctx.rankCard);
