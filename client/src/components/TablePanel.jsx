@@ -231,16 +231,20 @@ function CenterTurnTimer({ game }) {
   const player = game.players.find(p => p.seat === round.turnSeat);
   const urgent = left <= 10;
   return (
-    <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+    // 竖屏窄屏：横排的「⏱时间 + 人名」会横跨到顶部信息条上面，把「庄家：X」压住。
+    // 改成上下两行并整体缩小，宽度收到 ~60px，就落在信息条右侧的空白里了。
+    <div className="absolute right-3 top-3 z-10 flex items-center gap-2 portrait:max-lg:right-1 portrait:max-lg:top-1 portrait:max-lg:flex-col portrait:max-lg:items-end portrait:max-lg:gap-0.5">
       <span
-        className={`rounded-full px-4 py-2 text-lg font-black shadow-lg ${
+        className={`rounded-full px-4 py-2 text-lg font-black shadow-lg portrait:max-lg:px-2 portrait:max-lg:py-0.5 portrait:max-lg:text-xs portrait:max-lg:leading-tight ${
           urgent ? 'bg-rose-500 text-white' : 'bg-black/50 text-amber-300'
         }`}
       >
         ⏱ {Math.floor(left / 60)}:{String(Math.ceil(left % 60)).padStart(2, '0')}
       </span>
       {player && (
-        <span className="pill bg-black/50 text-white/80">{PLAYER_EMOJI[player.id]} {player.nickname}</span>
+        <span className="pill bg-black/50 text-white/80 portrait:max-lg:px-1.5 portrait:max-lg:py-0 portrait:max-lg:text-[10px] portrait:max-lg:leading-tight">
+          {PLAYER_EMOJI[player.id]} {player.nickname}
+        </span>
       )}
     </div>
   );
@@ -1098,15 +1102,25 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
       {/* 窄屏的左右栏开关跟在主按钮两侧：原来钉在屏幕两个下角，正好压着手牌。
           平时 70% 不透明不抢戏，碰到/按下才实心。
           显示条件沿用原来的断点：玩家列表 <768px 才需要，聊天 <1024px 才需要。 */}
-      <div className="flex w-full flex-wrap items-center justify-center gap-3">
+      <div className="relative flex w-full items-center justify-center gap-3">
         {onTogglePlayers && (
-          <button type="button" className="btn-float-sm md:hidden" title="玩家列表" onClick={onTogglePlayers}>
+          <button
+            type="button"
+            className="btn-float-sm absolute left-0 md:hidden"
+            title="玩家列表"
+            onClick={onTogglePlayers}
+          >
             👥
           </button>
         )}
         <div className="flex flex-wrap items-center justify-center gap-3">{buttons}</div>
         {onToggleChat && (
-          <button type="button" className="btn-float-sm lg:hidden" title="消息与聊天" onClick={onToggleChat}>
+          <button
+            type="button"
+            className="btn-float-sm absolute right-0 lg:hidden"
+            title="消息与聊天"
+            onClick={onToggleChat}
+          >
             💬
           </button>
         )}
