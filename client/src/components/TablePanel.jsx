@@ -17,8 +17,9 @@ import { checkSelection } from '../playCheck.js';
 import { trickLeader } from '../../../server/trick.js';
 import { playSuitOf } from '../../../server/cards.js';
 import { tiaoZhuActive } from '../tiaozhu.js';
+import { roundStory } from '../roundStory.js';
 import { handGroups, groupBadgeCount } from '../handGroups.js';
-import { tapToggle, dragAdd } from '../selection.js';
+import { tapToggle, dragAdd, toggleGroup } from '../selection.js';
 import { ProposeResetModal, ForceResetModal } from './ResetModals.jsx';
 
 const PHASE_HINTS = {
@@ -36,12 +37,19 @@ const PHASE_HINTS = {
   GAME_OVER: '游戏结束',
 };
 
-// 手牌牌面档位（宽 px，与 PlayingCard 的尺寸档对应）：间距低于下限时整体降档
+// 手牌牌面档位（宽 px，与 PlayingCard 的尺寸档对应）：放不下时整体降档
 const HAND_TIERS = [
   { name: 'lg', w: 56 },
   { name: 'md', w: 44 },
   { name: 'sm', w: 32 },
 ];
+
+// 手牌固定露出宽度：每张牌只露出左缘这么宽，其余被下一张盖住。
+// 18px 刚好容得下“10”+ 花色符号（点数看得清就够）。
+// 这是定值，不随视口宽度变化 —— 视口再宽，牌也始终叠在一起、左对齐。
+const EXPOSE_W = 18;
+// 极窄视口（手机竖屏）放不下峰值张数时允许压到的下限，保证不横向溢出
+const MIN_EXPOSE_W = 8;
 
 // 中栏：十字形四方位牌桌 + 中央信息 + 控制按钮 + 我的手牌
 export default function TablePanel({ game, send, error }) {
@@ -79,6 +87,11 @@ export default function TablePanel({ game, send, error }) {
 
   function addDragSelection(id) {
     setSelected(prev => dragAdd(prev, id, selectionCap));
+  }
+
+  // 点手牌上的组张数角标：整组全选（再点一次取消整组）
+  function toggleGroupSelection(ids) {
+    setSelected(prev => toggleGroup(prev, ids, selectionCap));
   }
 
   // 键盘快捷键：空格（揭牌/出牌）、数字 1~N（亮主）。
@@ -127,7 +140,9 @@ export default function TablePanel({ game, send, error }) {
         <div className="col-start-2 row-start-1 flex justify-center">
           <PlayZone player={top} game={game} />
         </div>
-        <div className="col-start-1 row-start-2 flex items-center justify-end">
+        {/* 左右出牌区在各自那一栏里居中：即「中央信息区边缘 → 牌桌外缘」这段空间的正中，
+            而不是贴着中央信息区。贴中间会显得挤，四个方位也不对称。 */}
+        <div className="col-start-1 row-start-2 flex items-center justify-center">
           <PlayZone player={left} game={game} />
         </div>
         <div className="col-start-2 row-start-2 flex flex-col items-center justify-center gap-1.5">
@@ -135,7 +150,7 @@ export default function TablePanel({ game, send, error }) {
           {/* 埋好的 8 张底牌：牌背列在牌桌中央，埋入的件（A/K）明牌亮出 */}
           <KittyBacksRow game={game} />
         </div>
-        <div className="col-start-3 row-start-2 flex items-center justify-start">
+        <div className="col-start-3 row-start-2 flex items-center justify-center">
           <PlayZone player={right} game={game} />
         </div>
         <div className="col-start-2 row-start-3 flex justify-center">
@@ -157,6 +172,7 @@ export default function TablePanel({ game, send, error }) {
         selected={selected}
         onToggle={toggleCard}
         onDragAdd={addDragSelection}
+        onToggleGroup={toggleGroupSelection}
         onDeclareRank={cardId => send({ type: 'declareTrump', cardId })}
       />
 
@@ -466,6 +482,13 @@ function SettlementPanel({ game, send }) {
   const declarer = game.players.find(p => p.seat === summary?.declarerSeat);
   const next = game.players.find(p => p.seat === summary?.nextDeclarerSeat);
   const kitty = round?.kittyRevealed ?? [];
+  const story = useMemo(
+    () =>
+      roundStory(summary, round?.trickHistory ?? [], seat =>
+        game.players.find(p => p.seat === seat)?.nickname
+      ),
+    [summary, round?.trickHistory, game.players]
+  );
   return createPortal(
     <div className="fixed inset-0 z-40 grid place-items-center bg-black/55 p-4">
       <div className="panel w-[min(94%,440px)] p-5">
@@ -514,11 +537,24 @@ function SettlementPanel({ game, send }) {
               : '双方不升级'}
           </span>
         </div>
+        {/* 本局复盘：这局是怎么赢/怎么输的，几句话讲清 */}
+        {story.length > 0 && (
+          <ul className="mt-3 space-y-1 rounded-xl bg-black/25 p-3 text-left text-xs font-bold leading-relaxed text-white/75">
+            {story.map((line, i) => (
+              <li key={i}>· {line}</li>
+            ))}
+          </ul>
+        )}
+
         {game.phase !== 'GAME_OVER' && summary && (
           <p className="mt-2 text-center text-xs font-bold text-white/70">
             下一局：{next?.nickname} 做庄 · 打 {levelLabel(game.teamLevels[summary.nextDeclarerSeat % 2])}
-            {game.phase === 'ROUND_END' ? ' · 即将进入准备…' : ''}
           </p>
+        )}
+
+        {/* 小结停留 100 秒供复盘；四人都点「看完了」提前进入下一局 */}
+        {game.phase === 'ROUND_END' && (
+          <RoundEndConfirm game={game} send={send} />
         )}
         <p className="mt-1 text-center text-[11px] font-bold text-white/40">
           本局：{declarer?.nickname} 做庄 · 主{suitSymbol(round?.trumpSuit)}打 {rankLabel(round?.rankCard)}
@@ -527,6 +563,54 @@ function SettlementPanel({ game, send }) {
       </div>
     </div>,
     document.body
+  );
+}
+
+// 本局小结的「看完了」确认条：倒计时 + 已确认人数 + 自己的按钮。
+// 服务端持有截止时刻与确认名单，这里只做展示与发送意图。
+function RoundEndConfirm({ game, send }) {
+  const round = game.round;
+  const confirms = round?.roundEndConfirms ?? [];
+  const now = useNow(true, 500);
+  const left = secondsLeft(round?.roundEndDeadline, now);
+  const mine = confirms.includes(game.you.seat);
+  return (
+    <div className="mt-3 rounded-xl bg-white/5 p-3">
+      <div className="flex items-center justify-center gap-2 text-xs font-bold text-white/60">
+        <span>已看完 {confirms.length}/4</span>
+        <span className="flex gap-1">
+          {[...game.players]
+            .sort((a, b) => a.seat - b.seat)
+            .map(p => (
+              <span
+                key={p.id}
+                title={`${p.nickname}${confirms.includes(p.seat) ? ' 已看完' : ' 还在看'}`}
+                className={`pill ${
+                  confirms.includes(p.seat)
+                    ? 'bg-emerald-400/25 text-emerald-200'
+                    : 'bg-white/10 text-white/40'
+                }`}
+              >
+                {PLAYER_EMOJI[p.id]}
+              </span>
+            ))}
+        </span>
+        {left !== null && (
+          <span className={left <= 10 ? 'text-rose-300' : 'text-white/50'}>
+            · {Math.ceil(left)} 秒后自动继续
+          </span>
+        )}
+      </div>
+      <div className="mt-2 flex justify-center">
+        <button
+          className="btn-gold"
+          disabled={mine}
+          onClick={() => send({ type: 'confirmRoundEnd' })}
+        >
+          {mine ? '已确认，等其他人…' : '看完了，下一局'}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -635,6 +719,13 @@ function PlayZone({ player, game, isYou }) {
   const showTiaoZhu = tiaoZhu && round?.currentTrick?.[0]?.seat === player.seat;
   const hasPlay = !!play && play.cards.length > 0;
 
+  // 亮主标记：谁把主牌亮出来的。
+  // trumpEvent 是有人手持级牌亮主（第二局起亮主者可以是闲家，与庄家无关）；
+  // 揭底定主（fallbackTrumpCard）没有"亮主人"，此时四家都不挂这个标记。
+  const isDeclarer =
+    !!round?.trumpEvent && round.trumpEvent.declarerSeat === player.seat;
+  const trumpDeclaredLabel = isDeclarer ? suitSymbol(round.trumpEvent.card.suit) : '';
+
   return (
     <div
       data-playzone={player.seat}
@@ -668,6 +759,15 @@ function PlayZone({ player, game, isYou }) {
       <div className="flex items-center gap-1 text-xs font-black text-white/80">
         {PLAYER_EMOJI[player.id]} {player.nickname}
         {isYou ? '(我)' : ''}
+        {isDeclarer && (
+          // 谁亮的主：第二局起亮主者不一定是庄家，所以这是独立于「庄」的标记
+          <span
+            className="pill bg-amber-400/25 text-amber-200"
+            title={`${player.nickname} 亮的主：${trumpDeclaredLabel}`}
+          >
+            亮{trumpDeclaredLabel}
+          </span>
+        )}
         {isWinner ? ' 🏆' : leading ? ' 👑' : ''}
       </div>
       {/* 出牌区自适应：没牌时只剩方位名一条细线；有牌按张数展开（容量 10 张，超出再压缩） */}
@@ -910,7 +1010,7 @@ function ErrorToast({ error }) {
   );
 }
 
-// 我的手牌：加大号牌面（lg），大幅重叠排列（每张露约 36px 左缘，最右一张完整）；
+// 我的手牌：加大号牌面（lg），固定重叠左对齐（每张露 EXPOSE_W 左缘，每组末张露全宽）；
 // 按组排列：主牌组在前，副牌组按红黑交替排序；组间间隔规则：
 //   · 主牌组 → 第一副牌组：大间隔（明显大于副牌组之间的间隔）
 //   · 同色相邻副牌组（无法交替时）：明显间隔
@@ -921,12 +1021,15 @@ function ErrorToast({ error }) {
 // 拖回已选牌不会取消），位移超过 5px 进入拖动模式；触摸同样支持滑动多选。
 // 换底时庄家 33 张（底牌已并入，统一排序），从中点选 8 张埋回；
 // 过河时点选 3 张（发起者：全部主牌 + 副牌补足；对家：3 张副牌）。
-function HandArea({ game, selected, onToggle, onDragAdd, onDeclareRank }) {
+function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclareRank }) {
   const you = game.you;
   const hand = you.hand ?? [];
   const revealing = game.phase === 'REVEALING';
-  const selectable =
-    game.phase === 'PLAYING' && game.round && !game.round.lastTrick && game.round.turnSeat === you.seat;
+  // 出牌阶段全程可选牌 —— 不必等轮到自己。
+  // 没轮到时先把要打的牌挑好，轮到自己直接按「出牌」/空格打出，不用手忙脚乱。
+  // 真正的出牌动作仍然只在自己回合可用（服务端另有 NOT_YOUR_TURN 兜底），
+  // 而且首家出牌后领出花色才确定，预选可能变成不合法 —— 由 checkSelection 照常提示。
+  const selectable = game.phase === 'PLAYING' && !!game.round;
   const exchangeSelectable =
     game.phase === 'KITTY_EXCHANGE' && game.declarerSeat === you.seat;
   const cross = you.crossRiver ?? {};
@@ -940,11 +1043,13 @@ function HandArea({ game, selected, onToggle, onDragAdd, onDeclareRank }) {
     [hand, game.round?.trumpSuit, game.round?.rankCard]
   );
 
-  // 动态间距布局（33 张换底峰值必须完整放下，绝不允许溢出/横向滚动）：
-  //   间距 = (可用宽度 − 每组末张完整宽度 − 组间隔总和) ÷ (张数 − 组数)
-  // 组间隔 = 间距 + 小增量（普通 +8 上限 20；主副分界 +16 上限 32）——
+  // 固定重叠布局：每张只露出固定宽度（够看清点数 + 花色），整行左对齐。
+  // ⚠️ 露出宽度与视口宽度无关 —— 视口再宽也不摊开，牌始终叠在一起。
+  //   （旧实现按可用宽度反解间距，视口越宽牌摊得越开，右对齐；已废弃。）
+  // 组间隔 = 露出宽度 + 小增量（普通 +8 上限 20；主副分界 +16 上限 32）——
   //   分组主要靠颜色交替与张数角标，间隔只给“比组内略大”的提示。
-  // 间距低于下限（18px，容得下“10”+花色符号）时整体缩小牌面档位，仍不够则压到极限。
+  // 只有窄到放不下峰值张数时才逐级降低牌面档位，仍不够才压缩露出宽度：
+  //   不溢出/不横向滚动这条底线优先于“固定露出”。
   const rowRef = useRef(null);
   const [avail, setAvail] = useState(0);
   // hasRow 依赖：手牌行是在揭牌后才挂载的，挂载时立即测量并开始观察（窗口变化实时重算）
@@ -963,49 +1068,37 @@ function HandArea({ game, selected, onToggle, onDragAdd, onDeclareRank }) {
     };
   }, [hasRow]);
 
-  // 间距按阶段峰值锁定（换底 33、其余 25），阶段内固定不变、出牌不重算——
-  // 手牌越打越少时行宽随张数线性缩短（右端锚定），不会每轮跳一次位置。
-  // 只有窗口尺寸变化（ResizeObserver）或阶段切换（峰值变化）才重算。
+  // 牌面档位按阶段峰值锁定（换底 33、其余 25）：按“最多会有多少张”选档，
+  // 阶段内固定不变，手牌越打越少也不会突然换档、跳一次位置。
+  // 露出宽度本身是定值，只有窄到放不下峰值时才降档/压缩。
+  // 左对齐锚定：打掉牌只是行尾变短，已出的牌左侧位置纹丝不动。
   const peak = game.phase === 'KITTY_EXCHANGE' ? 33 : 25;
   const layout = useMemo(() => {
     if (hand.length === 0) return null;
     // 组数按峰值 4 组估算（主牌组 + 3 门副牌组；主副分界 1 条、其余组间 2 条），
-    // 与当前实际组数无关 —— 保证某个花色打完后间距仍不变。
+    // 与当前实际组数无关 —— 保证某个花色打完后布局仍不变。
     const G = 4;
     const g3 = 1; // 主副分界
     const g2 = 2; // 其余组间
-    const denom = peak - G; // 间距系数
-    const MIN_SPACING = 18; // 刚好容得下“10”+花色符号
+    const denom = peak - G; // 只露出左缘的张数（每组末张露全宽）
+    const gapsFor = s => ({ gap2: Math.min(s + 8, 20), gap3: Math.min(s + 16, 32) });
+    // 峰值张数所需总宽：G 张露全宽 + 其余按露出宽度叠 + 组间隔
+    const widthFor = (tier, s) => {
+      const { gap2, gap3 } = gapsFor(s);
+      return G * tier.w + s * denom + gap2 * g2 + gap3 * g3;
+    };
+
     for (const tier of HAND_TIERS) {
-      // 组间隔 = 组内间距 + 小增量，带绝对上限：
-      //   普通组间 +8px 上限 20px；主副分界 +16px 上限 32px。
-      // 固定点迭代（组间隔依赖间距，间距又依赖组间隔，3 次即收敛）。
-      let s = MIN_SPACING;
-      for (let i = 0; i < 4; i++) {
-        const gapN = Math.min(s + 8, 20);
-        const gapT = Math.min(s + 16, 32);
-        s = (avail - G * tier.w - gapN * g2 - gapT * g3) / denom;
-      }
-      if (s >= MIN_SPACING - 1e-6) {
-        return {
-          size: tier.name,
-          w: tier.w,
-          s,
-          gap2: Math.min(s + 8, 20),
-          gap3: Math.min(s + 16, 32),
-        };
+      // avail === 0 是首帧未测量：先按最大档给出固定露出，测量后再重算
+      if (avail === 0 || widthFor(tier, EXPOSE_W) <= avail) {
+        return { size: tier.name, w: tier.w, s: EXPOSE_W, ...gapsFor(EXPOSE_W) };
       }
     }
-    // 所有档位都低于下限：用最小牌面 + 极限压缩（间距可低于下限，但绝不溢出）
+    // 最小档仍放不下（极窄视口）：压缩露出宽度，绝不溢出
     const tier = HAND_TIERS[HAND_TIERS.length - 1];
-    const s = Math.max(4, (avail - G * tier.w - 8 * g2 - 16 * g3) / denom);
-    return {
-      size: tier.name,
-      w: tier.w,
-      s,
-      gap2: Math.min(s + 8, 20),
-      gap3: Math.min(s + 16, 32),
-    };
+    const raw = (avail - G * tier.w - 20 * g2 - 32 * g3) / denom;
+    const s = Math.max(MIN_EXPOSE_W, Math.min(EXPOSE_W, raw));
+    return { size: tier.name, w: tier.w, s, ...gapsFor(s) };
   }, [peak, avail, hand.length]);
 
   // 拖动多选（add-only）：按下记录起点，位移超过阈值进入拖动模式（起点牌也加选），
@@ -1074,8 +1167,14 @@ function HandArea({ game, selected, onToggle, onDragAdd, onDeclareRank }) {
     }
   }
 
-  // groupIndex 为组内序号（组间间隔不参与重叠），组首张不向左重叠
-  const renderCard = (c, groupIndex, group, isLastInGroup) => {
+  // groupIndex 为组内序号（组间间隔不参与重叠），组首张不向左重叠。
+  //
+  // ⚠️ 抬起的牌（可亮级牌 / 已选中）绝不能加 z-10。
+  // 手牌是「右压左」的叠放，每张只露出左缘一条；一旦某张被提到上层，
+  // 它就会盖住右邻牌的左上角点数 —— 那正是叠放时唯一能读到的位置。
+  // 只做垂直位移足够表达抬起：露出的左缘本来就带点数，
+  // 再加上抬高的 12px 横条，一眼可见，且不遮任何人。
+  const renderCard = (c, groupIndex, group, isLastInGroup, groupIds) => {
     const badge = rankBadges.get(c.id);
     const isSelected = selected.includes(c.id);
     const lifted = badge !== undefined || isSelected;
@@ -1089,14 +1188,17 @@ function HandArea({ game, selected, onToggle, onDragAdd, onDeclareRank }) {
         data-suit={c.suit}
         data-rank={c.rank}
         className={`relative shrink-0 transition-transform duration-150 ${
-          lifted ? 'z-10 -translate-y-3' : ''
+          lifted ? '-translate-y-3' : ''
         } ${interactive ? 'touch-none' : ''}`}
         style={groupIndex > 0 ? { marginLeft: -overlap } : undefined}
       >
         {badge !== undefined && (
           // 角标可直接点按亮主（手机上无键盘，对应数字快捷键）
           <button
-            className="absolute -top-2 left-1/2 z-20 grid h-6 w-6 -translate-x-1/2 place-items-center rounded-full bg-amber-400 text-sm font-black text-amber-950 shadow-md transition hover:scale-110"
+            // 角标必须落在本张牌露出的那条左缘上（约 18px 宽）：
+            // 原来水平居中在 56px 牌面上，视觉上飘在右邻牌头顶，看不出属于哪张。
+            // 纵向压到底部：左上角是本张牌的点数，右下角是旋转点数，中间空白最安全。
+            className="absolute bottom-1 left-0 z-20 grid h-6 w-6 place-items-center rounded-full bg-amber-400 text-sm font-black text-amber-950 shadow-md ring-2 ring-amber-200/60 transition hover:scale-110"
             title={`亮主（快捷键 ${badge}）`}
             onPointerDown={e => e.stopPropagation()}
             onClick={e => {
@@ -1108,9 +1210,22 @@ function HandArea({ game, selected, onToggle, onDragAdd, onDeclareRank }) {
           </button>
         )}
         {countBadge !== null && (
-          <span className="absolute -top-2 right-0 z-20 rounded-full bg-black/70 px-1.5 py-0.5 text-[11px] font-black leading-none text-white/85 ring-1 ring-white/25">
+          // 组张数角标兼「整组全选」按钮：不可选的阶段退化为纯展示
+          <button
+            type="button"
+            disabled={!interactive}
+            title={interactive ? `点击选中这一组全部 ${countBadge} 张（再点取消）` : `本组 ${countBadge} 张`}
+            className={`absolute -top-2 right-0 z-20 rounded-full bg-black/70 px-1.5 py-0.5 text-[11px] font-black leading-none text-white/85 ring-1 ring-white/25 ${
+              interactive ? 'cursor-pointer hover:scale-110 hover:bg-amber-400 hover:text-amber-950' : ''
+            }`}
+            onPointerDown={e => e.stopPropagation()}
+            onClick={e => {
+              e.stopPropagation();
+              onToggleGroup?.(groupIds);
+            }}
+          >
             {countBadge}
-          </span>
+          </button>
         )}
         <PlayingCard
           suit={c.suit}
@@ -1141,8 +1256,9 @@ function HandArea({ game, selected, onToggle, onDragAdd, onDeclareRank }) {
         />
       );
     }
+    const groupIds = cards.map(c => c.id);
     for (let i = 0; i < cards.length; i++) {
-      rows.push(renderCard(cards[i], i, group, i === cards.length - 1));
+      rows.push(renderCard(cards[i], i, group, i === cards.length - 1, groupIds));
     }
     pos += group.count;
   }
@@ -1167,9 +1283,9 @@ function HandArea({ game, selected, onToggle, onDragAdd, onDeclareRank }) {
           <span className="text-xs font-bold text-white/40">揭牌后手牌显示在这里</span>
         </div>
       ) : (
-        /* 动态间距布局：全部牌完整放下、最右一张完整露出、无横向滚动。
+        /* 固定重叠 + 左对齐：牌始终叠在一起靠左排，视口再宽也不摊开、不右移。
            顶部预留抬起 + 角标空间（pt-5），不设 overflow hidden，避免抬起的牌被裁掉 */
-        <div ref={rowRef} className="flex items-end justify-end pb-2 pt-5">{rows}</div>
+        <div ref={rowRef} className="flex items-end justify-start pb-2 pt-5">{rows}</div>
       )}
     </div>
   );

@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 // 测试客户端快捷键纯判定模块（无 DOM 依赖，node 可直接跑）
 import { isTypingTarget, shortcutAction } from '../../client/src/shortcut.js';
+import { toggleGroup } from '../../client/src/selection.js';
+import { groupBadgeCount } from '../../client/src/handGroups.js';
 
 test('输入框聚焦时全部快捷键失效（打字按空格绝不触发抓牌/出牌）', () => {
   assert.equal(isTypingTarget({ tagName: 'INPUT' }), true);
@@ -71,4 +73,35 @@ test('数字键 1-9：立即亮出第 N 张可亮级牌，编号与角标对应�
 test('数字键只在揭牌阶段生效', () => {
   const playCtx = { phase: 'PLAYING', myRevealTurn: false, myPlayTurn: true, selectedIds: ['c1'], rankCardIds: ['r1'] };
   assert.equal(shortcutAction({ key: '1', target: { tagName: 'BODY' } }, playCtx), null);
+});
+
+// ---- 整组全选（点手牌组张数角标）----
+
+test('toggleGroup：组内未全选 → 补选整组', () => {
+  assert.deepEqual(toggleGroup(['a'], ['a', 'b', 'c'], Infinity), ['a', 'b', 'c']);
+  assert.deepEqual(toggleGroup([], ['a', 'b'], Infinity), ['a', 'b']);
+});
+
+test('toggleGroup：组内已全选 → 取消整组，组外选中不受影响', () => {
+  assert.deepEqual(toggleGroup(['x', 'a', 'b'], ['a', 'b'], Infinity), ['x']);
+});
+
+test('toggleGroup：受上限约束，只补到满，不清空已选', () => {
+  // 换底上限 8：已选 6 张，组有 5 张 → 只能再补 2 张
+  const selected = ['s1', 's2', 's3', 's4', 's5', 's6'];
+  const out = toggleGroup(selected, ['g1', 'g2', 'g3', 'g4', 'g5'], 8);
+  assert.equal(out.length, 8);
+  assert.deepEqual(out.slice(0, 6), selected, '原有选中保持不动');
+  assert.deepEqual(out.slice(6), ['g1', 'g2']);
+});
+
+test('toggleGroup：空组 / 非数组 → 原样返回', () => {
+  assert.deepEqual(toggleGroup(['a'], [], Infinity), ['a']);
+  assert.deepEqual(toggleGroup(['a'], null, Infinity), ['a']);
+});
+
+test('groupBadgeCount：5 张显示、4 张不显示（门槛改为 ≥5）', () => {
+  assert.equal(groupBadgeCount({ count: 4 }), null);
+  assert.equal(groupBadgeCount({ count: 5 }), 5);
+  assert.equal(groupBadgeCount({ count: 9 }), 9);
 });

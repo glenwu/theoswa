@@ -74,8 +74,15 @@ function connect(id) {
   });
 }
 
+// 本脚本专用存档路径。⚠️ 必须每次跑之前删掉：
+// 服务端启动时会自动恢复 12 小时内的存档，上一次跑完留下的存档会让这次直接从
+// PLAYING 之类的中途阶段起步，脚本却还在等 READY_CHECK —— 表现为莫名其妙的
+// 「waitUntil 超时」，而且只在第二次跑时出现，极难排查。
+const SHOT_SAVE_FILE = '/tmp/ui-shot-save.json';
+
 async function main() {
   fs.mkdirSync(OUT_DIR, { recursive: true });
+  fs.rmSync(SHOT_SAVE_FILE, { force: true }); // 清掉上一次的存档，保证每次都是干净开局
 
   // 1) 干净服务端（固定种子 + 短节奏；收牌停留很短以便快速过轮）
   const srv = spawn(
@@ -85,9 +92,10 @@ async function main() {
       env: {
         ...process.env,
         SEED: '42',
-        SAVE_FILE: '/tmp/ui-shot-save.json',
+        SAVE_FILE: SHOT_SAVE_FILE,
         FLIP_MS: '60', DRAW_MS: '80', GRACE_MS: '400', FALLBACK_MS: '30', DEALING_MS: '30',
         CROSS_RIVER_MS: '300', SETTLE_MS: '200', PLAY_MS: '120000',
+        SCORING_MS: '100', ROUND_END_MS: '200', // 小结默认 100 秒（供复盘），截图脚本压短
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     }

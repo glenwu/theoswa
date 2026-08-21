@@ -24,8 +24,10 @@ test('handGroups：按有效花色聚合，主牌组在前', () => {
   assert.equal(groups[3].color, 'black');
 });
 
-test('组张数角标：5 张不显示、6 张显示', () => {
-  assert.equal(groupBadgeCount({ count: 5 }), null);
+// 门槛从 >5 改为 >=5：角标同时是「整组全选」按钮，一次点 5 张也值得
+test('组张数角标：4 张不显示、5 张起显示', () => {
+  assert.equal(groupBadgeCount({ count: 4 }), null);
+  assert.equal(groupBadgeCount({ count: 5 }), 5);
   assert.equal(groupBadgeCount({ count: 6 }), 6);
   assert.equal(groupBadgeCount({ count: 7 }), 7);
 });

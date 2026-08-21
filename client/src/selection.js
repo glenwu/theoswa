@@ -17,3 +17,19 @@ export function dragAdd(selected, id, cap) {
 export function selectionCapFor(phase) {
   return phase === 'KITTY_EXCHANGE' ? 8 : Infinity;
 }
+
+// 整组全选 / 全不选（点手牌上的组张数角标触发）：
+//   组内全部已选 → 取消整组；否则把组内未选的补进来，受上限约束（换底 8 张、过河 3 张）。
+// 上限不足以装下整组时只补到满 —— 不报错、不清空已选，玩家再自己微调。
+export function toggleGroup(selected, ids, cap) {
+  if (!Array.isArray(ids) || ids.length === 0) return selected;
+  if (ids.every(id => selected.includes(id))) {
+    return selected.filter(id => !ids.includes(id));
+  }
+  const merged = [...selected];
+  for (const id of ids) {
+    if (merged.length >= cap) break;
+    if (!merged.includes(id)) merged.push(id);
+  }
+  return merged;
+}
