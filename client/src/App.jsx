@@ -103,7 +103,7 @@ export default function App() {
   }
   if (!game) {
     return (
-      <div className="grid h-screen place-items-center font-bold text-white/80">
+      <div className="grid h-[100dvh] place-items-center font-bold text-white/80">
         正在连接房间…
       </div>
     );
@@ -125,7 +125,18 @@ function GameLayout({ game, send, error }) {
   const incomingSwap = game.swapProposals.find(sp => sp.toSeat === game.you.seat);
 
   return (
-    <div className="flex h-screen w-full gap-2 overflow-hidden p-2">
+    // h-[100dvh] 而不是 h-screen(100vh)：iOS Safari 的 100vh 不含浏览器工具栏，
+    // 配上 overflow-hidden 就会把顶部裁掉（iPad 上表现为左栏标题和上家出牌区被遮）。
+    // dvh 跟随可视区实时变化；再叠 safe-area 内边距，避开刘海与home indicator。
+    <div
+      className="flex h-[100dvh] w-full gap-2 overflow-hidden p-2"
+      style={{
+        paddingTop: 'max(0.5rem, env(safe-area-inset-top))',
+        paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
+        paddingLeft: 'max(0.5rem, env(safe-area-inset-left))',
+        paddingRight: 'max(0.5rem, env(safe-area-inset-right))',
+      }}
+    >
       {/* 新开一局提案：全局全屏弹窗（portal 到 body） */}
       {game.resetProposal && !proposalDismissed && (
         <ResetProposalModal game={game} send={send} onClose={() => setProposalDismissed(true)} />

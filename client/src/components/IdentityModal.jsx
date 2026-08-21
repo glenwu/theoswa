@@ -31,7 +31,7 @@ export default function IdentityModal({ notice, onPick }) {
   }, []);
 
   return (
-    <div className="grid h-screen place-items-center">
+    <div className="grid h-[100dvh] place-items-center">
       <div className="panel w-[min(92vw,420px)] p-6 text-center">
         <h1 className="text-2xl font-black text-amber-300">潮汕升级</h1>
         <p className="mt-1 text-sm font-bold text-white/60">选择你的身份进入房间</p>

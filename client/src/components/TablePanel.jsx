@@ -22,6 +22,13 @@ import { handGroups, groupBadgeCount } from '../handGroups.js';
 import { tapToggle, dragAdd, toggleGroup } from '../selection.js';
 import { ProposeResetModal, ForceResetModal } from './ResetModals.jsx';
 
+const PHASE_NAMES_CN = {
+  SEATING: '换座阶段', READY_CHECK: '准备阶段', REVEAL_FIRST: '抢按揭牌',
+  REVEALING: '揭牌定主', FALLBACK_TRUMP: '揭底定主', DEALING: '发牌中',
+  KITTY_EXCHANGE: '庄家换底', CROSS_RIVER: '三主过河', PLAYING: '出牌',
+  DOMINANCE: '碾压收尾', SCORING: '结算', ROUND_END: '本局结束', GAME_OVER: '游戏结束',
+};
+
 const PHASE_HINTS = {
   SEATING: '换座阶段：点击左侧玩家请求换座，全员确认座位后开始',
   READY_CHECK: '等待全员准备…',
@@ -422,6 +429,7 @@ function TopBanner({ game }) {
 }
 
 function CenterInfo({ game }) {
+  const [showHint, setShowHint] = useState(false);
   const round = game.round;
   const trumpSuit = round?.trumpSuit ?? null;
   const pts = round?.defenderTrickPoints ?? 0;
@@ -431,7 +439,7 @@ function CenterInfo({ game }) {
   const graceLeft = secondsLeft(round?.graceDeadline, now);
 
   return (
-    <div className="flex h-44 w-60 flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-center">
+    <div className="flex h-44 w-60 flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-center portrait:max-lg:h-auto portrait:max-lg:w-40 portrait:max-lg:gap-1 portrait:max-lg:px-2 portrait:max-lg:py-1.5">
       <div
         className={`text-4xl font-black ${
           trumpSuit ? (suitRed(trumpSuit) ? 'text-rose-400' : 'text-white/90') : 'text-white/30'
@@ -480,7 +488,24 @@ function CenterInfo({ game }) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      <div className="text-xs font-bold text-white/70">{PHASE_HINTS[game.phase]}</div>
+      {/* 阶段说明：竖屏窄屏空间宝贵，整段文字换成一个「说明」小按钮，点开才看 */}
+      <div className="text-xs font-bold text-white/70 portrait:max-lg:hidden">
+        {PHASE_HINTS[game.phase]}
+      </div>
+      <button
+        type="button"
+        className="hidden rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-black text-white/70 portrait:max-lg:block"
+        onClick={() => setShowHint(true)}
+      >
+        说明
+      </button>
+      {showHint && (
+        <Modal title={PHASE_NAMES_CN[game.phase] ?? game.phase} onClose={() => setShowHint(false)}>
+          <p className="py-2 text-sm font-bold leading-relaxed text-white/80">
+            {PHASE_HINTS[game.phase]}
+          </p>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -699,6 +724,8 @@ function RematchPanel({ game, send }) {
 }
 
 // 埋好的 8 张底牌：牌背列在牌桌中央；埋入的件（副牌 A/K）按规则明牌亮出
+// 底牌行：竖屏窄屏改用更小的牌与更紧的间距 —— 这里真正要看的只有
+// 「被系统亮出来的副牌 A/K（件）」，其余牌背只是占位。
 function KittyBacksRow({ game }) {
   const round = game.round;
   if (!round || game.phase !== 'PLAYING' && game.phase !== 'DOMINANCE') return null;
@@ -706,8 +733,8 @@ function KittyBacksRow({ game }) {
   if (total <= 0) return null;
   const revealed = round.kittyRevealedPieces ?? [];
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-black/25 px-3 py-1.5">
-      <span className="text-[10px] font-bold text-white/40">底牌</span>
+    <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-black/25 px-3 py-1.5 portrait:max-lg:gap-1 portrait:max-lg:px-1.5 portrait:max-lg:py-1">
+      <span className="text-[10px] font-bold text-white/40 portrait:max-lg:hidden">底牌</span>
       <div className="flex">
         {Array.from({ length: total }, (_, i) => {
           const piece = revealed[i] ?? null; // 明牌亮出的件排在前面
@@ -726,7 +753,7 @@ function KittyBacksRow({ game }) {
               rank={null}
               faceUp={false}
               size="sm"
-              className="-ml-3 first:ml-0"
+              className="-ml-3 first:ml-0 portrait:max-lg:-ml-[1.35rem]"
             />
           );
         })}
@@ -837,7 +864,7 @@ function PlayZone({ player, game, side = 'top', isYou }) {
           {/* 左右两侧在竖屏手机上改为竖向叠放：竖屏横向空间本来就窄，
               甩牌多张时横排会把中间牌桌挤没。单张时横竖一样，无影响。
               仅限竖屏 + 窄屏，横屏和桌面保持原来的横排。 */}
-          <div className={`flex ${sideways ? 'portrait:max-md:flex-col' : ''}`}>
+          <div className={`flex ${sideways ? 'portrait:max-lg:flex-col' : ''}`}>
             {play.cards.map((c, i) => (
               <PlayingCard
                 key={c.id}
@@ -848,7 +875,7 @@ function PlayZone({ player, game, side = 'top', isYou }) {
                   i === 0
                     ? ''
                     : sideways
-                      ? `${play.cards.length > 10 ? '-ml-[54px]' : '-ml-12'} portrait:max-md:ml-0 portrait:max-md:-mt-[4.5rem]`
+                      ? `${play.cards.length > 10 ? '-ml-[54px]' : '-ml-12'} portrait:max-lg:ml-0 portrait:max-lg:-mt-[4.5rem]`
                       : play.cards.length > 10
                         ? '-ml-[54px]'
                         : '-ml-12'
@@ -867,6 +894,7 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions }) 
   const round = game.round;
   const now = useNow(game.phase === 'REVEALING');
   const buttons = [];
+  const hints = []; // 提示与辅助按钮：单独一行放在主按钮下方，不跟主按钮抢横向空间
 
   // 出牌阶段的本地校验（与服务端同一份纯函数），用于禁用与提示
   const verdict = useMemo(
@@ -1037,8 +1065,8 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions }) 
       </button>
     );
     if (showVerdict) {
-      buttons.push(
-        <span key="reason" className="max-w-64 rounded-full bg-rose-500/20 px-3 py-1 text-xs font-bold text-rose-200">
+      hints.push(
+        <span key="reason" className="max-w-[18rem] rounded-full bg-rose-500/20 px-3 py-1 text-xs font-bold text-rose-200">
           {verdict.reason}
         </span>
       );
@@ -1050,7 +1078,7 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions }) 
     selected.length > 0 &&
     (game.phase === 'PLAYING' || game.phase === 'KITTY_EXCHANGE' || game.phase === 'CROSS_RIVER')
   ) {
-    buttons.push(
+    hints.push(
       <button key="clear" className="btn-gold-sm" onClick={onClear}>
         清空选择 ({selected.length})
       </button>
@@ -1058,8 +1086,11 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions }) 
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-3 py-2">
-      {buttons}
+    <div className="flex flex-col items-center gap-1.5 py-2">
+      <div className="flex flex-wrap items-center justify-center gap-3">{buttons}</div>
+      {hints.length > 0 && (
+        <div className="flex flex-wrap items-center justify-center gap-2">{hints}</div>
+      )}
       <ErrorToast error={error} />
     </div>
   );
@@ -1163,14 +1194,22 @@ function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclar
     for (const tier of HAND_TIERS) {
       // avail === 0 是首帧未测量：先按最大档给出固定露出，测量后再重算
       if (avail === 0 || widthFor(tier, EXPOSE_W) <= avail) {
-        return { size: tier.name, w: tier.w, s: EXPOSE_W, ...gapsFor(EXPOSE_W) };
+        return { size: tier.name, w: tier.w, s: EXPOSE_W, rows: 1, ...gapsFor(EXPOSE_W) };
       }
     }
-    // 最小档仍放不下（极窄视口）：压缩露出宽度，绝不溢出
+    // 最小档单行仍放不下：先试「拆成两行」而不是继续压缩露出宽度。
+    // 一行挤到 8px 露出时点数已经快看不清了；宁可占两行高度，也要让每张牌读得出来。
+    // 两行按峰值一半估算所需宽度（实际分行由渲染时按累计宽度切）。
     const tier = HAND_TIERS[HAND_TIERS.length - 1];
-    const raw = (avail - G * tier.w - 20 * g2 - 32 * g3) / denom;
+    const halfDenom = Math.ceil(peak / 2) - G;
+    const twoRowWidth = G * tier.w + EXPOSE_W * Math.max(1, halfDenom) + 20 * g2 + 32 * g3;
+    if (twoRowWidth <= avail) {
+      return { size: tier.name, w: tier.w, s: EXPOSE_W, rows: 2, ...gapsFor(EXPOSE_W) };
+    }
+    // 两行也放不下：压缩露出宽度，绝不横向溢出
+    const raw = (avail - G * tier.w - 20 * g2 - 32 * g3) / Math.max(1, halfDenom);
     const s = Math.max(MIN_EXPOSE_W, Math.min(EXPOSE_W, raw));
-    return { size: tier.name, w: tier.w, s, ...gapsFor(s) };
+    return { size: tier.name, w: tier.w, s, rows: 2, ...gapsFor(s) };
   }, [peak, avail, hand.length]);
 
   // 拖动多选（add-only）：按下记录起点，位移超过阈值进入拖动模式（起点牌也加选），
@@ -1335,6 +1374,13 @@ function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclar
     pos += group.count;
   }
 
+  // 两行模式：按累计宽度把 rows 切成两段（组间隔的空 div 也计入宽度）
+  const rowChunks = useMemo(() => {
+    if (!layout || layout.rows !== 2 || rows.length === 0) return [rows];
+    const half = Math.ceil(rows.length / 2);
+    return [rows.slice(0, half), rows.slice(half)];
+  }, [rows, layout?.rows]);
+
   return (
     <div className="rounded-2xl border border-white/10 bg-black/15 p-2">
       <div className="mb-1 flex items-center justify-between text-xs font-bold text-white/50">
@@ -1357,7 +1403,11 @@ function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclar
       ) : (
         /* 固定重叠 + 左对齐：牌始终叠在一起靠左排，视口再宽也不摊开、不右移。
            顶部预留抬起 + 角标空间（pt-5），不设 overflow hidden，避免抬起的牌被裁掉 */
-        <div ref={rowRef} className="flex items-end justify-start pb-2 pt-5">{rows}</div>
+        <div ref={rowRef} className="flex flex-col gap-1 pb-2 pt-5">
+          {rowChunks.map((chunk, i) => (
+            <div key={i} className="flex items-end justify-start">{chunk}</div>
+          ))}
+        </div>
       )}
     </div>
   );
