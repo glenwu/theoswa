@@ -336,23 +336,24 @@ test('过河：引擎计时（对家回牌超时自动完成 + 决定窗口结�
 
 // ============ 1b. 撬底主牌额外升级惩罚 ============
 
-test('过河惩罚：庄家触发过河 + 被撬底 + 底牌 8 张主牌 + P_final=90 → 闲家升 8 级', () => {
+test('过河惩罚：庄家触发过河 + 被撬底 + 底牌 8 张主牌 + P_final=90 → 闲家升 9 级', () => {
   const r = settleRound({
     defenderTrickPoints: 70, kittyPoints: 0, kittyGrab: true, declarerTeam: 0,
     declarerCrossedRiver: true, trumpsInKitty: 8,
   });
   assert.equal(r.defenderPoints, 90);
-  assert.equal(r.upgradeCount, 8, '0（正常）+ 8（惩罚）');
+  // 撬底档位 +1 生效后：正常 1 级 + 惩罚 8 级
+  assert.equal(r.upgradeCount, 9, '1（正常，撬底够80）+ 8（过河惩罚）');
   assert.equal(r.crossRiverPenalty, 8);
 });
 
-test('过河惩罚：庄家埋 8 张主牌但未触发过河 → 无额外惩罚', () => {
+test('过河惩罚：庄家埋 8 张主牌但未触发过河 → 无额外惩罚（只剩撬底本身的 1 级）', () => {
   const r = settleRound({
     defenderTrickPoints: 70, kittyPoints: 0, kittyGrab: true, declarerTeam: 0,
     declarerCrossedRiver: false, trumpsInKitty: 8,
   });
-  assert.equal(r.upgradeCount, 0);
-  assert.equal(r.crossRiverPenalty, 0);
+  assert.equal(r.crossRiverPenalty, 0, '没触发过河就不该有惩罚');
+  assert.equal(r.upgradeCount, 1, 'P_final=90 撬底本身 1 级，底里 8 张主牌一级都不加');
 });
 
 test('过河惩罚：庄家触发过河但未被撬底 → 无额外惩罚', () => {
@@ -374,7 +375,8 @@ test('过河惩罚：finishRound 集成（底牌 8 主无分、被撬底、庄�
   const summary = finishRound(state);
   assert.equal(summary.kittyGrab, true);
   assert.equal(summary.crossRiverPenalty, 8);
-  assert.equal(summary.upgradeCount, 8 + Math.floor((70 + 0 + 20 - 80) / 20), '正常部分 0 + 惩罚 8');
+  // 期望值写死，不要把实现公式抄进断言 —— 那样实现改了断言跟着改，等于没测
+  assert.equal(summary.upgradeCount, 9, 'P_final=90：撬底正常 1 级 + 过河惩罚 8 级');
   assert.equal(summary.conservationOk, true);
 });
 

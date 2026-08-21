@@ -29,9 +29,15 @@ export function checkConservation(defenderTrickPoints, runAwayPoints, kittyPoint
 
 // 计分升级（权威公式，一字不差）：
 //   P_final = defenderTrickPoints + (kittyGrab ? kittyPoints + 20 : 0)
-//   撬底 → 无条件移庄；P_final≥80 闲家按表升，否则双方都不升（庄家不得因守住而升）
+//   撬底 → 无条件移庄；P_final≥80 闲家升 floor((P_final-80)/20) + 1，
+//          否则（P_final<80）双方都不升（庄家不得因守住而升）
 //   未撬底且 P≥80 → 移庄，闲家升 floor((P-80)/20)
 //   未撬底且 P<80 → 连庄，庄家升：P=0 → 5 级；1~79 → ceil((80-P)/20)
+//
+// ⚠️ 撬底档位比未撬底整体高一级（80→1、100→2、120→3），这是刻意的：
+// 撬底本身就是战果，够 80 分就该有实质回报，不能和"刚好守到 80"同价。
+// 未撬底那一列保持 80→0、100→1、120→2 不变。
+// 规则由 Glen 于 2026-08-20 裁定，覆盖规则文档 §6.9 原表（文档待同步）。
 //
 // 阶段7 三主过河惩罚（仅庄家、仅触发过河、仅被撬底时生效）：
 //   底牌中每有一张主牌，闲家再额外加升一级。独立叠加在正常级数之上，
@@ -52,7 +58,8 @@ export function settleRound({
       defenderPoints: P_final,
       transfer: true,
       upgradedTeam: 1 - declarerTeam,
-      upgradeCount: (P_final >= 80 ? Math.floor((P_final - 80) / 20) : 0) + crossRiverPenalty,
+      // 撬底且够 80 分 → 档位 +1 级（80→1、100→2、120→3…）
+      upgradeCount: (P_final >= 80 ? Math.floor((P_final - 80) / 20) + 1 : 0) + crossRiverPenalty,
       crossRiverPenalty,
     };
   }
