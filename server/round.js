@@ -13,6 +13,7 @@ import {
 } from './state.js';
 import { rankOfLevel } from './level.js';
 import { nextSeat } from './rotation.js';
+import { FLIP_HOLD_MS } from './constants.js';
 import { starterFromFlip } from './reveal.js';
 
 // 开局：整体重建 RoundState（杜绝跨局状态污染），建牌组、洗牌，
@@ -84,8 +85,10 @@ export function flipCardForRevealFirst(state) {
   r.kitty = separateKitty(r.deck);
   r.flipDone = true;
   r.revealTurnSeat = starter;
-  state.phase = 'REVEALING';
-  pushLog(state, '开始揭牌：逆时针逐张揭牌');
+  // 不立刻进 REVEALING：先停一会儿让四个人看清翻的是什么、起揭人怎么算出来的。
+  // 由引擎计时或四人点「知道了」后走 flow.startRevealing。
+  r.flipConfirms = [];
+  r.flipHoldDeadline = Date.now() + (state.timing?.flipHoldMs ?? FLIP_HOLD_MS);
   return { kind: 'STARTER', card, starterSeat: starter };
 }
 

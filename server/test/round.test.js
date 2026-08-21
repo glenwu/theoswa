@@ -4,7 +4,7 @@ import { createInitialState, createRoundState, playerBySeat } from '../state.js'
 import { applyAction, ErrorCode, expireCrossRiverDecision } from '../actions.js';
 import { beginRound, drawOneCard, flipCardForRevealFirst, completeDeal } from '../round.js';
 import { buildDeck, separateKitty, SUITS } from '../cards.js';
-import { settleNoTrump } from '../flow.js';
+import { settleNoTrump, startRevealing } from '../flow.js';
 import { settleFallbackTrump, fallbackTrumpOf } from '../reveal.js';
 import { rebuildPieces } from '../pieces.js';
 import { viewerState } from '../viewer.js';
@@ -110,6 +110,11 @@ test('翻牌定起揭人：大小王作废重翻；点数牌定起揭人后全�
   const r3 = flipCardForRevealFirst(state);
   assert.equal(r3.kind, 'STARTER');
   assert.equal(r3.starterSeat, nextSeat(flipperSeat), '6%4=2 → 翻牌人的下家');
+  // 起揭人定出后不立刻开揭：先停留供四家看清，阶段仍是 REVEAL_FIRST
+  assert.equal(state.phase, 'REVEAL_FIRST', '定出起揭人后先停留，不立刻开揭');
+  assert.equal(state.round.flipDone, true);
+  assert.ok(state.round.flipHoldDeadline > Date.now(), '停留截止时刻已种下');
+  startRevealing(state);
   assert.equal(state.phase, 'REVEALING');
   assert.equal(state.round.kitty.length, 8, '翻牌完成后才分离底牌');
   assert.equal(state.round.deck.length, 100);
@@ -155,7 +160,17 @@ test('亮主：非级牌拒绝、不在手上拒绝、第一人亮定后不可�
   // 第一局：亮牌者即庄家
   assert.equal(state.declarerSeat, tSeat, '庄家未定时，亮主者成为庄家');
   // 反主（阶段已离开 REVEALING）
-  assert.equal(applyAction(state, { type: 'declareTrump', cardId: 'x1' }, 'T').error.code, ErrorCode.WRONG_PHASE);
+  // 反主必须拿到准确原因，而不是笼统的 WRONG_PHASE / STALE_STATE：
+  // 主牌已定死、不能反主，「请重试」是错的提示（验收 §10-41）
+  assert.equal(
+    applyAction(state, { type: 'declareTrump', cardId: 'x1' }, 'T').error.code,
+    ErrorCode.TRUMP_ALREADY_DECLARED
+  );
+  // 真实客户端会带上自己以为的 phase，同样要拿到准确原因而不是 STALE_STATE
+  assert.equal(
+    applyAction(state, { type: 'declareTrump', cardId: 'x1', phase: 'REVEALING' }, 'T').error.code,
+    ErrorCode.TRUMP_ALREADY_DECLARED
+  );
   // 防御路径：仍处于 REVEALING 但已定主 → TRUMP_ALREADY_DECLARED
   state.phase = 'REVEALING';
   const h = state.players.find(p => p.seat !== tSeat);

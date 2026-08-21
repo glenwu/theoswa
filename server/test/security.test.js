@@ -5,6 +5,7 @@ import { applyAction } from '../actions.js';
 import { flipCardForRevealFirst, drawOneCard } from '../round.js';
 import { viewerState } from '../viewer.js';
 import { collectLeakedCards, isCardLike } from '../security.js';
+import { startRevealing } from '../flow.js';
 
 const seeded = () => 0.42;
 
@@ -17,9 +18,10 @@ function setupRevealing() {
   assert.equal(state.phase, 'REVEAL_FIRST');
   applyAction(state, { type: 'claimFlipper' }, 'T');
   let guard = 0;
-  while (state.phase === 'REVEAL_FIRST' && guard++ < 5) {
+  while (!state.round.flipDone && guard++ < 5) {
     flipCardForRevealFirst(state); // 大小王作废重翻，直到点数牌
   }
+  startRevealing(state); // 跳过 10 秒停留
   assert.equal(state.phase, 'REVEALING');
   return state;
 }

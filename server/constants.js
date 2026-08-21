@@ -40,6 +40,10 @@ export const REVEAL_TOTAL = 100;       // 4 × 25
 
 // 阶段节奏（毫秒，可用环境变量覆盖，便于测试与冒烟）
 export const REVEAL_FLIP_MS = 800;      // 翻牌定起揭人：每次翻牌间隔
+// 翻牌定出起揭人之后的停留：这一下决定了整局从谁开始揭，
+// 四个人都得看清「翻的是什么牌、点数怎么换算、轮到谁」。原来定完立刻开揭，根本来不及看。
+// 四人都点「知道了」可提前开始。
+export const FLIP_HOLD_MS = 10000;
 export const REVEAL_DRAW_MS = 3000;     // 揭牌倒计时：超时服务端自动摸牌
 export const REVEAL_GRACE_MS = 3000;    // 100张摸完后的亮主宽限窗口
 export const FALLBACK_REVEAL_MS = 800;  // 揭底定主：逐张翻底牌间隔
@@ -63,6 +67,7 @@ export function timingsFromEnv(env = process.env) {
   const num = (v, fallback) => (v === undefined || v === '' ? fallback : Number(v));
   return {
     flipMs: num(env.FLIP_MS, REVEAL_FLIP_MS),
+    flipHoldMs: num(env.FLIP_HOLD_MS, FLIP_HOLD_MS),
     drawMs: num(env.DRAW_MS, REVEAL_DRAW_MS),
     graceMs: num(env.GRACE_MS, REVEAL_GRACE_MS),
     fallbackMs: num(env.FALLBACK_MS, FALLBACK_REVEAL_MS),

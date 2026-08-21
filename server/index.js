@@ -214,10 +214,6 @@ wss.on('connection', (ws) => {
     if (msg.type === 'join') {
       const id = msg.playerId;
       if (!PLAYER_IDS.includes(id)) return sendError(ws, 'UNKNOWN_PLAYER', '未知身份');
-      const joiningPlayer = state.players.find(p => p.id === id);
-      if (joiningPlayer?.isBot) {
-        return sendError(ws, 'BOT_UNAVAILABLE', '该身份当前由电脑控制，请先在大厅移除电脑');
-      }
       const old = connections.get(id);
       if (old && old !== ws) {
         // 同身份新连接顶替旧连接（断线重连天然可用）

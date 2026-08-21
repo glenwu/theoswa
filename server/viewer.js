@@ -31,6 +31,10 @@ function clipRound(round, viewerSeat) {
     graceDeadline: round.graceDeadline,
     fallbackSuit: round.fallbackSuit,
     flipShown: round.flipShown,            // 公开：翻牌定起揭人翻出的牌
+    flipDone: round.flipDone === true,
+    // 起揭人已定后的停留：确认名单与截止时刻（公开，四端同步倒计时）
+    flipConfirms: [...(round.flipConfirms ?? [])],
+    flipHoldDeadline: round.flipHoldDeadline ?? null,
     fallbackRevealed: round.fallbackRevealed, // 公开：揭底定主摊开的底牌
     // 关键节点大图（均为公开信息）：
     flipEvent: round.flipEvent ?? null,        // 翻牌定起揭人：最近一次翻牌 {kind,card,starterSeat?,ts}

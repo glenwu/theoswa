@@ -1,6 +1,7 @@
 import { PLAYERS } from './constants.js';
 import {
   REVEAL_FLIP_MS,
+  FLIP_HOLD_MS,
   REVEAL_DRAW_MS,
   REVEAL_GRACE_MS,
   FALLBACK_REVEAL_MS,
@@ -124,6 +125,7 @@ export function createInitialState(rng = Math.random) {
     // 阶段节奏（毫秒；GameEngine 可用环境变量覆盖）
     timing: {
       flipMs: REVEAL_FLIP_MS,
+      flipHoldMs: FLIP_HOLD_MS,
       drawMs: REVEAL_DRAW_MS,
       graceMs: REVEAL_GRACE_MS,
       fallbackMs: FALLBACK_REVEAL_MS,
@@ -152,6 +154,8 @@ export function createRoundState(roundNumber, declarerSeat) {
     kittyPoints: 0,
     flipDone: false,    // REVEAL_FIRST：翻牌定起揭人是否完成
     flipShown: [],      // REVEAL_FIRST：本次翻出的牌（公开，含作废的大小王）
+    flipConfirms: [],   // 起揭人定出后点过「知道了」的座位；集齐 4 个提前开揭
+    flipHoldDeadline: null, // 起揭人定出后的停留截止时刻（四端同步倒计时）
     revealTurnSeat: null,   // 当前该谁揭牌
     drawnCount: 0,          // 已揭张数 0..100
     drawDeadline: null,     // 本次揭牌超时时刻（超时服务端自动摸）

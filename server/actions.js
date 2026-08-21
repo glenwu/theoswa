@@ -1,6 +1,6 @@
 import { PLAYERS, PLAYER_COUNT, QUICK_PHRASES, KITTY_SIZE, REVEAL_TOTAL, SUIT_NAMES, CROSS_RIVER_DECIDE_MS, CROSS_RIVER_PICK_MS } from './constants.js';
 import { playerById, playerBySeat, pushLog, resetGameState } from './state.js';
-import { chooseRevealEntry, advanceToReadyCheck } from './flow.js';
+import { chooseRevealEntry, advanceToReadyCheck, startRevealing } from './flow.js';
 import { beginRound, drawOneCard } from './round.js';
 import { isRankCard, cardLabel, sortHand } from './cards.js';
 import { rebuildPieces, pieceStatusesFor, migratePlayedPieces, trumpDumpVerdict, relocateTableCards } from './pieces.js';
@@ -84,7 +84,15 @@ function clearProposalsFor(state, seat) {
 export function handleJoin(state, action, actorId) {
   if (!PLAYERS.some(p => p.id === actorId)) return fail(ErrorCode.UNKNOWN_PLAYER, '未知身份');
   const me = playerById(state, actorId);
-  if (me.isBot) return fail(ErrorCode.BOT_UNAVAILABLE, '该身份当前由电脑控制，请先在大厅移除电脑');
+  // 真人进来直接顶掉电脑，任何阶段都可以（牌局进行中也能接手，手牌原样继承）。
+  // 原来是拒绝登录、要求先去大厅移除电脑 —— 但电脑正在打的时候大厅按钮根本不可用，
+  // 等于真人回来了却进不去自己的位置。
+  if (me.isBot) {
+    me.isBot = false;
+    me.connected = true;
+    pushLog(state, `${me.nickname} 回来了，接管了电脑玩家的位置`);
+    return succeed();
+  }
   if (!me.connected) {
     me.connected = true;
     pushLog(state, `${me.nickname} 进入房间`);
@@ -236,6 +244,22 @@ export function handleClaimFlipper(state, action, actorId) {
   const me = playerById(state, actorId);
   state.flipperSeat = me.seat;
   pushLog(state, `${me.nickname} 已揭牌，系统开始翻牌定起揭人。`);
+  return succeed();
+}
+
+// ---- 起揭人已定的停留确认（REVEAL_FIRST）----
+// 翻牌定出起揭人后停 10 秒，让四个人看清翻的是什么牌、点数怎么换算、轮到谁先揭。
+// 四人都点「知道了」就提前开揭；没点满等满 10 秒照常开始（掉线的人不会卡住全场）。
+
+export function handleConfirmFlip(state, action, actorId) {
+  if (state.phase !== 'REVEAL_FIRST') return fail(ErrorCode.WRONG_PHASE, '当前阶段无需确认');
+  const r = state.round;
+  if (!r || !r.flipDone) return fail(ErrorCode.WRONG_PHASE, '起揭人还没定出来');
+  const me = playerById(state, actorId);
+  if (r.flipConfirms.includes(me.seat)) return fail(ErrorCode.ALREADY_VOTED, '你已经确认过了');
+  r.flipConfirms.push(me.seat);
+  pushLog(state, `${me.nickname} 知道了（${r.flipConfirms.length}/4）`);
+  if (r.flipConfirms.length >= PLAYER_COUNT) startRevealing(state);
   return succeed();
 }
 
@@ -482,11 +506,22 @@ export function handlePlay(state, action, actorId) {
   // 「妮！」彩蛋：打出 Q（任意花色）时 40% 概率触发（服务端独立随机源掷骰，
   // 四家看到的结果一致；一次出牌含多张 Q 也只掷一次）。
   const nii = playedCards.some(c => c.rank === 12) && (state.niiRandom ?? Math.random)() < 0.4;
+  // 「谱掉你」彩蛋：打出大鬼且不是最后一轮时 80% 触发。
+  // 最后一轮谁出什么都没得选，甩狠话就没意思了 —— 手上的牌正好被这一手打空即为最后一轮
+  //（四家手牌数恒等，我打空了就是大家都打空了）。
+  // 与「妮！」共用同一条独立随机源：绝不能用发牌 rng，否则掷骰会推进 RNG 状态、
+  // SEED=42 就复现不出同一副牌（验收用例 §10-52）。
+  const isLastTrick = me.hand.length === playedCards.length;
+  const pudiao =
+    !isLastTrick &&
+    playedCards.some(c => c.rank === 16) &&
+    (state.niiRandom ?? Math.random)() < 0.8;
 
   me.hand = me.hand.filter(c => !playedCards.some(p => p.id === c.id));
   const play = { seat: me.seat, cards: playedCards };
   if (isLead) play.playSuit = verdict.playSuit;
   if (nii) play.nii = true;
+  if (pudiao) play.pudiao = true;
   r.currentTrick.push(play);
 
   if (r.currentTrick.length < 4) {
@@ -733,6 +768,7 @@ const HANDLERS = {
   play: handlePlay,
   confirmDominance: handleConfirmDominance,
   confirmRoundEnd: handleConfirmRoundEnd,
+  confirmFlip: handleConfirmFlip,
   proposeReset: handleProposeReset,
   voteReset: handleVoteReset,
   forceReset: handleForceReset,
@@ -748,6 +784,14 @@ const PHASE_AGNOSTIC = new Set(['join', 'leave', 'chat', 'quickChat', 'proposeRe
 export function applyAction(state, action, actorId) {
   const handler = HANDLERS[action && action.type];
   if (!handler) return fail(ErrorCode.BAD_ACTION, '未知动作');
+  // 抢亮主是四个人同时按的动作，必须先于下面的陈旧状态防护处理：
+  // 先按到的人一成功，phase 立刻变成 DEALING，晚到的那几个就再也走不到
+  // handleDeclareTrump 里的 TRUMP_ALREADY_DECLARED 分支，只会拿到笼统的
+  // 「界面状态已更新，请重试」——可主牌已经定死、不能反主，重试毫无意义，
+  // 而且把一个正常的规则事件说得像故障。这里给出准确原因。
+  if (action?.type === 'declareTrump' && state.round?.trumpSuit) {
+    return fail(ErrorCode.TRUMP_ALREADY_DECLARED, '已有人先亮主');
+  }
   // 陈旧状态防护：客户端带上已知 phase，不一致说明点的是过期界面，
   // 返回明确的 STALE_STATE 而不是笼统的错误。
   if (

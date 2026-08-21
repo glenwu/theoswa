@@ -58,7 +58,7 @@ function playView({
   };
 }
 
-test('大厅可以添加和移除电脑，电脑占用的身份不能被真人登录', () => {
+test('大厅可以添加和移除电脑；真人登录会直接顶掉电脑', () => {
   const state = createInitialState(() => 0.42);
   assert.equal(applyAction(state, { type: 'join' }, 'T').ok, true);
 
@@ -68,13 +68,34 @@ test('大厅可以添加和移除电脑，电脑占用的身份不能被真人�
   assert.equal(bot.connected, true);
   assert.equal(viewerState(state, 'T').players.find(player => player.id === 'H').isBot, true);
 
-  const join = applyAction(state, { type: 'join' }, 'H');
-  assert.equal(join.error.code, ErrorCode.BOT_UNAVAILABLE);
+  // 真人登录直接接管：不再要求先去大厅移除电脑
+  assert.equal(applyAction(state, { type: 'join' }, 'H').ok, true);
+  assert.equal(bot.isBot, false, '接管后不再是电脑');
+  assert.equal(bot.connected, true);
+  assert.equal(viewerState(state, 'T').players.find(p => p.id === 'H').isBot, false);
 
+  // 走了以后可以重新放电脑
+  applyAction(state, { type: 'leave' }, 'H');
+  assert.equal(applyAction(state, { type: 'addBot', playerId: 'H' }, 'T').ok, true);
   assert.equal(applyAction(state, { type: 'removeBot', playerId: 'H' }, 'T').ok, true);
   assert.equal(bot.isBot, false);
   assert.equal(bot.connected, false);
-  assert.equal(applyAction(state, { type: 'join' }, 'H').ok, true);
+});
+
+test('牌局进行中真人也能顶掉电脑，手牌原样继承', () => {
+  const state = createInitialState(() => 0.42);
+  applyAction(state, { type: 'join' }, 'T');
+  applyAction(state, { type: 'addBot', playerId: 'H' }, 'T');
+  const seat = state.players.find(p => p.id === 'H');
+  // 进入出牌阶段（大厅的 addBot/removeBot 此时都不可用，只能靠登录接管）
+  state.phase = 'PLAYING';
+  seat.hand = [{ id: 'c1', suit: 'S', rank: 14 }, { id: 'c2', suit: 'H', rank: 5 }];
+
+  assert.equal(applyAction(state, { type: 'addBot', playerId: 'B' }, 'T').error.code, ErrorCode.WRONG_PHASE);
+  assert.equal(applyAction(state, { type: 'join' }, 'H').ok, true, '出牌阶段也能接管');
+  assert.equal(seat.isBot, false);
+  assert.equal(seat.connected, true);
+  assert.deepEqual(seat.hand.map(c => c.id), ['c1', 'c2'], '手牌原样继承，不重发不清空');
 });
 
 test('电脑只能由在线真人在开局前管理', () => {

@@ -9,6 +9,7 @@ import { playSuitOf, cardStrength } from '../cards.js';
 import { rankOfLevel } from '../level.js';
 import { settleRound, nextDeclarerSeat, kittyGrabOf } from '../scoring.js';
 import { applyUpgrades } from '../level.js';
+import { startRevealing } from '../flow.js';
 
 const seeded = () => 0.42;
 const c = (id, suit, rank) => ({ id, suit, rank });
@@ -63,9 +64,10 @@ function playFullRound(state) {
     assert.equal(state.declarerSeat, null);
     applyAction(state, { type: 'claimFlipper' }, 'T');
     let guard = 0;
-    while (state.phase === 'REVEAL_FIRST' && guard++ < 5) {
-      flipCardForRevealFirst(state);
+    while (!state.round.flipDone && guard++ < 5) {
+      flipCardForRevealFirst(state); // 大小王作废重翻，直到点数牌定出起揭人
     }
+    startRevealing(state); // 跳过 10 秒停留（真实流程由计时器或四人「知道了」触发）
   } else {
     // 第二局起：直进 REVEALING，庄家先揭，级牌 = 新庄家方升级后的级别
     assert.notEqual(state.declarerSeat, null, '庄家已定 → 直进 REVEALING');

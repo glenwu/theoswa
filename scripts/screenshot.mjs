@@ -93,7 +93,7 @@ async function main() {
         ...process.env,
         SEED: '42',
         SAVE_FILE: SHOT_SAVE_FILE,
-        FLIP_MS: '60', DRAW_MS: '80', GRACE_MS: '400', FALLBACK_MS: '30', DEALING_MS: '30',
+        FLIP_MS: '60', FLIP_HOLD_MS: '80', DRAW_MS: '80', GRACE_MS: '400', FALLBACK_MS: '30', DEALING_MS: '30',
         CROSS_RIVER_MS: '300', SETTLE_MS: '200', PLAY_MS: '120000',
         SCORING_MS: '100', ROUND_END_MS: '200', // 小结默认 100 秒（供复盘），截图脚本压短
       },

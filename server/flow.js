@@ -13,6 +13,15 @@ export function advanceToReadyCheck(state) {
   return true;
 }
 
+// 起揭人已定 → 正式开始逐张揭牌。
+// 两条路径都走这里：四人全部点完「知道了」（actions），或 10 秒停留到期（engine）。
+export function startRevealing(state) {
+  if (state.phase !== 'REVEAL_FIRST' || !state.round?.flipDone) return false;
+  state.phase = 'REVEALING';
+  pushLog(state, '开始揭牌：逆时针逐张揭牌');
+  return true;
+}
+
 // 每局 READY_CHECK 结束后走向揭牌的分支。
 // 判据是“庄家是否已确定”，与第几局无关：
 // 第一局流局后 declarerSeat 保持 null，再开一局仍走 REVEAL_FIRST（不会误入 REVEALING）。

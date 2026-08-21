@@ -10,7 +10,7 @@ import {
   drawOneCard,
   completeDeal,
 } from './round.js';
-import { settleNoTrump, advanceToReadyCheck } from './flow.js';
+import { settleNoTrump, advanceToReadyCheck, startRevealing } from './flow.js';
 import { settleFallbackTrump } from './reveal.js';
 import { cardLabel } from './cards.js';
 import { pickAutoCards } from './trick.js';
@@ -71,6 +71,10 @@ export class GameEngine {
 
     if (s.phase === 'REVEAL_FIRST' && s.flipperSeat !== null && !r.flipDone) {
       this.setTimer('flip', t.flipMs, () => this.flipOne());
+    } else if (s.phase === 'REVEAL_FIRST' && r.flipDone) {
+      // 起揭人已定，停留供四家看清；四人点满「知道了」会提前走（见 handleConfirmFlip）
+      if (!r.flipHoldDeadline) r.flipHoldDeadline = now + t.flipHoldMs;
+      this.setTimer('flipHold', Math.max(0, r.flipHoldDeadline - now), () => this.beginRevealing());
     } else if (s.phase === 'REVEALING' && !r.trumpSuit) {
       if (r.drawnCount < REVEAL_TOTAL) {
         if (!r.drawDeadline) r.drawDeadline = now + t.drawMs;
@@ -147,6 +151,11 @@ export class GameEngine {
     if (this.state.phase !== 'REVEAL_FIRST' || !this.state.round || this.state.round.flipDone) return;
     flipCardForRevealFirst(this.state);
     this.afterAction();
+  }
+
+  // 起揭人停留结束 → 正式开始逐张揭牌
+  beginRevealing() {
+    if (startRevealing(this.state)) this.afterAction();
   }
 
   // 揭牌超时：服务端自动替当前揭牌人摸一张，照常轮转

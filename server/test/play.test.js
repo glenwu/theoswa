@@ -206,3 +206,71 @@ test('全场守恒（验收8/19）：25 轮打完，闲家分 + 庄家跑掉分 
   // 所有件都已被打出或埋底：没有 unseen
   assert.ok(state.round.pieces.every(p => p.location.kind !== 'hand'));
 });
+
+// ---- 「谱掉你」彩蛋（打出大鬼，非最后一轮，80%）----
+
+function eggState(handBySeat, { rng = () => 0 } = {}) {
+  const state = createInitialState(() => 0.5);
+  state.declarerSeat = 0;
+  state.phase = 'PLAYING';
+  const r = createRoundState(1, 0);
+  r.trumpSuit = 'H';
+  r.rankCard = 2;
+  r.kitty = [];
+  r.leadSeat = 0;
+  r.turnSeat = 0;
+  state.round = r;
+  state.niiRandom = rng; // 掷骰用独立随机源，不碰发牌 rng
+  for (const [seat, cards] of Object.entries(handBySeat)) {
+    playerBySeat(state, Number(seat)).hand = cards;
+  }
+  rebuildPieces(state);
+  return state;
+}
+
+const BIG = () => ({ id: 'big', suit: 'JOKER', rank: 16 });
+
+test('打出大鬼且非最后一轮 → 触发「谱掉你」（掷骰命中时）', () => {
+  const state = eggState({
+    0: [BIG(), { id: 'a', suit: 'S', rank: 3 }],
+    1: [{ id: 'b1', suit: 'S', rank: 4 }, { id: 'b2', suit: 'S', rank: 5 }],
+    2: [{ id: 'c1', suit: 'S', rank: 6 }, { id: 'c2', suit: 'S', rank: 7 }],
+    3: [{ id: 'd1', suit: 'S', rank: 8 }, { id: 'd2', suit: 'S', rank: 9 }],
+  }, { rng: () => 0.1 }); // 0.1 < 0.8 → 命中
+  const me = playerBySeat(state, 0);
+  assert.equal(applyAction(state, { type: 'play', cardIds: ['big'] }, me.id).ok, true);
+  assert.equal(state.round.currentTrick[0].pudiao, true);
+});
+
+test('掷骰未命中（≥0.8）→ 不触发', () => {
+  const state = eggState({
+    0: [BIG(), { id: 'a', suit: 'S', rank: 3 }],
+    1: [{ id: 'b1', suit: 'S', rank: 4 }, { id: 'b2', suit: 'S', rank: 5 }],
+    2: [{ id: 'c1', suit: 'S', rank: 6 }, { id: 'c2', suit: 'S', rank: 7 }],
+    3: [{ id: 'd1', suit: 'S', rank: 8 }, { id: 'd2', suit: 'S', rank: 9 }],
+  }, { rng: () => 0.85 });
+  applyAction(state, { type: 'play', cardIds: ['big'] }, playerBySeat(state, 0).id);
+  assert.equal(state.round.currentTrick[0].pudiao, undefined);
+});
+
+test('最后一轮打大鬼 → 绝不触发（哪怕掷骰必中）', () => {
+  const state = eggState({
+    0: [BIG()],
+    1: [{ id: 'b1', suit: 'S', rank: 4 }],
+    2: [{ id: 'c1', suit: 'S', rank: 6 }],
+    3: [{ id: 'd1', suit: 'S', rank: 8 }],
+  }, { rng: () => 0 });
+  applyAction(state, { type: 'play', cardIds: ['big'] }, playerBySeat(state, 0).id);
+  assert.equal(state.round.currentTrick[0].pudiao, undefined, '最后一轮没得选，不甩狠话');
+});
+
+test('打小鬼不触发（只认大鬼）', () => {
+  const state = eggState({
+    0: [{ id: 'small', suit: 'JOKER', rank: 15 }, { id: 'a', suit: 'S', rank: 3 }],
+    1: [{ id: 'b1', suit: 'S', rank: 4 }, { id: 'b2', suit: 'S', rank: 5 }],
+    2: [{ id: 'c1', suit: 'S', rank: 6 }, { id: 'c2', suit: 'S', rank: 7 }],
+    3: [{ id: 'd1', suit: 'S', rank: 8 }, { id: 'd2', suit: 'S', rank: 9 }],
+  }, { rng: () => 0 });
+  applyAction(state, { type: 'play', cardIds: ['small'] }, playerBySeat(state, 0).id);
+  assert.equal(state.round.currentTrick[0].pudiao, undefined);
+});

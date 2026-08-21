@@ -2,12 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createInitialState, createRoundState, playerBySeat } from '../state.js';
 import { applyAction, ErrorCode } from '../actions.js';
-import { advanceToReadyCheck } from '../flow.js';
+import { advanceToReadyCheck, startRevealing } from '../flow.js';
 import { viewerState } from '../viewer.js';
 import {
   ROUND_END_MS, PLAY_TIMEOUT_MS, TRICK_SETTLE_MS, SCORING_MS,
   REVEAL_DRAW_MS, REVEAL_GRACE_MS, CROSS_RIVER_DECIDE_MS,
-  CROSS_RIVER_PICK_MS, AUTO_LAST_MS, timingsFromEnv,
+  CROSS_RIVER_PICK_MS, AUTO_LAST_MS, FLIP_HOLD_MS, timingsFromEnv,
 } from '../constants.js';
 import { roundStory } from '../../client/src/roundStory.js';
 
@@ -160,4 +160,76 @@ test('引擎实际拿到的小结停留 = 100 秒（端到端，不只是常量�
   const engine = new GameEngine({ state: createInitialState(() => 0.5), timings: timingsFromEnv({}) });
   engine.clearTimers();
   assert.equal(engine.state.timing.roundEndMs, 100000);
+});
+
+// ---- 起揭人定出后的停留与「知道了」确认（REVEAL_FIRST）----
+
+function flipHeldState() {
+  const state = createInitialState(() => 0.5);
+  state.phase = 'REVEAL_FIRST';
+  state.declarerSeat = null;
+  state.flipperSeat = 0;
+  const r = createRoundState(1, null);
+  r.rankCard = 2;
+  r.flipDone = true;
+  r.revealTurnSeat = 1;
+  r.flipHoldDeadline = Date.now() + FLIP_HOLD_MS;
+  state.round = r;
+  for (const p of state.players) { p.connected = true; p.hand = []; }
+  return state;
+}
+
+test('起揭人停留默认 10 秒（原来定完立刻开揭，来不及看）', () => {
+  assert.equal(FLIP_HOLD_MS, 10000);
+  assert.equal(timingsFromEnv({}).flipHoldMs, FLIP_HOLD_MS);
+  assert.equal(timingsFromEnv({ FLIP_HOLD_MS: '80' }).flipHoldMs, 80);
+});
+
+test('四人都点「知道了」→ 提前开始揭牌', () => {
+  const state = flipHeldState();
+  const ids = [...state.players].sort((a, b) => a.seat - b.seat).map(p => p.id);
+  for (let i = 0; i < 3; i++) {
+    assert.equal(applyAction(state, { type: 'confirmFlip' }, ids[i]).ok, true);
+    assert.equal(state.phase, 'REVEAL_FIRST', `才 ${i + 1} 个人确认，不能开揭`);
+  }
+  assert.equal(applyAction(state, { type: 'confirmFlip' }, ids[3]).ok, true);
+  assert.equal(state.phase, 'REVEALING');
+  assert.equal(state.round.revealTurnSeat, 1, '起揭人不变');
+});
+
+test('重复点「知道了」被拒，不会把人数灌满', () => {
+  const state = flipHeldState();
+  const me = playerBySeat(state, 0);
+  assert.equal(applyAction(state, { type: 'confirmFlip' }, me.id).ok, true);
+  assert.equal(applyAction(state, { type: 'confirmFlip' }, me.id).error.code, ErrorCode.ALREADY_VOTED);
+  assert.equal(state.round.flipConfirms.length, 1);
+});
+
+test('起揭人还没定出来时确认被拒', () => {
+  const state = flipHeldState();
+  state.round.flipDone = false;
+  assert.equal(
+    applyAction(state, { type: 'confirmFlip' }, playerBySeat(state, 0).id).error.code,
+    ErrorCode.WRONG_PHASE
+  );
+});
+
+test('确认名单与停留截止对四家公开（同步倒计时）', () => {
+  const state = flipHeldState();
+  applyAction(state, { type: 'confirmFlip' }, playerBySeat(state, 2).id);
+  for (const p of state.players) {
+    const v = viewerState(state, p.id);
+    assert.deepEqual(v.round.flipConfirms, [2]);
+    assert.equal(v.round.flipHoldDeadline, state.round.flipHoldDeadline);
+    assert.equal(v.round.flipDone, true);
+  }
+});
+
+test('startRevealing：只在 REVEAL_FIRST 且已定出起揭人时生效', () => {
+  const a = flipHeldState();
+  a.round.flipDone = false;
+  assert.equal(startRevealing(a), false, '起揭人未定不能开揭');
+  const b = flipHeldState();
+  b.phase = 'PLAYING';
+  assert.equal(startRevealing(b), false, '别的阶段不能被误触发');
 });
