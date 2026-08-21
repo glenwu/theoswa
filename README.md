@@ -95,6 +95,7 @@ After=network.target
 WorkingDirectory=/opt/chaoshan
 ExecStart=/usr/bin/node server/index.js
 Environment=PORT=8787
+Environment=HOST=127.0.0.1
 Environment=ADMIN_RESET_TOKEN=你的口令
 Restart=always
 [Install]
@@ -103,13 +104,21 @@ EOF
 systemctl daemon-reload && systemctl enable --now chaoshan
 ```
 
-存档：`/opt/chaoshan/server/savegame.json`（12 小时内重启自动恢复）。清档：游戏内四人表决「新开一局」、管理员强制重置，或 `curl -X DELETE http://<ip>:8787/api/save`。
+服务默认只监听 `127.0.0.1`，公网访问请在前面放反向代理（nginx / caddy）终结 TLS 再转发到 8787。
+确实要让进程直接对外监听时才设 `HOST=0.0.0.0`，并自行确认防火墙（目标机器上 ufw 可能是 inactive）。
+
+存档：`/opt/chaoshan/server/savegame.json`（12 小时内重启自动恢复）。清档：游戏内四人表决「新开一局」、管理员强制重置，或带管理员口令调接口：
+
+```bash
+curl -X DELETE -H "x-admin-token: 你的口令" http://127.0.0.1:8787/api/save
+```
 
 ## 配置（环境变量）
 
 | 变量 | 默认 | 含义 |
 |------|------|------|
 | PORT | 8787 | 监听端口 |
+| HOST | `127.0.0.1` | 监听地址。默认只绑回环，公网请走反向代理；设 `0.0.0.0` 才对外暴露 |
 | SEED | 随机并打印 | 发牌种子，`SEED=<数字>` 可复现整局 |
 | ADMIN_RESET_TOKEN | `Y` | 管理员强制重置口令 |
 | FLIP_MS / DRAW_MS / GRACE_MS / FALLBACK_MS / DEALING_MS | 800/3000/3000/800/600 | 揭牌定主各节奏 |

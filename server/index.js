@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { GameEngine } from './game-engine.js';
 import { BotController } from './bot-controller.js';
 import { viewerState } from './viewer.js';
-import { PLAYER_IDS, SUIT_NAMES, KITTY_SIZE, HAND_SIZE } from './constants.js';
+import { PLAYER_IDS, SUIT_NAMES, KITTY_SIZE, HAND_SIZE, timingsFromEnv } from './constants.js';
 import { createInitialState, createRoundState, playerBySeat, pushLog } from './state.js';
 import { sortHand, SUITS } from './cards.js';
 import { rebuildPieces } from './pieces.js';
@@ -15,6 +15,10 @@ import { loadSavedGame, saveGame, clearSave, SAVE_FILE } from './persist.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8787);
+// 监听地址：默认只绑回环，公网部署一律走反向代理（nginx/caddy）。
+// 想直接对外暴露必须显式设 HOST=0.0.0.0——默认值绝不能是全网卡：
+// 目标机器上 ufw 可能是 inactive，绑 0.0.0.0 等于把整局游戏开在公网上。
+const HOST = process.env.HOST ?? '127.0.0.1';
 // 服务端专用口令，不能放进前后端共享的 constants.js：浏览器没有 process.env，
 // 而且管理员口令不应被打包进客户端代码。
 const ADMIN_RESET_TOKEN = process.env.ADMIN_RESET_TOKEN ?? 'Y';
@@ -53,20 +57,8 @@ const engine = new GameEngine({
         fresh.seed = seed;
         return fresh;
       })(),
-  timings: {
-    flipMs: Number(process.env.FLIP_MS ?? 800),
-    drawMs: Number(process.env.DRAW_MS ?? 3000),
-    graceMs: Number(process.env.GRACE_MS ?? 3000),
-    fallbackMs: Number(process.env.FALLBACK_MS ?? 800),
-    dealingMs: Number(process.env.DEALING_MS ?? 600),
-    settleMs: Number(process.env.SETTLE_MS ?? 1500),
-    scoringMs: Number(process.env.SCORING_MS ?? 600),
-    roundEndMs: Number(process.env.ROUND_END_MS ?? 3000),
-    playMs: Number(process.env.PLAY_MS ?? 60000),
-    crossRiverDecideMs: Number(process.env.CROSS_RIVER_MS ?? 15000),
-    crossRiverPickMs: Number(process.env.CROSS_PICK_MS ?? 30000),
-    autoLastMs: Number(process.env.LAST_MS ?? 600),
-  },
+  // 节奏默认值全部来自 constants.js（别在这里再写一份字面量）
+  timings: timingsFromEnv(),
   broadcast: () => broadcast(),
 });
 const state = engine.state;
@@ -101,8 +93,13 @@ app.get('/api/occupancy', (req, res) => {
   });
 });
 
-// 清存档（想彻底重来时的显式入口）
+// 清存档（想彻底重来时的显式入口）。
+// 必须带管理员口令：这是个不可逆的破坏性操作，无鉴权等于任何人都能抹掉一晚上的战果。
+// 口令走请求头而不是 query —— URL 会进访问日志、浏览器历史和 Referer。
 app.delete('/api/save', (req, res) => {
+  if (req.get('x-admin-token') !== ADMIN_RESET_TOKEN) {
+    return res.status(403).json({ error: '需要管理员口令（请求头 x-admin-token）' });
+  }
   clearSave();
   res.json({ ok: true, cleared: true });
 });
@@ -265,8 +262,11 @@ wss.on('connection', (ws) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
   console.log(`[潮汕升级] 存档文件：${SAVE_FILE}`);
-  console.log(`[潮汕升级] 服务端已启动: http://localhost:${PORT}`);
-  console.log(`[潮汕升级] WebSocket: ws://localhost:${PORT}/ws`);
+  console.log(`[潮汕升级] 服务端已启动: http://${HOST}:${PORT}`);
+  console.log(`[潮汕升级] WebSocket: ws://${HOST}:${PORT}/ws`);
+  if (HOST === '0.0.0.0') {
+    console.warn('[潮汕升级] ⚠️ 正在监听所有网卡（HOST=0.0.0.0）：请确认防火墙已配置，或改用反向代理。');
+  }
 });
