@@ -685,3 +685,91 @@ test('信号应答：庄家吊主【不带分】→ 没有这层含义，照常�
   }))[0];
   assert.equal(lead.suit, 'H', '不带分就只是普通吊主，队友该跟着吊');
 });
+
+// ============ 甩尾手（长期计划打法）============
+//
+// Glen：「计划起手然后甩一手长的副牌达到保底或是撬底的目的。这样的打法一般
+// 需要有起手牌，比如说有个大鬼，打完大鬼就可以甩尾手，或是用主牌去毙。」
+// 又：「对手要是主牌不够长，有多少个鬼都不能保底」——
+// 甩 N 张副牌得有 N 张主才毙得住，这是对「靠鬼保底」的正面反制。
+//
+// 计划三条件：能甩的长副牌 + 起手牌（握住最高未出主）+ 现在甩还毙得住 → 先别甩。
+
+// 黑桃四件全部已现 → canThrowByStatus 成立
+const SPADES_THROWABLE = {
+  S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'seen' },
+      { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
+  D: [], C: [],
+};
+
+// 双大鬼 = 握住顶档（起手牌）；黑桃 5 张 = 尾巴
+function tailView({ playedTrumps = [], spades = [11, 9, 7, 6, 4], extraTrumps = [12, 11, 10, 9, 8, 7] }) {
+  const hand = [
+    T('H', 16, 0), T('H', 16, 1),
+    ...extraTrumps.map((r, i) => T('H', r, i + 2)),
+    ...spades.map((r, i) => T('S', r, i + 40)),
+  ];
+  return leadView({
+    hand, declarerSeat: 1, mySeat: 0, piecesView: SPADES_THROWABLE,
+    trickHistory: [{
+      trickNo: 1, leadSeat: 1, leadSuit: 'TRUMP', winnerSeat: 1, points: 0,
+      plays: [{ seat: 1, playSuit: 'TRUMP', cards: playedTrumps }],
+    }],
+  });
+}
+
+test('甩尾手：能甩但对手主牌还够毙 → 压住不甩，先去吊主削他的主', () => {
+  const lead = chooseLeadCards(tailView({}))[0];
+  assert.notEqual(lead.suit, 'S', '现在甩会被毙掉，该留到尾巴上');
+  assert.equal(lead.suit, 'H', '这时候该吊主，把对手的主牌削下去');
+});
+
+test('甩尾手：对手主牌已经不够毙 → 整门甩出去', () => {
+  // 让大量主牌已经打出，outstandingTrumpCount 降到甩牌张数以下
+  const played = [];
+  for (let r = 3; r <= 14; r += 1) { played.push(T('H', r, 500 + r), T('H', r, 600 + r)); }
+  played.push(T('H', 15, 700), T('H', 15, 701), T('S', 2, 702), T('D', 2, 703), T('C', 2, 704), T('H', 2, 705), T('H', 2, 706));
+  const view = tailView({ playedTrumps: played, extraTrumps: [] });
+  const cards = chooseLeadCards(view);
+  assert.equal(cards.length, 5, '整门 5 张一次甩出去');
+  assert.ok(cards.every(c => c.suit === 'S'), '甩的是黑桃');
+});
+
+// 判据是「某一家最多可能有几张主」，不是场上主牌总数 ——
+// 甩 5 张只有单独一家同时握着 5 张主才毙得住整手。
+// 尾盘各家手牌变短，这个估计自然就掉下去了。
+test('甩尾手：尾盘对手手牌很短 → 摊到他头上的主牌不够毙，可以甩了', () => {
+  const view = tailView({});
+  for (const p of view.players) if (p.seat !== 0) p.handCount = 3; // 对手只剩 3 张
+  view.round.kittyCount = 8;
+  const cards = chooseLeadCards(view);
+  assert.equal(cards.length, 5, '对手手上凑不出 5 张主，整门甩出去');
+  assert.ok(cards.every(c => c.suit === 'S'));
+});
+
+test('甩尾手：同样的牌，对手手牌还很长 → 摊到他头上的主可能够毙，先不甩', () => {
+  const view = tailView({});
+  for (const p of view.players) if (p.seat !== 0) p.handCount = 20;
+  const lead = chooseLeadCards(view);
+  assert.notEqual(lead.suit, 'S', '对手手牌还长，现在甩有被整手毙掉的风险');
+});
+
+test('甩尾手：计划挂起时不把长门的牌垫掉（垫一张就少甩一张）', () => {
+  const view = followView({
+    seat: 0, declarerSeat: 1,
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),
+      ...[12, 11, 10, 9, 8, 7].map((r, i) => T('H', r, i + 2)),
+      ...[11, 9, 7, 6, 4].map((r, i) => T('S', r, i + 40)),
+      T('D', 3, 90),
+    ],
+    // 对手领梅花，我一张梅花都没有 → 可以随便垫
+    currentTrick: [{ seat: 1, playSuit: 'C', cards: [T('C', 8, 95)] }],
+    piecesView: SPADES_THROWABLE,
+  });
+  const played = chooseFollowCards(view);
+  assert.ok(
+    played.every(c => c.suit !== 'S'),
+    `不该垫黑桃（尾巴的一部分），实际垫了 ${played.map(c => c.suit + c.rank).join(',')}`
+  );
+});

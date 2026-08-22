@@ -814,6 +814,17 @@ export function assessBottomControl(view, ctx) {
   };
 }
 
+// assessBottomControl 每次都要 buildDeck()（108 张），而跟牌打分对每个候选
+// 都会问一次。按 view 对象记忆化：同一次决策里只算一遍。
+const BOTTOM_CONTROL_CACHE = new WeakMap();
+function bottomControlOf(view, ctx) {
+  const cached = BOTTOM_CONTROL_CACHE.get(view);
+  if (cached) return cached;
+  const value = assessBottomControl(view, ctx);
+  BOTTOM_CONTROL_CACHE.set(view, value);
+  return value;
+}
+
 // 场上还有多少张主牌没露面（不含我手上的；底牌里的仍算未知，故偏高）
 function outstandingTrumpCount(view, ctx) {
   const total = buildDeck().filter(card => suitOf(card, ctx) === 'TRUMP').length;
@@ -862,6 +873,54 @@ function declarerLeadStyle(view) {
   const last = leads[leads.length - 1];
   if (!last) return null;
   return last.leadSuit === 'TRUMP' ? 'trump' : 'side';
+}
+
+// ---- 甩尾手（Glen 的长期计划打法）----
+//
+// 「这个是比较长期的一个策略，一般和甩尾手也有相关，就是计划起手然后甩一手长的
+//   副牌达到保底或是撬底的目的。这样的打法一般需要有起手牌，比如说有个大鬼，
+//   打完大鬼就可以甩尾手，或是用主牌去毙。」
+// 又：「对手要是主牌不够长，有多少个鬼都不能保底」——
+//   甩 N 张副牌得有 N 张主牌才毙得住，这是对「靠鬼保底」的正面反制。
+//
+// 计划要三个条件同时成立：
+//   1. 有一门够长、且【甩牌资格已成立】的副牌（暗求就是为了把这个条件凑齐）
+//   2. 手上有【起手牌】：握着当前仍未打出的主牌里最高的那一档，
+//      保证能在自己想要的时刻拿到牌权（holdsTopTrump 正是这个判定）
+//   3. 现在甩还毙得住 → 那就【先别甩】，留到尾巴上
+//
+// ready 的判据：甩 N 张副牌，只有【单独一家】手里同时有 N 张主牌才毙得住整手，
+// 所以要看的不是场上主牌总数，而是【某一家最多可能有多少张】。
+// 未现牌按各家手牌数摊分 —— 底牌那 8 张也占一份，而底牌里的主牌永远不会
+// 出现在牌面上，毙不了我，这一份摊出去正好把它扣掉了。
+function maxOpponentTrumpEstimate(view, ctx) {
+  const outstanding = outstandingTrumpCount(view, ctx);
+  const others = (view.players ?? []).filter(player => player.seat !== view.you.seat);
+  const hidden =
+    others.reduce((sum, player) => sum + (player.handCount ?? 0), 0) +
+    (view.round?.kittyCount ?? 0);
+  if (hidden <= 0) return outstanding;
+  let worst = 0;
+  for (const player of others) {
+    if (player.seat % 2 === view.you.team) continue; // 队友的主牌不会来毙我
+    worst = Math.max(worst, (outstanding * (player.handCount ?? 0)) / hidden);
+  }
+  return worst;
+}
+
+function tailThrowPlan(view, ctx, control) {
+  if (!control.holdsTopTrump) return null; // 没有起手牌，这个计划无从谈起
+  const hand = view.you?.hand ?? [];
+  let best = null;
+  for (const suit of SUITS.filter(item => item !== ctx.trumpSuit)) {
+    const cards = cardsOfSuit(hand, suit, ctx);
+    if (cards.length < 3) continue; // 太短甩了没意义
+    if (!canThrowByStatus(view.round?.piecesView?.[suit])) continue;
+    if (!best || cards.length > best.cards.length) best = { suit, cards };
+  }
+  if (!best) return null;
+  const worstOpponentTrumps = maxOpponentTrumpEstimate(view, ctx);
+  return { ...best, worstOpponentTrumps, ready: worstOpponentTrumps < best.cards.length };
 }
 
 // 副牌够不够强 —— 强就该转打副牌，不用死吊主。
@@ -990,7 +1049,8 @@ export function chooseLeadCards(view) {
   //
   // ⚠️ 原来只有下面这一条开局提案，`opening` 之后整个函数再没有任何主动吊主，
   // 所以电脑「吊一轮就忘了这回事」—— 不是忘了，是压根没写。
-  const control = assessBottomControl(view, ctx);
+  const control = bottomControlOf(view, ctx);
+  const plan = tailThrowPlan(view, ctx, control);
   const strongSide = hasStrongSideSuit(view, ctx);
   const outstandingTrumps = outstandingTrumpCount(view, ctx);
   const role = leadRole(view);
@@ -1014,9 +1074,15 @@ export function chooseLeadCards(view) {
   }
 
   // 开局之后的持续吊主
-  if (!opening && trumps.length > 0 && outstandingTrumps > 0 && !control.guaranteed && !strongSide) {
+  // ⚠️ 计划挂起时【不能】因为「副牌够强」就停止吊主 —— 恰恰相反：
+  // 吊主正是在削减对手手上的主牌，等他们凑不出足够的主，尾巴那一甩才毙不住。
+  // Glen：「求到件了可以转吊主」。
+  const planPending = plan !== null && !plan.ready;
+  if (!opening && trumps.length > 0 && outstandingTrumps > 0 &&
+      !control.guaranteed && (!strongSide || planPending)) {
     const drawBonus =
-      role === 'declarer' ? 520                                        // 保底优先，接着吊
+      planPending ? 560                                                // 为尾巴削对手的主
+      : role === 'declarer' ? 520                                      // 保底优先，接着吊
       : role === 'declarerPartner'
         // 收到庄家「带分吊主」的信号而自己确实有大鬼 → 转打副牌，
         // 这本身就是「不用吊主」的表达（Glen）。否则照常跟庄家路子。
@@ -1056,8 +1122,20 @@ export function chooseLeadCards(view) {
     );
   }
 
+  // 甩牌时机 —— 这是「甩尾手」的核心：能甩不等于现在就该甩。
+  // 计划成立而时机未到（对手还有足够的主来毙）→ 压住不甩，先吊主削他们的主牌。
+  // 时机一到 → 加分抬高，压过其它一切领牌意图，整门甩出去。
   const throwCards = safeSideThrow(view, ctx, tuning);
-  if (throwCards) addProposal(throwCards, 620 * tuning.leadStrategyPriorWeight, 'safe-side-throw');
+  if (throwCards) {
+    const isPlanSuit = plan !== null && suitOf(throwCards[0], ctx) === plan.suit;
+    if (!(isPlanSuit && !plan.ready)) {
+      addProposal(
+        throwCards,
+        (isPlanSuit && plan.ready ? 1_100 : 620) * tuning.leadStrategyPriorWeight,
+        isPlanSuit ? 'tail-throw' : 'safe-side-throw'
+      );
+    }
+  }
 
   const seekPiece = pieceSeekingLead(view, ctx, tuning);
   if (seekPiece) addProposal([seekPiece], 450 * tuning.leadStrategyPriorWeight, 'seek-piece');
@@ -1325,6 +1403,26 @@ function scoreFollow(view, cards, ctx) {
     // 已经无法赢下这轮，不往对手那里送分。
     score -= candidatePoints * 14;
     if (isKill) score -= 120;
+  }
+
+  // ---- 护住甩尾手的计划 ----
+  // 计划挂起时，长门的每一张都是尾巴的一部分：垫掉一张就少甩一张；
+  // 起手牌（当前最高的未出主牌）更是整个计划的钥匙，早早花掉就再也拿不到
+  // 自己想要的那个时刻的牌权，尾巴也就甩不成了。
+  // 两条都是【强先验】：真有大分要收时，接管加分照样能压过去。
+  const tailPlan = tailThrowPlan(view, ctx, bottomControlOf(view, ctx));
+  if (tailPlan && !tailPlan.ready) {
+    const planIds = new Set(tailPlan.cards.map(card => card.id));
+    const spentTail = cards.filter(card => planIds.has(card.id)).length;
+    // 首家领的就是这门时，跟牌是规则要求，不算自毁计划
+    if (spentTail > 0 && lead.playSuit !== tailPlan.suit) {
+      score -= spentTail * 90 * tuning.preserveWeight;
+    }
+    const topTrump = [...cardsOfSuit(you.hand, 'TRUMP', ctx)]
+      .sort((a, b) => cardStrength(b, ctx) - cardStrength(a, ctx))[0];
+    if (topTrump && cards.some(card => card.id === topTrump.id)) {
+      score -= 240 * settings.controlReserve * controlCaution;
+    }
   }
 
   // 垫完一门短牌可以制造缺门，之后才有杀牌机会。
