@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "server"],
       "port": 8787
+    },
+    {
+      "name": "game-lan",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "server:lan"],
+      "port": 8787
     }
   ]
 }
