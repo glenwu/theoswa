@@ -22,7 +22,7 @@
 ## 常用命令
 
 ```bash
-npm test                 # node:test，全部单测（当前 402 条）
+npm test                 # node:test，全部单测（当前 404 条）
 npm run server           # 只绑 127.0.0.1
 npm run server:lan       # HOST=0.0.0.0，对外开放时用
 npm run start:lan        # 先构建再对外开放
@@ -131,6 +131,11 @@ node scripts/audit/mutants8.mjs   # 暂停 / 截止时刻后移
 
 ⚠️ **它们会就地改写源码再跑测试**，所以：
 - **只在工作区干净时跑**（万一异常退出，`git checkout` 就能还原）
+- **别和 dev server 同时跑**：踩过一次 —— 变异测试在后台跑着，这边重启了服务端，
+  Node 把当时正处于变异状态的 `viewer.js` 加载进去缓存住了，浏览器里看到的是变异版的
+  行为，差点当成真 bug 去查。要么等它跑完，要么跑完再重启服务端。
+- **改了函数签名要立刻重扫锚点**（`MUTATE_DRY=1`）—— 把 `aggressive` 改成 `mode`
+  那次没扫，两条锚点悄悄失效了一整轮
 - **看到 SKIP 立刻更新锚点** —— 一套满是 SKIP 的变异测试是虚假的安全感
 - `mutate.mjs` 已处理 `finally` 与 SIGINT/SIGTERM；SIGKILL 救不了（踩过一次：
   批量跑超时被杀，源码停在变异状态，下一轮 `npm test` 莫名红了三条）

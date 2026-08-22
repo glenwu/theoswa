@@ -464,10 +464,16 @@ function FlipHoldConfirm({ game, send }) {
 function TopBanner({ game }) {
   const round = game.round;
   const declarer = game.players.find(p => p.seat === game.declarerSeat);
+  // ⚠️ 本局小结结束后服务端会把 round 清成 null（跨局状态整体重建），
+  // READY_CHECK 这一段没有 round 可读。原来退回写死的「第 1 局 / 级牌 2」，
+  // 看着像整局回档，要等全员准备完才跳回正常值。
+  // 服务端的 nextRound 就是下一局的局号和级牌（和 beginRound 同一个纯函数），
+  // 空窗期显示它，数值和随后真正开局完全一致，不会闪一下。
+  const shown = round ?? game.nextRound;
   return (
     <div className="mb-2 flex flex-wrap items-center justify-center gap-2">
-      <span className="pill bg-white/10 text-white/70">第 {round ? round.roundNumber : 1} 局</span>
-      <span className="pill bg-white/10 text-white/70">级牌：{round ? rankLabel(round.rankCard) : '2'}</span>
+      <span className="pill bg-white/10 text-white/70">第 {shown.roundNumber} 局</span>
+      <span className="pill bg-white/10 text-white/70">级牌：{rankLabel(shown.rankCard)}</span>
       <span className="pill bg-amber-400/15 text-amber-300">
         庄家：{declarer ? `${PLAYER_EMOJI[declarer.id]} ${declarer.nickname}` : '未定'}
       </span>

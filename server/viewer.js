@@ -2,6 +2,7 @@ import { playerById } from './state.js';
 import { countTrump, playSuitOf } from './cards.js';
 import { pieceStatusesFor } from './pieces.js';
 import { crossRiverCandidates } from './crossriver.js';
+import { upcomingRound } from './round.js';
 import { collectLeakedCards } from './security.js';
 
 // 轮局状态裁剪：只暴露公开信息。
@@ -185,6 +186,9 @@ export function viewerState(state, viewerId) {
     round: state.round
       ? { ...clipRound(state.round, you.seat), kittyRevealed, allHandsRevealed }
       : null,
+    // 下一局的局号与级牌。READY_CHECK 期间 round 是 null，顶栏靠这个显示，
+    // 否则会退回「第 1 局 / 级牌 2」。和 beginRound 用的是同一个纯函数。
+    nextRound: upcomingRound(state),
     rounds: state.rounds.slice(-50), // 本局历史（公开摘要）
     log: state.log.slice(-200),
     chat: state.chat.slice(-200),

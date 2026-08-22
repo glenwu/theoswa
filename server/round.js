@@ -21,12 +21,24 @@ import { starterFromFlip } from './reveal.js';
 // - 庄家未定（第一局）：完整 108 张用于翻牌定起揭人，此时尚未分离底牌；
 // - 庄家已定（第二局起）：先分离 8 张底牌，剩余 100 张揭牌，起揭人 = 庄家。
 // 局号 = 已完成局数 + 1（流局不产生摘要，故流局后局号不变）。
+// 下一局的局号与级牌 —— 纯函数，只看跨局保留的状态（rounds / teamLevels / declarerSeat）。
+//
+// beginRound 和 viewerState 共用这一份，杜绝两处各算一遍算出不一样的结果。
+// 为什么 viewerState 也要它：ROUND_END 之后 advanceToReadyCheck 会把 state.round
+// 清成 null（跨局状态整体重建），READY_CHECK 期间客户端就没有局号和级牌可读，
+// 顶栏原来退回写死的「第 1 局 / 级牌 2」，看着像整局回档 —— Glen 实测反馈的正是这个。
+export function upcomingRound(state) {
+  return {
+    roundNumber: state.rounds.length + 1, // 流局不产生摘要，故流局后局号不变
+    rankCard:
+      state.declarerSeat === null
+        ? 2
+        : rankOfLevel(state.teamLevels[state.declarerSeat % 2]), // 升级已生效后的级别
+  };
+}
+
 export function beginRound(state) {
-  const roundNumber = state.rounds.length + 1;
-  const rankCard =
-    state.declarerSeat === null
-      ? 2
-      : rankOfLevel(state.teamLevels[state.declarerSeat % 2]); // 升级已生效后的级别
+  const { roundNumber, rankCard } = upcomingRound(state);
   state.round = createRoundState(roundNumber, state.declarerSeat);
   state.round.rankCard = rankCard;
 

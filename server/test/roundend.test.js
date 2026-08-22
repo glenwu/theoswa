@@ -10,6 +10,8 @@ import {
   CROSS_RIVER_PICK_MS, AUTO_LAST_MS, FLIP_HOLD_MS, timingsFromEnv,
 } from '../constants.js';
 import { roundStory } from '../../client/src/roundStory.js';
+import { beginRound } from '../round.js';
+import { rankOfLevel } from '../level.js';
 
 function roundEndState() {
   const state = createInitialState(() => 0.5);
@@ -43,6 +45,39 @@ test('四人都点「看完了」→ 提前进入下一局准备', () => {
   assert.equal(state.phase, 'READY_CHECK', '第 4 个人确认后立即进入准备');
   assert.equal(state.round, null, 'RoundState 已清空');
   assert.ok(state.players.every(p => !p.ready), '准备状态已重置');
+});
+
+// Glen 实测：小结确认完之后，顶栏的「第 X 局 / 级牌」会退回「第 1 局 / 打 2」，
+// 要等全员准备完才跳回正常值 —— advanceToReadyCheck 把 round 清成了 null
+//（跨局状态整体重建），客户端没东西可读就用了写死的默认值，看着像整局回档。
+// 修法是服务端在任何阶段都下发 nextRound（下一局的局号与级牌）。
+test('小结确认完进入 READY_CHECK：顶栏数据不回退（nextRound 顶上）', () => {
+  const state = roundEndState();
+  state.rounds = [{}, {}, {}];   // 已完成 3 局 → 下一局是第 4 局
+  state.teamLevels = [4, 1];     // 庄家在座位 0 → 队 0，级别 4 → 打 6
+  for (const p of state.players) applyAction(state, { type: 'confirmRoundEnd' }, p.id);
+  assert.equal(state.phase, 'READY_CHECK');
+  assert.equal(state.round, null, '前提：这时候确实没有 round 可读');
+  for (const p of state.players) {
+    assert.deepEqual(
+      viewerState(state, p.id).nextRound,
+      { roundNumber: 4, rankCard: rankOfLevel(4) },
+      '四家在空窗期看到的都是下一局的真实局号与级牌'
+    );
+  }
+});
+
+// 上一条只钉住了数值。真正防回退的是【空窗期显示的值 == 随后真正开局的值】——
+// 两处各算一遍、算歪了但都返回 4 和 6，上一条照样绿。
+test('空窗期显示的局号/级牌与随后 beginRound 建出来的完全一致', () => {
+  const state = roundEndState();
+  state.rounds = [{}, {}, {}];
+  state.teamLevels = [4, 1];
+  for (const p of state.players) applyAction(state, { type: 'confirmRoundEnd' }, p.id);
+  const shown = viewerState(state, state.players[0].id).nextRound;
+  beginRound(state);
+  assert.equal(state.round.roundNumber, shown.roundNumber, '局号对不上就会闪一下');
+  assert.equal(state.round.rankCard, shown.rankCard, '级牌对不上就会闪一下');
 });
 
 test('同一人重复确认被拒，不会把人数灌满', () => {

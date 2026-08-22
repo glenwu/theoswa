@@ -27,4 +27,10 @@ runMutants([
   ['client/src/handGroups.js', 'if (R === 1) return [[0, n]];', 'if (R === 1) return [[0, n]];\n  widths = widths.map(() => 1);', '按元素个数均分，忽略实际宽度（旧的错误做法）'],
   // ---- 级别 / 轮转 ----
   ['server/rotation.js', '(seat + 3) % SEAT_COUNT', '(seat + 1) % SEAT_COUNT', '轮转方向反了'],
+  // ---- 顶栏空窗期（Glen 实测：小结确认完后第X局/级牌回退）----
+  ['server/viewer.js', 'nextRound: upcomingRound(state),',
+   'nextRound: { roundNumber: 1, rankCard: 2 },', '空窗期顶栏又退回「第1局/打2」'],
+  ['server/round.js', 'const { roundNumber, rankCard } = upcomingRound(state);',
+   'const roundNumber = state.rounds.length + 1;\n  const rankCard = 2;',
+   'beginRound 不再和 upcomingRound 共用一份（级牌两处各算一遍）'],
 ]);
