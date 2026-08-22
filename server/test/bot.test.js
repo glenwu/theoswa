@@ -949,7 +949,10 @@ test('对手领先且桌面有分时，用最小主牌杀', () => {
   assert.equal(chooseFollowCards(view)[0].id, 'trump-3');
 });
 
-test('AKK 缺一支 A 时出 K 求件', () => {
+// ⚠️ 本条断言原来是「AKK 缺一支 A → 出 K」，与真人牌理相反，已由 Glen 纠正：
+// 求件的规律是【缺什么打什么】—— 差 A 就打 A，差 K 才打 K。
+// fixture 没动（还是 AKK、缺一张 A），只把期望从 K 改成 A。
+test('AKK 缺一支 A 时出 A 求件（缺什么打什么）', () => {
   const view = playView({
     hand: [
       card('spade-a', 'S', 14),
@@ -969,7 +972,7 @@ test('AKK 缺一支 A 时出 K 求件', () => {
       C: [],
     },
   });
-  assert.ok(['spade-k1', 'spade-k2'].includes(chooseLeadCards(view)[0].id));
+  assert.equal(chooseLeadCards(view)[0].id, 'spade-a', '差的是 A，就该打 A 把另一张 A 逼出来');
 });
 
 test('无件长门用最小无分牌探件', () => {

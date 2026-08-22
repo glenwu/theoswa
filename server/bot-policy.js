@@ -643,19 +643,31 @@ function partnerSideProtocolChoice(view, choices, ctx) {
     )[0] ?? null;
 }
 
-function preferredPartnerSuit(view, ctx) {
+// 队友在要什么 —— 帮他求件，但这个信号是【会过期】的。
+//
+// Glen：「如果判断对家是很想要求件（比如对家是庄）通常要帮助他把件逼出来，
+// 当然这个也是动态的，如果对家吃大，然后打其它牌，证明他有其它安排了，
+// 这时候就不再帮他求件了」。
+//
+// ⚠️ 原来这里把队友【整局】的领牌一路累加进 scores，永不过期 ——
+// 他早就改打别的门/改吊主了，这边还在死心塌地回他第一门。
+// 现在只认他【最近一次】领牌：换门了，之前那门的请求就作废；
+// 改吊主了，说明走的是主牌路线，更不该由我去回副牌。
+//
+// 强弱信号（Glen）：「第一轮求件是需要打 5 以下」——
+// 领出 5 以下的小牌是明确的求件请求；领大牌只是普通发展，帮的力度小得多。
+function partnerRequest(view, ctx) {
   const partnerSeat = partnerSeatOf(view.you.seat);
-  const scores = new Map();
-  for (const trick of view.round.trickHistory ?? []) {
-    if (trick.leadSeat !== partnerSeat || trick.leadSuit === 'TRUMP') continue;
-    const lead = trick.plays?.[0];
-    if (!lead) continue;
-    const lowSignal = lead.cards.every(card => card.rank <= 12) ? 2 : 1;
-    scores.set(trick.leadSuit, (scores.get(trick.leadSuit) ?? 0) + lead.cards.length + lowSignal);
-  }
-  return [...scores.entries()]
-    .filter(([suit]) => cardsOfSuit(view.you.hand, suit, ctx).length > 0)
-    .sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const leads = (view.round?.trickHistory ?? []).filter(trick => trick.leadSeat === partnerSeat);
+  const last = leads[leads.length - 1];
+  if (!last || last.leadSuit === 'TRUMP') return null;
+  if (cardsOfSuit(view.you.hand ?? [], last.leadSuit, ctx).length === 0) return null;
+  const cards = last.plays?.[0]?.cards ?? [];
+  return {
+    suit: last.leadSuit,
+    seeking: cards.length > 0 && cards.every(card => card.rank <= 5),
+    partnerIsDeclarer: partnerSeat === view.declarerSeat,
+  };
 }
 
 function pieceContributionContinuationLead(view, ctx) {
@@ -842,14 +854,29 @@ function hasStrongSideSuit(view, ctx) {
   return false;
 }
 
-// 吊主该出哪张：用主花色的大牌去吊（A/K/Q…），把鬼和级牌留着保底。
-// 出最小的主牌等于把牌权送人，吊不动对手。
-function drawingTrumpCard(trumps, ctx) {
-  const ordinary = trumps.filter(
-    card => card.suit === ctx.trumpSuit && card.rank !== ctx.rankCard
-  );
-  if (ordinary.length > 0) return highCards(ordinary, 1, ctx)[0];
-  return lowestLead(trumps, ctx);
+// 吊主该出哪张 —— 不是「出大牌」和「出小牌」二选一，取决于自己主牌强弱。
+//
+// ⚠️ 先纠正一个很容易搞错的地方：打 2 时主牌的强弱阶梯是
+//       大鬼 > 小鬼 > 主2 > 副2 > 主花色 A > K > Q > …
+//    主花色的 A/K/Q 恰恰是主牌里【偏小】的几档，级牌（2）和鬼才是大牌。
+//    曾经这里写成「用主花色 A/K/Q 去吊，把鬼和级牌留着保底」，两头不靠：
+//    既不是能消耗对手的小牌，也不是能压住场面的大牌。
+//
+// Glen（真人牌友）的打法：
+//   · 弱势主 → 先吊【小牌】。对手想制止你吊主就得用大牌来杀，
+//     等于拿你的小牌换他的大牌，是笔划算买卖，而且还有队友配合。
+//   · 强势主 → 可以吊 2 甚至吊鬼，求一个【能连续吊主】的局势；
+//     对手若用大牌来杀，我方剩下的大牌照样能保底或撬底。
+function canSustainTrumpDraw(trumps, ctx, control) {
+  // 顶档 = 鬼 + 主级牌 + 副级牌（cardStrength ≥ 997）
+  const topTrumps = trumps.filter(card => cardStrength(card, ctx) >= 997).length;
+  return control.holdsTopTrump || (trumps.length >= BOTTOM_MIN_TRUMPS && topTrumps >= 3);
+}
+
+function drawingTrumpCard(trumps, ctx, control) {
+  return canSustainTrumpDraw(trumps, ctx, control)
+    ? highCards(trumps, 1, ctx)[0]   // 强势：吊 2 / 吊鬼，求连续吊主
+    : lowestLead(trumps, ctx);       // 弱势：吊小牌，逼对手用大牌来杀
 }
 
 function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
@@ -860,10 +887,24 @@ function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
     const mine = items.filter(item => item.status === 'mine').length;
     const unseen = items.filter(item => item.status === 'unseen').length;
 
-    // AKK 缺一支 A：出 K 求件，用当前 10 分换后续甩牌条件。
+    // 手上三件、只差一支：出【和缺失那支同点数】的牌去求它。
+    //   AAK（差一支 K）→ 打 K：队友若有另一张 K，四件到齐，我立刻能甩这门。
+    //   AKK（差一支 A）→ 打 A。
+    // ⚠️ 原来这里写死 `card.rank === 13`，无论缺 A 还是缺 K 都出 K ——
+    // AKK 的情况（差 A）出 K 求不到那张 A，白丢 10 分。规律是【缺什么打什么】。
+    //
+    // 分数必须【压过】下面的通用探件分支：三件只差一支时我们确切知道该打哪张，
+    // 通用分支只会挑「最小的无分牌」。曾经这里是 100+牌长，被通用分支的
+    // 牌长×10 + 件数×30 盖过去（长门时可达 150+），于是这条精确规则形同虚设。
     if (mine >= 3 && unseen === 1) {
-      const king = cards.find(card => card.rank === 13 && card.rank !== ctx.rankCard);
-      if (king) options.push({ card: king, score: 100 + cards.length });
+      const missingRank = items.find(item => item.status === 'unseen')?.rank;
+      const probe = cards.find(
+        card => card.rank === missingRank && card.rank !== ctx.rankCard
+      );
+      if (probe) {
+        options.push({ card: probe, score: 300 + cards.length });
+        continue; // 这门已有确定打法，不再让通用探件插一脚
+      }
     }
 
     // 探件：只在【自己这门手上有件】时才做。
@@ -936,7 +977,7 @@ export function chooseLeadCards(view) {
   // 双大鬼但只有 5 张主，照样会被吊空，不算保底牌）。
   if (opening && isDeclarer && !control.guaranteed && trumps.length > 0) {
     addProposal(
-      [drawingTrumpCard(trumps, ctx)],
+      [drawingTrumpCard(trumps, ctx, control)],
       900 * tuning.conventionPriorWeight,
       'dealer-opening-trump-signal'
     );
@@ -950,7 +991,7 @@ export function chooseLeadCards(view) {
       : 0;                                                             // 闲家：随便
     if (drawBonus > 0) {
       addProposal(
-        [drawingTrumpCard(trumps, ctx)],
+        [drawingTrumpCard(trumps, ctx, control)],
         drawBonus * tuning.leadStrategyPriorWeight,
         'continue-trump-draw'
       );
@@ -987,12 +1028,21 @@ export function chooseLeadCards(view) {
   const seekPiece = pieceSeekingLead(view, ctx, tuning);
   if (seekPiece) addProposal([seekPiece], 450 * tuning.leadStrategyPriorWeight, 'seek-piece');
 
-  // 朋友曾用一门领牌表示过，取得牌权后优先把这门送回去。
-  const partnerSuit = preferredPartnerSuit(view, ctx);
-  if (partnerSuit) {
+  // 队友最近用一门领牌表示过，取得牌权后把这门送回去 / 帮他把件逼出来。
+  // 他打的是 5 以下的小牌 = 明确求件，力度加大；他做庄则更需要帮（Glen）。
+  // ⚠️ 已经有 continuationPiece 时不再提这条：续打同门第二件和「回队友这门」
+  // 本来就是同一个意图（帮队友求件），而续件知道该打哪一张具体的牌。
+  // 两条同时提案会让「回门」的加分叠上 develop-long-side-suit 的 160，
+  // 反过来把更精确的续件盖掉。
+  const request = continuationPiece ? null : partnerRequest(view, ctx);
+  if (request) {
+    // 上限压在 safe-side-throw（620）之下：帮队友求件重要，
+    // 但不该盖过自己手上已经能甩的那门 —— 那是实打实的分。
+    const bonus =
+      320 + (request.seeking ? 160 : 0) + (request.partnerIsDeclarer ? 80 : 0);
     addProposal(
-      [lowestLead(cardsOfSuit(hand, partnerSuit, ctx), ctx)],
-      320 * tuning.leadStrategyPriorWeight,
+      [lowestLead(cardsOfSuit(hand, request.suit, ctx), ctx)],
+      bonus * tuning.leadStrategyPriorWeight,
       'return-partner-suit'
     );
   }

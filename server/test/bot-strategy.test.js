@@ -209,7 +209,9 @@ test('吊主：庄家没保底、副牌不强 → 开局之后继续吊主（不
     declarerSeat: 0, mySeat: 0, trickHistory: PLAYED_SOMETHING,
   }))[0];
   assert.equal(lead.suit, 'H', '应当继续领主牌吊主');
-  assert.ok(lead.rank >= 12, `吊主要用主花色大牌把对手的主逼出来，实际出了 H${lead.rank}`);
+  // 这手是弱势主（没有鬼、没有级牌，顶档一张都没有）→ 该吊小牌，
+  // 逼对手用大牌来杀，拿我的小牌换他的大牌。
+  assert.equal(lead.rank, 6, `弱势主该吊最小的那张，实际出了 H${lead.rank}`);
 });
 
 test('吊主：有保底牌（双大鬼 + 9 张主）→ 吃大不吊', () => {
@@ -279,6 +281,19 @@ test('吊主：队友做庄但庄家在打副牌 → 跟着打副牌，不自作
   assert.notEqual(lead.suit, 'H', '庄家走副牌路线，队友不该反过来吊主');
 });
 
+// 上一条其实没隔离住「跟庄家路子」这个 gate：那个局面里 return-partner-suit(400)
+// 叠上 develop-long-side-suit(160) 已经压过吊主，gate 在不在都领副牌。
+// 这一条让【队友求的那门我一张都没有】，partnerRequest 直接返回 null，
+// 就只剩 declarerLeadStyle 这一个决定因素了。
+test('吊主：队友做庄在打副牌、而那门我没有牌 → 仍然不吊主（钉住「跟庄家路子」）', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [...NINE_TRUMPS, ...WEAK_SIDES],   // 只有黑桃和方块，没有梅花
+    declarerSeat: 2, mySeat: 0,
+    trickHistory: [{ trickNo: 1, leadSeat: 2, leadSuit: 'C', winnerSeat: 2, points: 0, plays: [] }],
+  }))[0];
+  assert.notEqual(lead.suit, 'H', '庄家走的是副牌路线，队友不该自作主张吊主');
+});
+
 test('吊主：自己是闲家 → 不特意吊主（哪里好得分打哪里）', () => {
   const lead = chooseLeadCards(leadView({
     hand: [...NINE_TRUMPS, ...WEAK_SIDES],
@@ -340,4 +355,152 @@ test('保底：握住顶档但主牌太短（<9）→ 不算保底牌（会先�
   assert.equal(c.holdsTopTrump, true, '顶档确实握住了');
   assert.equal(c.trumpCount, 4);
   assert.equal(c.guaranteed, false, '但只有 4 张主，撑不到最后一轮');
+});
+
+// ---- 吊主出哪张：弱吊小、强吊大（Glen 纠正）----
+//
+// 打 2 时主牌阶梯：大鬼 > 小鬼 > 主2 > 副2 > 主花色 A > K > Q > …
+// 主花色的 A/K/Q 是主牌里偏小的几档，级牌和鬼才是大牌。
+// 曾经这里写成「用主花色 A/K/Q 去吊」，两头不靠。
+
+test('吊主：强势主（多张级牌/鬼）→ 吊大牌，求连续吊主的局势', () => {
+  const hand = [
+    T('H', 15, 0),                                    // 小鬼
+    T('H', 2, 1), T('S', 2, 2), T('D', 2, 3),         // 主2 + 两张副2（都是主牌）
+    ...[14, 13, 12, 11, 10].map((r, i) => T('H', r, i + 4)),
+    ...[9, 7, 5].map((r, i) => T('S', r, i + 20)),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 0, mySeat: 0, trickHistory: PLAYED_SOMETHING,
+  }))[0];
+  assert.equal(lead.suit, 'H', '仍然吊主');
+  assert.ok(
+    lead.rank === 15 || lead.rank === 2,
+    `强势主该吊 2 或吊鬼，实际出了 H${lead.rank}`
+  );
+});
+
+test('吊主：弱势主（顶档一张都没有）→ 吊最小的那张', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [...NINE_TRUMPS, ...WEAK_SIDES],
+    declarerSeat: 0, mySeat: 0, trickHistory: PLAYED_SOMETHING,
+  }))[0];
+  assert.equal(lead.suit, 'H');
+  assert.equal(lead.rank, 6, '弱势主吊小牌，逼对手用大牌来杀');
+});
+
+// ---- 三件求件：缺什么打什么 ----
+
+function threePieceView(myPieces, unseenRank) {
+  const hand = [
+    ...myPieces.map((r, i) => T('S', r, i)),
+    ...[9, 7, 5].map((r, i) => T('S', r, i + 10)),
+    ...[8, 6].map((r, i) => T('D', r, i + 20)),
+    T('H', 9, 30), T('H', 8, 31),
+  ];
+  const items = [
+    { rank: 14, status: myPieces.filter(r => r === 14).length >= 1 ? 'mine' : 'unseen' },
+    { rank: 14, status: myPieces.filter(r => r === 14).length >= 2 ? 'mine' : 'unseen' },
+    { rank: 13, status: myPieces.filter(r => r === 13).length >= 1 ? 'mine' : 'unseen' },
+    { rank: 13, status: myPieces.filter(r => r === 13).length >= 2 ? 'mine' : 'unseen' },
+  ];
+  assert.equal(items.filter(i => i.status === 'unseen').length, 1, 'fixture 应当只差一支');
+  assert.equal(items.find(i => i.status === 'unseen').rank, unseenRank);
+  return leadView({
+    hand, declarerSeat: 1, mySeat: 0, trickHistory: PLAYED_SOMETHING,
+    piecesView: { S: items, D: [], C: [] },
+  });
+}
+
+test('求件：AAK（差一支 K）→ 打 K', () => {
+  const lead = chooseLeadCards(threePieceView([14, 14, 13], 13))[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 13, '差 K 就打 K，队友若有另一张 K，四件到齐立刻能甩');
+});
+
+test('求件：AKK（差一支 A）→ 打 A（不是打 K）', () => {
+  const lead = chooseLeadCards(threePieceView([14, 13, 13], 14))[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 14, '差 A 就打 A；原来写死出 K，差 A 时求不到那张 A，白丢 10 分');
+});
+
+// 三件只差一支是【确定打法】，必须压过另一门的通用探件。
+// 同门内已经用 continue 挡住了通用分支，所以这条只有【跨门】才测得出来。
+test('求件：三件只差一支的那门，优先级高于另一门更长的通用探件', () => {
+  const hand = [
+    ...[14, 14, 13, 7].map((r, i) => T('S', r, i)),                   // 黑桃 AAK+7，差一支 K
+    ...[14, 13, 10, 9, 8, 7, 6, 5, 4].map((r, i) => T('D', r, i + 10)), // 方块 9 张、握两件
+    T('H', 9, 30), T('H', 8, 31),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 1, mySeat: 0, trickHistory: PLAYED_SOMETHING,
+    piecesView: {
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'mine' },
+          { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+      D: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+      C: [],
+    },
+  }))[0];
+  assert.equal(lead.suit, 'S', '黑桃只差一支 K，是确定打法，不该被方块那门的通用探件抢走');
+  assert.equal(lead.rank, 13, '差 K 就打 K');
+});
+
+// ---- 帮队友求件是【动态】的 ----
+//
+// Glen：「如果判断对家是很想要求件（比如对家是庄）通常要帮助他把件逼出来，
+// 当然这个也是动态的，如果对家吃大，然后打其它牌，证明他有其它安排了，
+// 这时候就不再帮他求件了」。
+//
+// 原来 preferredPartnerSuit 把队友【整局】的领牌一路累加进 scores、永不过期 ——
+// 他早改打别的门了，这边还在死心塌地回他第一门。
+
+const partnerLead = (trickNo, leadSuit, rank) => ({
+  trickNo, leadSeat: 2, leadSuit, winnerSeat: 2, points: 0,
+  plays: [{ seat: 2, playSuit: leadSuit, cards: [T(leadSuit, rank, 900 + trickNo)] }],
+});
+
+// 我在座位 0，队友在座位 2；手里黑桃方块都有，回哪门取决于队友要什么
+const bothSuits = [
+  ...[11, 9, 7, 4].map((r, i) => T('S', r, i)),
+  ...[12, 10, 8, 3].map((r, i) => T('D', r, i + 10)),
+  ...[9, 8].map((r, i) => T('H', r, i + 20)),
+];
+
+test('帮队友求件：队友打 5 以下求黑桃 → 回黑桃', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: bothSuits, declarerSeat: 2, mySeat: 0,
+    trickHistory: [partnerLead(1, 'S', 3)],
+  }))[0];
+  assert.equal(lead.suit, 'S', '队友打 ♠3 是明确的求件信号，该回黑桃');
+});
+
+test('帮队友求件：队友后来改打方块 → 不再回黑桃（信号会过期）', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: bothSuits, declarerSeat: 2, mySeat: 0,
+    trickHistory: [partnerLead(1, 'S', 3), partnerLead(2, 'D', 3)],
+  }))[0];
+  assert.equal(lead.suit, 'D', '队友改打方块了，说明他有别的安排，黑桃那条请求作废');
+});
+
+// 用【闲家】视角测：队友做庄时「跟着庄家吊主」的逻辑会自己领主牌，
+// 那样即使 partnerRequest 错误地返回 TRUMP 也看不出差别（两条都领主）。
+// 闲家没有跟庄的义务，才能把「队友改吊主 → 这条请求作废」单独钉住。
+test('帮队友求件：队友改吊主 → 那条求件请求作废，不跟着去领主牌', () => {
+  // 方块给到 6 张、黑桃只留 3 张：这样「自己发展最长副牌」的答案明确是方块，
+  // 领到黑桃或主牌都只能是被过期的请求带偏（bothSuits 是 4-4 平手，测不出来）。
+  const hand = [
+    ...[11, 9, 4].map((r, i) => T('S', r, i)),
+    ...[12, 10, 8, 7, 5, 3].map((r, i) => T('D', r, i + 10)),
+    ...[9, 8].map((r, i) => T('H', r, i + 20)),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 1, mySeat: 0, // 对手做庄，我和队友都是闲家
+    trickHistory: [
+      partnerLead(1, 'S', 3),
+      { trickNo: 2, leadSeat: 2, leadSuit: 'TRUMP', winnerSeat: 2, points: 0, plays: [] },
+    ],
+  }))[0];
+  assert.notEqual(lead.suit, 'H', '队友领主牌不是在求件，不该被当成「回他这门」而去领主');
+  assert.equal(lead.suit, 'D', '黑桃那条请求已作废，该回到发展自己最长的副牌');
 });
