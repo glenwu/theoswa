@@ -128,8 +128,15 @@ function humanManager(state, actorId) {
   return actor && actor.connected && !actor.isBot ? actor : null;
 }
 
+// 加电脑：开局前给任何空位放电脑；牌局进行中【只能】给掉线的座位接管。
+//
+// ⚠️ 这里原来一律要求 botLobbyAllowed，于是有个死局：
+// 真人接管了电脑位、打到一半掉线，那个座位就永远卡在「掉线」——
+// handleJoin 只让真人顶掉电脑，handleLeave 只置 connected=false，
+// 而加电脑又被阶段挡住，谁也接不了手，全场只能靠「新开一局」把整局作废。
+// 真人任何阶段都能顶掉电脑（见 handleJoin），电脑也就该能任何阶段接管掉线的人，
+// 两边对称。手牌原样继承，和真人接管电脑位完全一样。
 export function handleAddBot(state, action, actorId) {
-  if (!botLobbyAllowed(state)) return fail(ErrorCode.WRONG_PHASE, '只能在开局前添加电脑');
   const actor = humanManager(state, actorId);
   if (!actor) return fail(ErrorCode.FORBIDDEN, '只有房间中的真人玩家可以添加电脑');
   const target = playerById(state, action.playerId);
@@ -137,15 +144,23 @@ export function handleAddBot(state, action, actorId) {
   if (target.connected || target.isBot) {
     return fail(ErrorCode.BOT_UNAVAILABLE, '该位置已经有人或电脑');
   }
+  const inLobby = botLobbyAllowed(state);
   target.isBot = true;
   target.connected = true;
   target.ready = false;
   if (state.phase === 'READY_CHECK') target.seatLocked = true;
   clearProposalsFor(state, target.seat);
-  pushLog(state, `${actor.nickname} 将 ${target.nickname} 设为电脑玩家`);
+  pushLog(
+    state,
+    inLobby
+      ? `${actor.nickname} 将 ${target.nickname} 设为电脑玩家`
+      : `${actor.nickname} 让电脑接管了掉线的 ${target.nickname}（手牌原样继承）`
+  );
   return succeed();
 }
 
+// 移除电脑仍然只能在开局前：牌局进行中把电脑撤掉会留下一个没人打的空位，
+// 比掉线还糟。真人想回来直接 join 顶掉它就行（handleJoin，任何阶段都可以）。
 export function handleRemoveBot(state, action, actorId) {
   if (!botLobbyAllowed(state)) return fail(ErrorCode.WRONG_PHASE, '只能在开局前移除电脑');
   const actor = humanManager(state, actorId);

@@ -87,26 +87,76 @@ test('牌局进行中真人也能顶掉电脑，手牌原样继承', () => {
   applyAction(state, { type: 'join' }, 'T');
   applyAction(state, { type: 'addBot', playerId: 'H' }, 'T');
   const seat = state.players.find(p => p.id === 'H');
-  // 进入出牌阶段（大厅的 addBot/removeBot 此时都不可用，只能靠登录接管）
   state.phase = 'PLAYING';
   seat.hand = [{ id: 'c1', suit: 'S', rank: 14 }, { id: 'c2', suit: 'H', rank: 5 }];
 
-  assert.equal(applyAction(state, { type: 'addBot', playerId: 'B' }, 'T').error.code, ErrorCode.WRONG_PHASE);
+  // ⚠️ 本行原来断言牌局中 addBot 返回 WRONG_PHASE —— 那正是死局的成因，已放开。
+  // 现在牌局中也能让电脑接管【掉线的】座位（B 从未登录 = 掉线状态）。
+  assert.equal(applyAction(state, { type: 'addBot', playerId: 'B' }, 'T').ok, true);
   assert.equal(applyAction(state, { type: 'join' }, 'H').ok, true, '出牌阶段也能接管');
   assert.equal(seat.isBot, false);
   assert.equal(seat.connected, true);
   assert.deepEqual(seat.hand.map(c => c.id), ['c1', 'c2'], '手牌原样继承，不重发不清空');
 });
 
-test('电脑只能由在线真人在开局前管理', () => {
+test('电脑只能由在线真人管理；移除电脑仍限开局前', () => {
   const state = createInitialState(() => 0.42);
   const offline = applyAction(state, { type: 'addBot', playerId: 'H' }, 'T');
-  assert.equal(offline.error.code, ErrorCode.FORBIDDEN);
+  assert.equal(offline.error.code, ErrorCode.FORBIDDEN, '发起人自己不在线，不能管理');
 
   applyAction(state, { type: 'join' }, 'T');
+  applyAction(state, { type: 'addBot', playerId: 'H' }, 'T');
   state.phase = 'PLAYING';
-  const late = applyAction(state, { type: 'addBot', playerId: 'H' }, 'T');
-  assert.equal(late.error.code, ErrorCode.WRONG_PHASE);
+  // ⚠️ 本条原来断言牌局中 addBot 一律 WRONG_PHASE —— 已放开（见下一条测试的成因）。
+  // 但【移除】电脑仍然只限开局前：牌局中撤掉电脑会留下一个没人打的空位。
+  const removeLate = applyAction(state, { type: 'removeBot', playerId: 'H' }, 'T');
+  assert.equal(removeLate.error.code, ErrorCode.WRONG_PHASE);
+});
+
+// Glen 实战踩到的死局：和电脑在玩 → 真人上线接管了电脑位 → 又掉线，
+// 那个座位就永远卡在「掉线」。handleJoin 只让真人顶掉电脑、handleLeave
+// 只置 connected=false，而加电脑又被阶段挡住，谁也接不了手，
+// 全场只能靠「新开一局」把整局作废。
+test('掉线死局：真人接管电脑位后掉线，牌局中仍能让电脑重新接管', () => {
+  const state = createInitialState(() => 0.42);
+  applyAction(state, { type: 'join' }, 'T');
+  applyAction(state, { type: 'addBot', playerId: 'H' }, 'T');
+  const seat = state.players.find(p => p.id === 'H');
+
+  state.phase = 'PLAYING';
+  seat.hand = [{ id: 'c1', suit: 'S', rank: 14 }, { id: 'c2', suit: 'H', rank: 5 }];
+
+  // 真人上线接管这个电脑位
+  assert.equal(applyAction(state, { type: 'join' }, 'H').ok, true);
+  assert.equal(seat.isBot, false);
+  // 然后掉线
+  applyAction(state, { type: 'leave' }, 'H');
+  assert.equal(seat.connected, false);
+  assert.equal(seat.isBot, false, '掉线不会自动变回电脑');
+
+  // 以前这里是 WRONG_PHASE，座位就此卡死
+  const rescue = applyAction(state, { type: 'addBot', playerId: 'H' }, 'T');
+  assert.equal(rescue.ok, true, '牌局中必须能让电脑接管掉线的座位');
+  assert.equal(seat.isBot, true);
+  assert.equal(seat.connected, true);
+  assert.deepEqual(seat.hand.map(c => c.id), ['c1', 'c2'], '手牌原样继承，不重发不清空');
+  assert.match(state.log.map(l => l.text).join('\n'), /电脑接管了掉线的/);
+});
+
+test('牌局中不能把在线的人或已有的电脑挤掉', () => {
+  const state = createInitialState(() => 0.42);
+  applyAction(state, { type: 'join' }, 'T');
+  applyAction(state, { type: 'join' }, 'H');
+  applyAction(state, { type: 'addBot', playerId: 'B' }, 'T');
+  state.phase = 'PLAYING';
+  assert.equal(
+    applyAction(state, { type: 'addBot', playerId: 'H' }, 'T').error.code,
+    ErrorCode.BOT_UNAVAILABLE, '在线的真人不能被电脑挤掉'
+  );
+  assert.equal(
+    applyAction(state, { type: 'addBot', playerId: 'B' }, 'T').error.code,
+    ErrorCode.BOT_UNAVAILABLE, '已经是电脑的位置不用再加'
+  );
 });
 
 test('电脑身份可持久化，旧存档中缺少标记时默认为真人', () => {

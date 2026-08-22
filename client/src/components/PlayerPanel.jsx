@@ -299,10 +299,13 @@ function PlayerCard({ player, isYou, game, send }) {
   const outgoing = game.swapProposals.find(
     sp => sp.fromSeat === game.you.seat && sp.toSeat === player.seat
   );
-  const canManageBot =
-    (game.phase === 'SEATING' || game.phase === 'READY_CHECK') &&
-    !isYou &&
-    (player.isBot || !player.connected);
+  // 让电脑接管掉线座位：任何阶段都允许（否则真人接管电脑位后再掉线，
+  // 那个座位就永远卡在「掉线」，谁也接不了手）。
+  // 移除电脑仍只限开局前：牌局中撤掉电脑会留下一个没人打的空位。
+  const inLobby = game.phase === 'SEATING' || game.phase === 'READY_CHECK';
+  const canAddBot = !isYou && !player.isBot && !player.connected;
+  const canRemoveBot = inLobby && !isYou && player.isBot;
+  const canManageBot = canAddBot || canRemoveBot;
   const canSwap =
     game.phase === 'SEATING' && !isYou && !player.seatLocked && !game.you.seatLocked;
   const canInteract = canManageBot || canSwap;
@@ -414,7 +417,9 @@ function PlayerCard({ player, isYou, game, send }) {
       )}
       {canManageBot && (
         <div className="mt-1.5 rounded-full bg-cyan-400/15 px-2 py-0.5 text-center text-xs font-black text-cyan-200">
-          {player.isBot ? '点击移除电脑玩家' : '点击让电脑加入这个位置'}
+          {player.isBot
+            ? '点击移除电脑玩家'
+            : inLobby ? '点击让电脑加入这个位置' : '点击让电脑接管（手牌继承）'}
         </div>
       )}
     </button>
