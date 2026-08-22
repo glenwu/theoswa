@@ -361,6 +361,38 @@ test('保底：握住顶档但主牌太短（<9）→ 不算保底牌（会先�
   assert.equal(c.guaranteed, false, '但只有 4 张主，撑不到最后一轮');
 });
 
+// ---- 张数对比（Glen 实战：「出了小鬼他就有了」）----
+//
+// 手上大鬼 + 小鬼，另一张大鬼始终没现身。按「独占顶档」判永远不保底，
+// 电脑就一路吊主吊到只剩两个鬼。但外面只剩一张大鬼时，它只能换掉我一张顶牌，
+// 我还剩一张 —— 保底其实已经成立。
+const JOKER_HAND = [T('H', 16, 0), T('H', 15, 1)];
+
+test('保底：大鬼+小鬼，外面只剩一张大鬼没现身 → 成立（他那张只能换我一张）', () => {
+  const c = assessBottomControl(
+    bcView(nineTrumpsWith(JOKER_HAND), [{ id: 'sj', suit: 'JOKER', rank: 15 }]),
+    CTX
+  );
+  assert.equal(c.holdsTopTrump, true, '我两张顶牌 > 对手一张威胁');
+  assert.equal(c.guaranteed, true);
+});
+
+// 上一条的对照：同一手牌，小鬼还没出来的时候【不】成立。
+// 两条一起才钉得住「动态」——单看成立那条，判据写成恒真也能过。
+test('保底：同一手牌，另一张小鬼还没现身 → 不成立（两张威胁对两张顶牌）', () => {
+  const c = assessBottomControl(bcView(nineTrumpsWith(JOKER_HAND)), CTX);
+  assert.equal(c.holdsTopTrump, false, '大鬼+小鬼各一张在外，正好换得完');
+});
+
+// 同强度必须算成威胁：同强度先出者大，我不能指望最后一轮由我先出。
+// 若把同档的 outstanding 漏加，这一手会被误判成保底。
+test('保底：双小鬼但两张大鬼都没现身 → 不成立（同强度也算别人能压我）', () => {
+  const c = assessBottomControl(
+    bcView(nineTrumpsWith([T('H', 15, 0), T('H', 15, 1)])), CTX
+  );
+  assert.equal(c.holdsTopTrump, false, '外面两张大鬼，我两张小鬼，换得完');
+});
+
 // ---- 吊主出哪张：弱吊小、强吊大（Glen 纠正）----
 //
 // 打 2 时主牌阶梯：大鬼 > 小鬼 > 主2 > 副2 > 主花色 A > K > Q > …

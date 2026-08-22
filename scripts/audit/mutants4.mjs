@@ -11,7 +11,17 @@ runMutants([
       '        ? 480', '队友做庄时不看庄家路子，一律吊主'],
   [F, '!control.guaranteed && (!strongSide || planPending)', 'true', '有保底牌/副牌强也照吊不误'],
   [F, '(!strongSide || planPending)', '(true)', '副牌再强也死吊主'],
-  [F, 'if (outstanding > 0) break;', 'if (false) break;', '保底判定忽略「别人还攥着更大的牌」'],
+  [F, 'if (tier.mine > 0 && threats < mineAtOrAbove)', 'if (tier.mine > 0 && threats === 0)',
+      '保底判定退回「独占顶档」（丢掉张数对比）'],
+  [F, 'if (tier.mine > 0 && threats < mineAtOrAbove)', 'if (tier.mine > 0 && threats <= mineAtOrAbove)',
+      '保底判定把「刚好换得完」也当成保底'],
+  [F, `    mineAtOrAbove += tier.mine;
+    threats += tier.total - tier.played - tier.mine; // 别人手上或底牌里
+    if (tier.mine > 0 && threats < mineAtOrAbove) { holdsTopTrump = true; break; }`,
+      `    mineAtOrAbove += tier.mine;
+    if (tier.mine > 0 && threats < mineAtOrAbove) { holdsTopTrump = true; break; }
+    threats += tier.total - tier.played - tier.mine;`,
+      '同档的威胁先判后加（等于不把同强度算成威胁）'],
   [F, 'holdsTopTrump && myTrumps.length >= BOTTOM_MIN_TRUMPS', 'holdsTopTrump', '保底判定不看主牌长度'],
   [F, 'const BOTTOM_MIN_TRUMPS = 9;', 'const BOTTOM_MIN_TRUMPS = 3;', '保底的主牌长度门槛降到 3'],
   [F, 'cost += buriedHere.filter(card => card.rank === 14).length * 300;', '', '埋副 A 不再受罚'],

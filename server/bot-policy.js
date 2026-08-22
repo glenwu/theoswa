@@ -749,14 +749,16 @@ function safeSideThrow(view, ctx, tuning = strategyTuning(view)) {
 // 【保底牌】= 能保证最后一轮自己最大。它不是一张固定的牌型表，是【动态阶梯】。
 // 主牌强弱阶梯（见 cards.js 的 cardStrength）：
 //     大鬼 1000 ×2 > 小鬼 999 ×2 > 主级牌 998 ×2 > 副级牌 997 ×6 > 主花色 900+rank
-// 要保证最后一轮最大，就得握住【当前仍未打出的主牌里最高的那一档】，
-// 并且比它更高的档【一张都不许还留在别人手上】。同档不算数 —— 同强度先出者大，
-// 我不能指望最后一轮由我先出。
+// 判据是【张数对比】：从顶档往下累计，只要「别人手上能压我的张数」少于
+// 「我自己这一档及以上的张数」，保底就成立 —— 对手的大牌一张只能换掉我一张，
+// 换不完，我必然还剩一张能拿下最后一轮。同强度算别人能压我（先出者大，
+// 我不能指望最后一轮由我先出），所以同档的张数要和我的一起累加再比。
 //
 // 关键是它【随出牌动态变化】：
 //   开局什么都没出 → 只有双大鬼才算握住顶档；
 //   别人打掉一张大鬼 → 我手里剩的那张大鬼就够保底了，不再需要小鬼、主2；
-//   大鬼两张都出完了 → 我有双小鬼就够，以此类推。
+//   大鬼两张都出完了 → 我有双小鬼就够，以此类推；
+//   我有大鬼 + 小鬼、外面只剩一张大鬼没现身 → 也够（Glen：「出了小鬼他就有了」）。
 //
 // ⚠️ 底牌那 8 张对电脑是未知的，一张顶主可能躺在底牌里永远不出现。
 // 这里一律把「没见过」当成「可能在别人手上」——宁可低估自己的把握，
@@ -798,13 +800,27 @@ export function assessBottomControl(view, ctx) {
     if (tier) tier.played += 1;
   }
 
-  // 从最高档往下走
-  let holdsTopTrump = false;
+  // 从最高档往下【累计比较张数】，而不是要求独占顶档。
+  //
+  // Glen 实战：手上大鬼 + 小鬼，另一张大鬼一直没现身。按「独占顶档」判 ——
+  // 顶档有牌在外 → 不保底，于是电脑一路吊主，吊到手里只剩那两个鬼。
+  // 但队友把另一张小鬼打出来之后，场上能压我的只剩【一张】大鬼，而我有【两张】
+  // 顶牌：对手那张大鬼只能换掉我一张，剩下那张必然拿得下最后一墩。
+  // 这就是他说的「出了小鬼他就有了」—— 保底是数出来的，不是独占出来的。
+  //
+  // 判据：走到某一档时
+  //   mineAtOrAbove = 我手上这一档及以上的张数
+  //   threats       = 别人手上（含底牌）这一档及以上的张数
+  // threats < mineAtOrAbove ⇒ 对手的大牌不够把我的顶牌一张张换掉 ⇒ 保底成立。
+  // 同强度也算威胁（同强度先出者大，他领这一档我压不过），所以同一档的
+  // outstanding 必须和 mine 在同一轮里一起累加，不能先判后加。
+  //
+  // 原来那条「独占顶档」是本式在第一档的特例（threats 0 < mine 1），已被包含。
+  let mineAtOrAbove = 0, threats = 0, holdsTopTrump = false;
   for (const [, tier] of [...tiers.entries()].sort((a, b) => b[0] - a[0])) {
-    const outstanding = tier.total - tier.played - tier.mine; // 别人手上或底牌里
-    if (outstanding > 0) break;      // 这一档还有牌没现身 → 我压不死，断了
-    if (tier.mine > 0) { holdsTopTrump = true; break; } // 这一档我有，且更高档已出尽
-    // outstanding === 0 且我没有 → 这一档全出完了，继续往下看
+    mineAtOrAbove += tier.mine;
+    threats += tier.total - tier.played - tier.mine; // 别人手上或底牌里
+    if (tier.mine > 0 && threats < mineAtOrAbove) { holdsTopTrump = true; break; }
   }
 
   return {
