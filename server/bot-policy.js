@@ -999,17 +999,22 @@ function hasStrongSideSuit(view, ctx) {
 // 什么才叫「明确需要」：我有一门副牌要甩，而对手可能毙得动它 ——
 // 必须先把他的主削到毙不动。这正好就是 tailThrowPlan 挂起的那个状态，
 // 所以 aggressive 由调用方按「计划挂起」来传，这里不自己猜。
+//
+// ⚠️ 传进来的 trumps 已经【不含鬼】——那一层筛在 chooseLeadCards 的 drawableTrumps，
+// 只留一处，这里不再重复（重复的筛在这条路径上恒真，是会骗过变异测试的死代码）。
 function drawingTrumpCard(trumps, ctx, { aggressive = false } = {}) {
   // 注：这里不必再检查「手上撑不撑得住连续吊」——
   // 唯一会传 aggressive:true 的地方是「甩尾手计划挂起」，而 tailThrowPlan 本身
   // 就要求 control.holdsTopTrump（握住当前最高的未出主牌），那正是「撑得住」的核心条件。
-  // 原来这里还叠了一个 canSustainTrumpDraw，在那条路径上恒为真 —— 既是死代码，
-  // 也会让变异测试误以为它被覆盖了（删掉行为一点不变，变异体照样活着）。
   if (!aggressive) return lowestLead(trumps, ctx);
-  // 明确需要且撑得住：吊级牌那一档。鬼始终留着 —— 那是保底/撬底的本钱。
-  // 按【点数】认鬼（15/16）而不是 suit，与全仓一致。
-  const withoutJokers = trumps.filter(card => card.rank !== 15 && card.rank !== 16);
-  return highCards(withoutJokers.length ? withoutJokers : trumps, 1, ctx)[0];
+  // 明确需要且撑得住：吊【副级牌】那一档 —— Glen：「通常都是打副7，
+  // 主7以上一般拿来杀的」。打 7 时的阶梯是 大鬼 > 小鬼 > 主7 > 副7 > 主花色 A…，
+  // 副级牌是级牌里最便宜的一档：够大、能逼出对手的主，又不是毙牌的本钱。
+  // 原来这里是「除鬼以外最大的一张」，恰好会挑中主级牌 —— 正是他说的「主7」。
+  const drawable = trumps.filter(
+    card => !(card.rank === ctx.rankCard && card.suit === ctx.trumpSuit)
+  );
+  return highCards(drawable.length ? drawable : trumps, 1, ctx)[0];
 }
 
 function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
@@ -1110,7 +1115,11 @@ export function chooseLeadCards(view) {
   // 判据从「有没有双大鬼」换成完整的保底判定（补上了主牌长度这一半 ——
   // 双大鬼但只有 5 张主，照样会被吊空，不算保底牌）。
   const hasBigJoker = hand.some(card => card.rank === 16);
-  if (opening && isDeclarer && !control.guaranteed && trumps.length > 0) {
+  // 吊主的候选里【永远不含鬼】。Glen：「主7以上一般拿来杀的」——
+  // 领鬼不是吊主，是把毙牌的本钱扔掉。手上只剩鬼当主牌时干脆不提吊主，
+  // 让副牌路线接手（真到了全手只剩主牌，low-card-fallback 仍会兜住）。
+  const drawableTrumps = trumps.filter(card => card.rank !== 15 && card.rank !== 16);
+  if (opening && isDeclarer && !control.guaranteed && drawableTrumps.length > 0) {
     // 有大鬼但不够保底 → 首轮吊主【带分】，向队友表态「我有大鬼，但保不了底，
     // 请你表示你的大牌」。挑最小的那张带分主牌，别为了发信号丢掉大牌。
     const pointTrump = hasBigJoker
@@ -1119,7 +1128,7 @@ export function chooseLeadCards(view) {
       : null;
     addProposal(
       // 开局绝不 aggressive：先放小牌，把「要不要吊主」的表态机会让给队友
-      [pointTrump ?? drawingTrumpCard(trumps, ctx)],
+      [pointTrump ?? drawingTrumpCard(drawableTrumps, ctx)],
       900 * tuning.conventionPriorWeight,
       'dealer-opening-trump-signal'
     );
@@ -1130,7 +1139,7 @@ export function chooseLeadCards(view) {
   // 吊主正是在削减对手手上的主牌，等他们凑不出足够的主，尾巴那一甩才毙不住。
   // Glen：「求到件了可以转吊主」。
   const planPending = plan !== null && !plan.ready;
-  if (!opening && trumps.length > 0 && outstandingTrumps > 0 &&
+  if (!opening && drawableTrumps.length > 0 && outstandingTrumps > 0 &&
       !control.guaranteed && (!strongSide || planPending)) {
     const drawBonus =
       planPending ? 560                                                // 为尾巴削对手的主
@@ -1145,7 +1154,7 @@ export function chooseLeadCards(view) {
     if (drawBonus > 0) {
       addProposal(
         // 只有甩尾手计划挂起时才算「明确需要」—— 那时确实要把对手的主削到毙不动
-        [drawingTrumpCard(trumps, ctx, { aggressive: planPending })],
+        [drawingTrumpCard(drawableTrumps, ctx, { aggressive: planPending })],
         drawBonus * tuning.leadStrategyPriorWeight,
         'continue-trump-draw'
       );

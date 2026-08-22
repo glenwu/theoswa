@@ -803,10 +803,14 @@ const SPADES_THROWABLE = {
 };
 
 // 双大鬼 = 握住顶档（起手牌）；黑桃 5 张 = 尾巴
-function tailView({ playedTrumps = [], spades = [11, 9, 7, 6, 4], extraTrumps = [12, 11, 10, 9, 8, 7] }) {
+function tailView({
+  playedTrumps = [], spades = [11, 9, 7, 6, 4],
+  extraTrumps = [12, 11, 10, 9, 8, 7], extraCards = [],
+}) {
   const hand = [
     T('H', 16, 0), T('H', 16, 1),
     ...extraTrumps.map((r, i) => T('H', r, i + 2)),
+    ...extraCards,
     ...spades.map((r, i) => T('S', r, i + 40)),
   ];
   return leadView({
@@ -1011,6 +1015,34 @@ test('吊主：确有理由（甩尾手计划挂起）时才吊大牌，且仍�
   assert.notEqual(lead.rank, 16, '大鬼是保底/撬底的本钱，任何时候都不拿去吊');
   assert.notEqual(lead.rank, 15, '小鬼同理');
   assert.equal(lead.rank, 12, '吊自己最大的那张普通主牌（这手里没有级牌）');
+});
+
+// Glen 又收窄了一档：「即使要吊主，也不应该一开始出最大的牌吊，通常都是打副7，
+// 主7以上一般拿来杀的。」打 7 时的阶梯是 大鬼 > 小鬼 > 主7 > 副7 > 主花色 A…，
+// 副级牌是级牌里最便宜的一档 —— 够大、逼得出对手的主，又不是毙牌的本钱。
+// 原来这里挑的是「除鬼以外最大的一张」，恰好就是主级牌。
+test('吊主：该吊大牌时吊【副级牌】那一档，主级牌留着杀', () => {
+  const lead = chooseLeadCards(tailView({
+    extraTrumps: [12, 11, 10, 9],
+    extraCards: [T('H', 2, 30), T('S', 2, 31)],  // 主级牌 ♥2 / 副级牌 ♠2（打 2）
+  }))[0];
+  assert.equal(lead.rank, 2, `该吊级牌那一档，实际吊了 ${lead.suit}${lead.rank}`);
+  assert.equal(lead.suit, 'S', '吊的是副级牌；主级牌（♥2）以上都留着毙');
+});
+
+// Glen：「用两个鬼来吊」—— 手上当主牌用的只剩两个鬼时，领它们不是吊主，
+// 是把毙牌的本钱扔掉。这时候干脆别提吊主，走副牌。
+test('吊主：手上只剩鬼当主牌 → 不再吊主，转副牌', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [
+      T('H', 16, 0), T('H', 15, 1),                     // 主牌只剩大鬼 + 小鬼
+      ...[9, 7, 5].map((r, i) => T('S', r, i + 20)),
+      ...[8, 6, 4].map((r, i) => T('D', r, i + 30)),
+    ],
+    declarerSeat: 0, mySeat: 0, trickHistory: PLAYED_SOMETHING,
+  }))[0];
+  assert.ok(lead.rank !== 16 && lead.rank !== 15,
+    `不该拿鬼去吊，实际领了 ${lead.suit}${lead.rank}`);
 });
 
 test('吊主：开局第一墩也不许领鬼', () => {

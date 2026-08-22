@@ -20,6 +20,11 @@ runMutants([
     trick => trick.leadSeat === partner && trick.leadSuit !== 'TRUMP'
   );`, '  return false;', '不认「队友吃下后转领副牌」这种应答'],
   [F, '(!strongSide || planPending)', '(true)', '副牌再强也死吊主'],
+  [F, `  const drawable = trumps.filter(
+    card => !(card.rank === ctx.rankCard && card.suit === ctx.trumpSuit)
+  );`, '  const drawable = trumps;', '吊主又去挑主级牌（Glen 的「主7」）'],
+  [F, 'const drawableTrumps = trumps.filter(card => card.rank !== 15 && card.rank !== 16);',
+      'const drawableTrumps = trumps;', '吊主的候选里又混进了鬼'],
   [F, 'if (tier.mine > 0 && threats < mineAtOrAbove)', 'if (tier.mine > 0 && threats === 0)',
       '保底判定退回「独占顶档」（丢掉张数对比）'],
   [F, 'if (tier.mine > 0 && threats < mineAtOrAbove)', 'if (tier.mine > 0 && threats <= mineAtOrAbove)',
