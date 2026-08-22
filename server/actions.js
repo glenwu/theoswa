@@ -109,6 +109,7 @@ export function handleJoin(state, action, actorId) {
   if (me.isBot) {
     me.isBot = false;
     me.connected = true;
+    me.autoPlay = false; // 人回来了就是要自己打，别让上一局的托管标记留着
     announceOnline(state, me, '，接管了电脑玩家的位置');
     return succeed();
   }
@@ -192,6 +193,28 @@ export function handleLeave(state, action, actorId) {
     pauseGame(state, { auto: true });
     pushLog(state, '真人玩家已全部离线，游戏自动暂停。任何真人上线后可恢复。');
   }
+  return succeed();
+}
+
+// ---- 电脑托管 ----
+//
+// 「托管」和「把座位换成电脑」（addBot）是两回事：
+//   addBot   → 那个座位【变成】电脑，人已经不在了（只对掉线座位开放）
+//   托管     → 人还连着、身份不变、随时可以自己取消，只是这段时间让 AI 代打
+// 所以托管【不】影响自动暂停的判定：hasConnectedHuman 只看 connected && !isBot，
+// 托管的人依然算「在线真人」—— 他是主动把牌交给 AI 的，牌局就该继续走，
+// 而不是因为他不在键盘前就把全场停住。
+//
+// 只能给自己设：想替一个【掉线】的人接管，走 addBot；
+// 想替一个【在线】的人做主，那是他自己的事。
+export function handleSetAutoPlay(state, action, actorId) {
+  const me = playerById(state, actorId);
+  if (!me) return fail(ErrorCode.UNKNOWN_PLAYER, '未知身份');
+  if (me.isBot) return fail(ErrorCode.FORBIDDEN, '电脑玩家无需托管');
+  const on = action.on !== false; // 缺省视为开启
+  if (me.autoPlay === on) return succeed(); // 幂等：重复点同一个状态不报错、不刷日志
+  me.autoPlay = on;
+  pushLog(state, on ? `${me.nickname} 开启了电脑托管` : `${me.nickname} 取消了电脑托管，自己接着打`);
   return succeed();
 }
 
@@ -870,6 +893,7 @@ const HANDLERS = {
   confirmDominance: handleConfirmDominance,
   confirmRoundEnd: handleConfirmRoundEnd,
   confirmFlip: handleConfirmFlip,
+  setAutoPlay: handleSetAutoPlay,
   pause: handlePause,
   resume: handleResume,
   proposeReset: handleProposeReset,
@@ -881,13 +905,13 @@ const HANDLERS = {
 
 // 与阶段无关的动作：陈旧状态检查豁免（聊天/登录/重置提案随时可用）
 const PHASE_AGNOSTIC = new Set([
-  'join', 'leave', 'chat', 'quickChat', 'pause', 'resume',
+  'join', 'leave', 'chat', 'quickChat', 'pause', 'resume', 'setAutoPlay',
   'proposeReset', 'voteReset', 'forceReset',
 ]);
 
 // 暂停期间仍然放行的动作：进出房间、聊天，以及恢复本身。
 // 其余一律拒绝 —— 暂停要是还能出牌，那就不叫暂停了。
-const ALLOWED_WHILE_PAUSED = new Set(['join', 'leave', 'chat', 'quickChat', 'pause', 'resume']);
+const ALLOWED_WHILE_PAUSED = new Set(['join', 'leave', 'chat', 'quickChat', 'pause', 'resume', 'setAutoPlay']);
 
 // 服务端权威裁决入口：所有客户端意图必须经过这里；
 // 前端本地校验只为 UX，不是防线。

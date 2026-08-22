@@ -394,6 +394,13 @@ function PlayerCard({ player, isYou, game, send }) {
             {player.isBot && (
               <span className="pill bg-cyan-400/20 text-cyan-200">🤖 电脑</span>
             )}
+            {/* 托管：人还在线、身份不变，只是这段时间让 AI 代打。
+                和「🤖 电脑」分开显示 —— 那是座位已经没人了，这是人还在但托管了。 */}
+            {!player.isBot && player.autoPlay && (
+              <span className="pill bg-cyan-400/20 text-cyan-200" title="该玩家已开启电脑托管">
+                🤖 托管中
+              </span>
+            )}
             {isYou && <span className="text-sm text-amber-300">（我）</span>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1">

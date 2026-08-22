@@ -69,8 +69,10 @@ export class BotController {
 
   nextDecision() {
     if (this.engine.state.paused) return null; // 暂停中电脑不出手
+    // 托管（autoPlay）与电脑（isBot）在这里一视同仁：都由 AI 代打。
+    // 区别只在身份 —— 托管的人还连着、还是那个人，随时可以自己取消。
     const bots = this.engine.state.players
-      .filter(player => player.isBot)
+      .filter(player => player.isBot || player.autoPlay)
       .sort((a, b) => a.seat - b.seat);
     for (const player of bots) {
       const view = {

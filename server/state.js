@@ -82,6 +82,7 @@ export function createInitialState(rng = Math.random) {
       seatLocked: false,
       connected: false,
       isBot: false,
+    autoPlay: false,   // 托管中：人还在线、身份不变，只是让 AI 代打（见 handleSetAutoPlay）
       hand: [], // 服务端全量持有；广播时按玩家裁剪
     })),
     declarerSeat: null, // Seat | null；只有亮牌成功或轮转产生新庄家时才被赋值

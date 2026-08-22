@@ -64,6 +64,26 @@ const MIN_EXPOSE_W = 8;
 const MAX_ROWS_PORTRAIT = 2;
 const MAX_ROWS_WIDE = 2;
 
+// 电脑托管开关。托管期间 AI 用【你自己的手牌】替你打，人还在线、身份不变，
+// 随时可以点「取消托管」自己接着打 —— 和「让电脑接管掉线座位」是两回事。
+function AutoPlayToggle({ game, send, className = '' }) {
+  const on = game.you.autoPlay === true;
+  return (
+    <button
+      type="button"
+      className={`rounded-full px-2.5 py-0.5 text-[11px] font-black transition ${
+        on
+          ? 'bg-cyan-400/85 text-cyan-950 shadow shadow-cyan-400/40 hover:brightness-110'
+          : 'bg-white/10 text-white/70 hover:bg-white/20'
+      } ${className}`}
+      title={on ? '取消托管，自己接着打' : '让电脑用你的手牌替你打，随时可以取消'}
+      onClick={() => send({ type: 'setAutoPlay', on: !on })}
+    >
+      {on ? '🤖 取消托管' : '🤖 托管'}
+    </button>
+  );
+}
+
 // 中栏：十字形四方位牌桌 + 中央信息 + 控制按钮 + 我的手牌
 export default function TablePanel({ game, send, error, onTogglePlayers, onToggleChat }) {
   const [selected, setSelected] = useState([]);
@@ -164,7 +184,7 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
           <PlayZone player={left} game={game} side="left" />
         </div>
         <div className="col-start-2 row-start-2 flex flex-col items-center justify-center gap-1.5">
-          <CenterInfo game={game} />
+          <CenterInfo game={game} send={send} />
           {/* 埋好的 8 张底牌：牌背列在牌桌中央，埋入的件（A/K）明牌亮出 */}
           <KittyBacksRow game={game} />
         </div>
@@ -189,6 +209,7 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
 
       <HandArea
         game={game}
+        send={send}
         selected={selected}
         onToggle={toggleCard}
         onDragAdd={addDragSelection}
@@ -457,7 +478,7 @@ function TopBanner({ game }) {
   );
 }
 
-function CenterInfo({ game }) {
+function CenterInfo({ game, send }) {
   const [showHint, setShowHint] = useState(false);
   const round = game.round;
   const trumpSuit = round?.trumpSuit ?? null;
@@ -521,6 +542,8 @@ function CenterInfo({ game }) {
       <div className="text-xs font-bold text-white/70 portrait:max-lg:hidden">
         {PHASE_HINTS[game.phase]}
       </div>
+      {/* 竖屏窄屏：托管按钮放在「说明」上边（手牌区那一行挤不下） */}
+      <AutoPlayToggle game={game} send={send} className="hidden portrait:max-lg:block" />
       <button
         type="button"
         className="hidden rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-black text-white/70 portrait:max-lg:block"
@@ -1203,7 +1226,7 @@ function ErrorToast({ error }) {
 // 拖回已选牌不会取消），位移超过 5px 进入拖动模式；触摸同样支持滑动多选。
 // 换底时庄家 33 张（底牌已并入，统一排序），从中点选 8 张埋回；
 // 过河时点选 3 张（发起者：全部主牌 + 副牌补足；对家：3 张副牌）。
-function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclareRank }) {
+function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, onDeclareRank }) {
   const you = game.you;
   const hand = you.hand ?? [];
   const revealing = game.phase === 'REVEALING';
@@ -1506,7 +1529,11 @@ function HandArea({ game, selected, onToggle, onDragAdd, onToggleGroup, onDeclar
                 : `过河送出：全部主牌 + 副牌补足 3 张（已选 ${selected.length}/3）`
               : '我的手牌'}
         </span>
-        <span>{hand.length} 张</span>
+        <span className="flex items-center gap-2">
+          {/* 竖屏窄屏这里空间紧张，托管按钮改挂到中央信息区（「说明」上边） */}
+          <AutoPlayToggle game={game} send={send} className="portrait:max-lg:hidden" />
+          <span>{hand.length} 张</span>
+        </span>
       </div>
       {hand.length === 0 ? (
         <div className="flex min-h-24 items-center justify-center gap-2">

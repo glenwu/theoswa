@@ -112,6 +112,7 @@ export function viewerState(state, viewerId) {
       team: p.team,
       connected: p.connected,
       isBot: p.isBot === true,
+      autoPlay: p.autoPlay === true, // 托管中（公开：四家都该知道这一家是 AI 在打）
       ready: p.ready,
       seatLocked: p.seatLocked,
       handCount: Array.isArray(p.hand) ? p.hand.length : 0, // 只给张数，不给牌
@@ -145,6 +146,7 @@ export function viewerState(state, viewerId) {
       team: you.team,
       connected: you.connected,
       isBot: you.isBot === true,
+      autoPlay: you.autoPlay === true,
       ready: you.ready,
       seatLocked: you.seatLocked,
       isAdmin: Array.isArray(state.adminIds) && state.adminIds.includes(you.id),
