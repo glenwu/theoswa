@@ -6,10 +6,19 @@ import { runMutants } from './mutate.mjs';
 const F = 'server/bot-policy.js';
 runMutants([
   [F, '    if (drawBonus > 0) {', '    if (false && drawBonus > 0) {', '拿掉持续吊主（回到「只吊一轮」）'],
-  [F, "role === 'declarer' ? 520", "role === 'declarer' ? 0", '庄家不再续吊'],
+  [F, "role === 'declarer' ? (trumpSignalAnswered(view, ctx) ? 0 : 520)",
+      "role === 'declarer' ? 0", '庄家不再续吊'],
   [F, "        ? (declarerLeadStyle(view) === 'trump' &&\n           !(hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 480 : 0)",
       '        ? 480', '队友做庄时不看庄家路子，一律吊主'],
   [F, '!control.guaranteed && (!strongSide || planPending)', 'true', '有保底牌/副牌强也照吊不误'],
+  [F, '(trumpSignalAnswered(view, ctx) ? 0 : 520)', '520', '庄家不看队友答没答，照旧死吊'],
+  [F, 'card.rank === 15 || card.rank === 16)) return true;', 'card.rank >= 3)) return true;',
+      '随便跟一张主也算「不用吊主」的应答'],
+  [F, '  if (!declarerTrumpPointSignal(view, ctx)) return false;', '',
+      '没发过求大鬼的信号也当成收到了应答'],
+  [F, `  return history.slice(1).some(
+    trick => trick.leadSeat === partner && trick.leadSuit !== 'TRUMP'
+  );`, '  return false;', '不认「队友吃下后转领副牌」这种应答'],
   [F, '(!strongSide || planPending)', '(true)', '副牌再强也死吊主'],
   [F, 'if (tier.mine > 0 && threats < mineAtOrAbove)', 'if (tier.mine > 0 && threats === 0)',
       '保底判定退回「独占顶档」（丢掉张数对比）'],

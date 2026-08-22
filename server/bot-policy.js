@@ -872,6 +872,26 @@ function declarerTrumpPointSignal(view, ctx) {
   return cards.length > 0 && cards.some(card => cardPoints(card) > 0);
 }
 
+// 「带分吊主」这个约定是【双向】的，原来只写了应答的一半：队友收到信号会转副牌，
+// 庄家自己却从不回头看队友答没答，于是一路吊下去。Glen 实战里正是这样 ——
+// 他用小鬼应了，庄家还在吊，吊到手上只剩两个鬼。
+//
+// 应答有两种形态，Glen 说「都是『不用吊主』的表达」：
+//   1. 在信号那一墩用鬼吃下来 —— 第一墩队友必须跟主，他能表达的只有出不出顶张
+//   2. 之后拿到牌权时【领副牌】 —— 电脑队友走的就是这条（它不肯早早交出鬼）
+// 收到应答就说明顶端有人管得住，庄家该转去跑副牌，不必再削对手的主。
+function trumpSignalAnswered(view, ctx) {
+  if (view.you?.seat !== view.declarerSeat) return false;
+  if (!declarerTrumpPointSignal(view, ctx)) return false;
+  const partner = partnerSeatOf(view.you.seat);
+  const history = view.round?.trickHistory ?? [];
+  const answer = (history[0]?.plays ?? []).find(play => play.seat === partner);
+  if ((answer?.cards ?? []).some(card => card.rank === 15 || card.rank === 16)) return true;
+  return history.slice(1).some(
+    trick => trick.leadSeat === partner && trick.leadSuit !== 'TRUMP'
+  );
+}
+
 // 角色：吊不吊主完全取决于这个（Glen：「没有通用思路，都要看角色和牌势」）
 function leadRole(view) {
   const declarerSeat = view.declarerSeat;
@@ -1114,7 +1134,8 @@ export function chooseLeadCards(view) {
       !control.guaranteed && (!strongSide || planPending)) {
     const drawBonus =
       planPending ? 560                                                // 为尾巴削对手的主
-      : role === 'declarer' ? 520                                      // 保底优先，接着吊
+      // 队友已经应了「不用吊主」→ 转去跑副牌保底，别再削对手的主
+      : role === 'declarer' ? (trumpSignalAnswered(view, ctx) ? 0 : 520)
       : role === 'declarerPartner'
         // 收到庄家「带分吊主」的信号而自己确实有大鬼 → 转打副牌，
         // 这本身就是「不用吊主」的表达（Glen）。否则照常跟庄家路子。

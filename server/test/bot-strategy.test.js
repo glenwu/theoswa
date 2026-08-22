@@ -267,6 +267,73 @@ test('吊主：副牌件多且够长（还不能甩）→ 仍然转副牌，不�
   assert.notEqual(lead.suit, 'H', '副牌件多又够长，容易得分，不该继续死吊主');
 });
 
+// ---- 庄家「带分吊主」求大鬼，收到应答就该收手（Glen 实战）----
+//
+// 这条约定原来只实现了应答的一半：队友收到信号会转副牌，庄家自己却从不回头看
+// 队友答没答，于是一路吊下去 —— Glen 用小鬼应了，它还在吊，吊到只剩两个鬼。
+//
+// 首墩带分的领牌 = 求大鬼。队友这一墩必须跟主，能表达的只有【出不出顶张】；
+// 他之后拿到牌权【领副牌】是同一个意思。
+const signalTrick = (answer, winnerSeat = 0) => ({
+  trickNo: 1, leadSeat: 0, leadSuit: 'TRUMP', winnerSeat, points: 5,
+  plays: [
+    { seat: 0, cards: [T('H', 5, 80)] },  // 庄家自己：带分的主牌 = 求大鬼
+    { seat: 3, cards: [T('H', 4, 81)] },
+    { seat: 2, cards: answer },           // 队友（座位 0/2 同队）
+    { seat: 1, cards: [T('H', 3, 82)] },
+  ],
+});
+
+test('吊主：庄家求大鬼，队友用小鬼应答 → 收手转副牌，不再吊', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [...NINE_TRUMPS, ...WEAK_SIDES],
+    declarerSeat: 0, mySeat: 0,
+    trickHistory: [signalTrick([{ id: 'sj1', suit: 'JOKER', rank: 15 }], 2)],
+  }))[0];
+  assert.notEqual(lead.suit, 'H', '队友已经表示顶端有人管，庄家该去跑副牌保底');
+});
+
+// 对照：同一个信号，队友只跟了一张小主 = 没有大牌可表示 → 照旧接着吊。
+// 少了这条，把 trumpSignalAnswered 写成恒真也能过上面那条。
+test('吊主：庄家求大鬼，队友只垫了张小主 → 没收到应答，继续吊', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [...NINE_TRUMPS, ...WEAK_SIDES],
+    declarerSeat: 0, mySeat: 0,
+    trickHistory: [signalTrick([T('H', 6, 83)])],
+  }))[0];
+  assert.equal(lead.suit, 'H', '队友没表示，庄家保不了底，还得接着吊');
+});
+
+// 第二种应答形态：队友吃下这一墩之后自己【领副牌】。
+// ⚠️ 让他领的是【我一张都没有】的梅花 —— 否则 return-partner-suit 会替我
+// 挑一张副牌出来，测试就算 gate 失效也照样领副牌（碰巧通过）。
+test('吊主：庄家求大鬼，队友吃下后转领副牌 → 同样算应答，收手', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [...NINE_TRUMPS, ...WEAK_SIDES],   // 只有黑桃和方块，没有梅花
+    declarerSeat: 0, mySeat: 0,
+    trickHistory: [
+      signalTrick([T('H', 14, 84)], 2),
+      { trickNo: 2, leadSeat: 2, leadSuit: 'C', winnerSeat: 2, points: 0, plays: [] },
+    ],
+  }))[0];
+  assert.notEqual(lead.suit, 'H', '队友转副牌就是「不用吊主」的表达');
+});
+
+// 「收手」只对【带分】那一墩负责：庄家吊了一张不带分的小主不是求大鬼，
+// 队友之后领副牌也就不是应答，该吊还得接着吊。
+test('吊主：庄家首墩吊的是不带分的小主 → 队友领副牌不算应答，继续吊', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [...NINE_TRUMPS, ...WEAK_SIDES],
+    declarerSeat: 0, mySeat: 0,
+    trickHistory: [
+      { trickNo: 1, leadSeat: 0, leadSuit: 'TRUMP', winnerSeat: 2, points: 0,
+        plays: [{ seat: 0, cards: [T('H', 3, 85)] }, { seat: 2, cards: [T('H', 14, 86)] }] },
+      { trickNo: 2, leadSeat: 2, leadSuit: 'C', winnerSeat: 2, points: 0, plays: [] },
+    ],
+  }))[0];
+  assert.equal(lead.suit, 'H', '没发过求大鬼的信号，就没有「应答」可收');
+});
+
 test('吊主：队友做庄且庄家在吊主 → 跟着吊', () => {
   const lead = chooseLeadCards(leadView({
     hand: [...NINE_TRUMPS, ...WEAK_SIDES],
