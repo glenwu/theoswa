@@ -26,5 +26,5 @@ runMutants([
   ['client/src/handGroups.js', 'const val = Math.max(dp[r - 1][j], spanW(j, i));', 'const val = dp[r - 1][j] + spanW(j, i);', '分行目标从「最宽行最窄」变成「总宽最小」（退化成任意划分）'],
   ['client/src/handGroups.js', 'if (R === 1) return [[0, n]];', 'if (R === 1) return [[0, n]];\n  widths = widths.map(() => 1);', '按元素个数均分，忽略实际宽度（旧的错误做法）'],
   // ---- 级别 / 轮转 ----
-  ['server/rotation.js', '(seat + 1) % 4', '(seat + 3) % 4', '轮转方向反了'],
+  ['server/rotation.js', '(seat + 3) % SEAT_COUNT', '(seat + 1) % SEAT_COUNT', '轮转方向反了'],
 ]);

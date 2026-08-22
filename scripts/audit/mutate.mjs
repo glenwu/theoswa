@@ -11,7 +11,20 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 
+// MUTATE_DRY=1：只核对锚点在不在，不改文件也不跑测试。
+// 十几套脚本挨个跑一遍要好几分钟，而「锚点失效」是改完代码最常见、最该立刻
+// 发现的问题 —— 一套满是 SKIP 的变异测试是虚假的安全感。
 export function runMutants(mutants, { command = 'npm', args = ['test'] } = {}) {
+  if (process.env.MUTATE_DRY === '1') {
+    let stale = 0;
+    for (const [file, oldStr, , desc] of mutants) {
+      if (fs.readFileSync(file, 'utf8').includes(oldStr)) continue;
+      stale += 1;
+      console.log(`⚠️ SKIP    ${desc}  ← 锚点失效，请更新到当前代码`);
+    }
+    console.log(`锚点核对：${mutants.length} 条，失效 ${stale} 条`);
+    return { killed: 0, alive: 0, skipped: stale };
+  }
   const originals = new Map();
   const snapshot = file => {
     if (!originals.has(file)) originals.set(file, fs.readFileSync(file, 'utf8'));

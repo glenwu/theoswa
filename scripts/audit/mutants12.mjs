@@ -2,8 +2,8 @@
 import { runMutants } from './mutate.mjs';
 const F = 'server/bot-policy.js';
 runMutants([
-  [F, 'const withoutJokers = trumps.filter(card => card.rank !== 15 && card.rank !== 16);\n  return highCards(withoutJokers.length ? withoutJokers : trumps, 1, ctx)[0];',
-      'return highCards(trumps, 1, ctx)[0];', '强势吊主又拿鬼去吊（回到实战踩到的 bug）'],
+  [F, 'const drawableTrumps = trumps.filter(card => card.rank !== 15 && card.rank !== 16);',
+      'const drawableTrumps = trumps;', '吊主候选里又混进了鬼（回到实战踩到的 bug）'],
   [F, 'card.rank !== 15 && card.rank !== 16', 'card.rank !== 16', '只挡大鬼，小鬼照领'],
   [F, "card.rank !== 15 && card.rank !== 16", "card.suit !== 'JOKER'", '按 suit 认鬼（与全仓的 rank 判断不一致）'],
   [F, '        const wasted = cards.reduce((best, card) => Math.max(best, keepValue(card, ctx)), 0);\n        const protectingPoints = totalPoints > 0 && !lastToAct;\n        score -= (15 + wasted * (protectingPoints ? 0.15 : 1.2)) *\n          settings.controlReserve * controlCaution;',

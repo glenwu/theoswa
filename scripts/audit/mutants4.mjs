@@ -23,8 +23,6 @@ runMutants([
   [F, `  const drawable = trumps.filter(
     card => !(card.rank === ctx.rankCard && card.suit === ctx.trumpSuit)
   );`, '  const drawable = trumps;', '吊主又去挑主级牌（Glen 的「主7」）'],
-  [F, 'const drawableTrumps = trumps.filter(card => card.rank !== 15 && card.rank !== 16);',
-      'const drawableTrumps = trumps;', '吊主的候选里又混进了鬼'],
   [F, 'if (tier.mine > 0 && threats < mineAtOrAbove)', 'if (tier.mine > 0 && threats === 0)',
       '保底判定退回「独占顶档」（丢掉张数对比）'],
   [F, 'if (tier.mine > 0 && threats < mineAtOrAbove)', 'if (tier.mine > 0 && threats <= mineAtOrAbove)',
