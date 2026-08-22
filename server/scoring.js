@@ -22,7 +22,7 @@ export function kittyGrabOf(state) {
   return last.winnerSeat % 2 !== state.declarerSeat % 2;
 }
 
-// 全局分数守恒：只认台面分。P_final 里的 +20 与撬底底牌加成不参与守恒。
+// 全局分数守恒：只认台面分。P_final 里的底牌分不参与守恒（底牌分是加成，不是新产生的分）。
 export function checkConservation(defenderTrickPoints, runAwayPoints, kittyPoints) {
   return defenderTrickPoints + runAwayPoints + kittyPoints === 200;
 }
@@ -148,7 +148,7 @@ export function finishRound(state) {
   pushLog(
     state,
     `第 ${r.roundNumber} 局结束：闲家台面 ${r.defenderTrickPoints} 分、庄家跑掉 ${r.runAwayPoints} 分、底牌 ${kittyPoints} 分${
-      kittyGrab ? '，被撬底 +20' : ''
+      kittyGrab ? '，被撬底' : ''
     }。最终 P=${result.defenderPoints}，${result.transfer ? '移庄' : '连庄'}，${upgradeText}。下一局 ${nextName} 做庄。`
   );
   if (result.crossRiverPenalty > 0) {

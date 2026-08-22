@@ -536,7 +536,7 @@ function DominancePanel({ game, onConfirm }) {
           <span className="text-amber-300">{dom.winningTeam === 0 ? '金队' : '青队'}</span> 赢下，
           共 <span className="text-amber-300">{dom.remainingPoints}</span> 分
           （{dom.pointsToDefender ? '计入闲家' : '庄家跑掉'}
-          {dom.kittyGrab ? '，闲家撬底 +20' : ''}）。
+          {dom.kittyGrab ? '，闲家撬底' : ''}）。
         </p>
         <div className="mt-3 space-y-1.5">
           {hands.map(h => {
@@ -614,7 +614,7 @@ function SettlementPanel({ game, send }) {
           ))}
         </div>
         <div className="mt-1 text-center text-[11px] font-bold text-white/40">
-          底牌揭晓{summary?.kittyGrab ? ' · 闲家撬底 +20' : ''}
+          底牌揭晓{summary?.kittyGrab ? ' · 闲家撬底' : ''}
         </div>
 
         <div className="mt-3 rounded-xl bg-amber-400/10 p-3 text-center text-sm font-black text-amber-200">

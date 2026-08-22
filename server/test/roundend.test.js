@@ -105,6 +105,37 @@ test('复盘叙述：撬底局讲清抓分来源、跑掉的分、最后一轮�
   assert.match(lines, /最终闲家 P=130，移庄，青队升 2 级/);
 });
 
+// 复盘叙述里的撬底说明是玩家唯一能看到的规则解释，曾经写成「另加 20 分」。
+// 规则早就改成「不加分、只把档位抬高一级」，但纯文案没有任何测试盯着，
+// 于是错了半天没人发现。这两条把文案本身钉死。
+test('复盘叙述：撬底说明不得再出现「加 20 分」，且要讲清档位 +1 级', () => {
+  const summary = {
+    declarerSeat: 0, defenderTrickPoints: 90, runAwayPoints: 90, kittyPoints: 20,
+    kittyGrab: true, defenderPoints: 110, transfer: true, upgradedTeam: 1,
+    upgradeCount: 2, crossRiverPenalty: 0,
+  };
+  const lines = roundStory(summary, [{ trickNo: 1, winnerSeat: 1, points: 90 }], nameBySeat).join('\n');
+  // 只禁「撬底额外加分」这一类说法。不能笼统禁 "20 分" ——
+  // 「底牌 20 分计入闲家」「每 20 分再加一级」都是正确且必要的文案。
+  assert.doesNotMatch(
+    lines, /另加|额外加 ?\d+ 分|撬底[^。]*\+ ?\d/,
+    '撬底不再额外加分，文案里不能出现任何「撬底加分」的说法'
+  );
+  assert.match(lines, /底牌 20 分计入闲家/, '底牌分照常计入');
+  assert.match(lines, /档位比守成时整体高一级/);
+});
+
+test('复盘叙述：撬底但 P 不够 80 → 说明改口为「只移庄、双方都不升级」', () => {
+  const summary = {
+    declarerSeat: 0, defenderTrickPoints: 40, runAwayPoints: 140, kittyPoints: 20,
+    kittyGrab: true, defenderPoints: 60, transfer: true, upgradedTeam: 1,
+    upgradeCount: 0, crossRiverPenalty: 0,
+  };
+  const lines = roundStory(summary, [{ trickNo: 1, winnerSeat: 1, points: 40 }], nameBySeat).join('\n');
+  assert.match(lines, /撬底无条件移庄，但闲家 P 不够 80，双方都不升级/);
+  assert.doesNotMatch(lines, /高一级/, 'P<80 时不该承诺档位加成');
+});
+
 test('复盘叙述：闲家一分未抓 + 底牌守住', () => {
   const summary = {
     declarerSeat: 0, defenderTrickPoints: 0, runAwayPoints: 180, kittyPoints: 20,

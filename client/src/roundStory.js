@@ -48,14 +48,27 @@ export function roundStory(summary, trickHistory, nameBySeat) {
   }
 
   // 3) 最后一轮定撬底
+  // ⚠️ 撬底【不额外加 20 分】（Glen 2026-08-21 裁定，覆盖文档 §6.9 原文）。
+  // 这两句是玩家唯一能看到的撬底规则说明 —— 写错了不会有测试变红，
+  // 只会让人算不明白自己这局为什么升了这么多（或这么少）级。
+  // 撬底的实质回报不在分上，在档位上：够 80 分时比守成时整体高一级。
   const last = (trickHistory ?? [])[trickHistory.length - 1];
   if (last) {
     const who = name(last.winnerSeat);
-    lines.push(
-      summary.kittyGrab
-        ? `最后一轮被 ${who}（闲家方）拿下 —— 撬底成立，底牌 ${summary.kittyPoints} 分计入闲家，另加 20 分。`
-        : `最后一轮由 ${who}（庄家方）守住 —— 底牌 ${summary.kittyPoints} 分跟着跑掉，没被撬。`
-    );
+    if (summary.kittyGrab) {
+      lines.push(
+        `最后一轮被 ${who}（闲家方）拿下 —— 撬底成立，底牌 ${summary.kittyPoints} 分计入闲家。`
+      );
+      lines.push(
+        summary.defenderPoints >= 80
+          ? '撬底无条件移庄，且升级档位比守成时整体高一级（80 分→1 级、100→2、120→3，每 20 分再加一级）。'
+          : '撬底无条件移庄，但闲家 P 不够 80，双方都不升级。'
+      );
+    } else {
+      lines.push(
+        `最后一轮由 ${who}（庄家方）守住 —— 底牌 ${summary.kittyPoints} 分跟着跑掉，没被撬。`
+      );
+    }
   }
 
   // 4) 三主过河惩罚（只有庄家触发过河且被撬底才会有）

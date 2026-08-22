@@ -364,7 +364,7 @@ function maybeFinishCrossRiver(state) {
     pushLog(
       state,
       `碾压判定：${TEAM_NAMES[dominance.winningTeam]}将赢下剩余 ${dominance.remainingTricks} 轮，共 ${dominance.remainingPoints} 分` +
-        `${dominance.pointsToDefender ? '，计入闲家' : '，庄家跑掉'}${dominance.kittyGrab ? '，闲家撬底 +20' : ''}。`
+        `${dominance.pointsToDefender ? '，计入闲家' : '，庄家跑掉'}${dominance.kittyGrab ? '，闲家撬底' : ''}。`
     );
     return;
   }
@@ -591,7 +591,7 @@ export function handlePlay(state, action, actorId) {
     pushLog(
       state,
       `碾压判定：${TEAM_NAMES[dominance.winningTeam]}将赢下剩余 ${dominance.remainingTricks} 轮，共 ${dominance.remainingPoints} 分` +
-        `${dominance.pointsToDefender ? '，计入闲家' : '，庄家跑掉'}${dominance.kittyGrab ? '，闲家撬底 +20' : ''}。`
+        `${dominance.pointsToDefender ? '，计入闲家' : '，庄家跑掉'}${dominance.kittyGrab ? '，闲家撬底' : ''}。`
     );
   }
   return succeed();

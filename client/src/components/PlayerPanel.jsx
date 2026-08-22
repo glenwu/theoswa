@@ -120,7 +120,7 @@ function RulesModal({ onClose }) {
           <p className="mt-1">
             打 A 之后再升一级回到 2（第二圈），在第二圈的 2 上再升一级才算获胜——
             一支队伍从 2 打起共要跨 14 级。第二圈的 2 打牌时与普通 2 完全一样。
-            闲家抓够 80 分移庄；撬底无条件移庄并 +20 分。
+            闲家抓够 80 分移庄；撬底无条件移庄，底牌分计入闲家，且升级档位比守成时整体高一级。
           </p>
         </section>
       </div>
@@ -150,7 +150,7 @@ function HistoryModal({ game, onClose }) {
                 </div>
                 <div className="mt-1 text-white/60">
                   闲家 {s.defenderTrickPoints} · 跑掉 {s.runAwayPoints} · 底牌 {s.kittyPoints}
-                  {s.kittyGrab ? ' · 撬底 +20' : ''}
+                  {s.kittyGrab ? ' · 撬底' : ''}
                   {' → P='}{s.defenderPoints}
                 </div>
                 <div className="mt-0.5">
