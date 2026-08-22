@@ -1,20 +1,4 @@
-import { PLAYERS } from './constants.js';
-import {
-  REVEAL_FLIP_MS,
-  FLIP_HOLD_MS,
-  REVEAL_DRAW_MS,
-  REVEAL_GRACE_MS,
-  FALLBACK_REVEAL_MS,
-  DEALING_MS,
-  TRICK_SETTLE_MS,
-  SCORING_MS,
-  ROUND_END_MS,
-  PLAY_TIMEOUT_MS,
-  RESET_PROPOSAL_MS,
-  CROSS_RIVER_DECIDE_MS,
-  CROSS_RIVER_PICK_MS,
-  AUTO_LAST_MS,
-} from './constants.js';
+import { PLAYERS, DEFAULT_TIMINGS } from './constants.js';
 
 function finiteNumber(value, fallback, min = -Infinity, max = Infinity) {
   return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
@@ -123,22 +107,7 @@ export function createInitialState(rng = Math.random) {
     // SEED=42 就无法复现同一副牌。函数不持久化（JSON 丢弃），恢复时 normalizeState 补回。
     niiRandom: Math.random,
     // 阶段节奏（毫秒；GameEngine 可用环境变量覆盖）
-    timing: {
-      flipMs: REVEAL_FLIP_MS,
-      flipHoldMs: FLIP_HOLD_MS,
-      drawMs: REVEAL_DRAW_MS,
-      graceMs: REVEAL_GRACE_MS,
-      fallbackMs: FALLBACK_REVEAL_MS,
-      dealingMs: DEALING_MS,
-      settleMs: TRICK_SETTLE_MS,
-      scoringMs: SCORING_MS,
-      roundEndMs: ROUND_END_MS,
-      playMs: PLAY_TIMEOUT_MS,
-      resetProposalMs: RESET_PROPOSAL_MS,
-      crossRiverDecideMs: CROSS_RIVER_DECIDE_MS,
-      crossRiverPickMs: CROSS_RIVER_PICK_MS,
-      autoLastMs: AUTO_LAST_MS,
-    },
+    timing: { ...DEFAULT_TIMINGS }, // 唯一真源在 constants.js，别在这里再抄一份
   };
 }
 
@@ -164,6 +133,8 @@ export function createRoundState(roundNumber, declarerSeat) {
     fallbackRevealed: [],   // 揭底定主：已公开摊开的底牌
     leadSeat: null,
     turnSeat: null,
+    kittyDeadline: null,    // 庄家换底截止时刻（超时服务端自动埋底）
+    dominanceDeadline: null,// 碾压确认截止时刻（超时服务端自动确认）
     playDeadline: null,     // 出牌限时截止时刻（超时服务端自动出最小合法牌）
     playTurnSeat: null,     // 出牌限时对应的当前回合座位（换人时重置）
     currentTrick: [],

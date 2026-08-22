@@ -54,33 +54,74 @@ export const SCORING_MS = 600;          // 局末结算展示停留
 // 四人都点「看完了」可提前进入下一局；没点满就等满这 100 秒。
 export const ROUND_END_MS = 100000;
 export const PLAY_TIMEOUT_MS = 60000;   // 出牌限时：超时服务端自动打出最小合法牌（宽松，可调）
+// 庄家换底限时：超时服务端替他埋 8 张（用电脑挑底牌那套算法）。
+// ⚠️ 这里原本没有任何兜底，是全局唯一漏掉的「等一个人」的阶段：
+// 庄家临时走开或掉线，四个人就一起卡到天荒地老 —— 掉线不会转电脑，
+// 出牌都有 60 秒自动打，唯独换底没有，只能靠全票「新开一局」把整局作废。
+// 给得比出牌宽松得多：换底要看 33 张牌、想清楚埋哪 8 张，本来就慢。
+export const KITTY_EXCHANGE_MS = 180000;
+// 碾压收尾确认限时：任一家点确认即可推进（电脑会自动点），
+// 但四个真人全挂机时同样没人推得动，而那时四家手牌正摊开着。
+export const DOMINANCE_MS = 30000;
 export const RESET_PROPOSAL_MS = 60000; // 新开一局提案：60 秒无人响应自动取消
 export const CROSS_RIVER_DECIDE_MS = 15000; // 三主过河：发起/跳过的决定窗口（无人发起则窗口结束自动继续）
 export const CROSS_RIVER_PICK_MS = 30000;   // 三主过河：对家回 3 张副牌的超时（超时自动挑最小 3 张副牌）
 export const AUTO_LAST_MS = 600;        // 最后一轮自动打出：每张牌之间的间隔（走完整动画，不闪跳）
 
-// 阶段节奏的唯一出口：环境变量覆盖，缺省一律取上面的常量。
-// ⚠️ 绝不要在 index.js 或别处再写一遍这些数字。
-// 曾经 index.js 自带一份 `process.env.X ?? <字面量>`，改了上面的常量却不生效 ——
-// 单测断言常量本身没问题，跑起来的服务端却还用着旧值，极难发现。
+// 阶段节奏的唯一真源。
+// ⚠️ 绝不要在 index.js / state.js 或别处再抄一份这些数字或这份键表。
+// 踩过两次：
+//   1. index.js 自带一份 `process.env.X ?? <字面量>`，改了常量却不生效；
+//   2. state.js 的 createInitialState 手抄了一份 timing 默认值 —— 新增
+//      kittyExchangeMs 后忘了同步，于是 t.kittyExchangeMs === undefined，
+//      `now + undefined` = NaN，setTimeout(NaN) 立刻触发，换底一进去就被自动埋了。
+// 现在默认值只有 DEFAULT_TIMINGS 一份，环境变量名只有 TIMING_ENV_KEYS 一份，
+// 两者键集合相同（有测试钉住），加新节奏时改这里就够了。
+export const DEFAULT_TIMINGS = Object.freeze({
+  flipMs: REVEAL_FLIP_MS,
+  flipHoldMs: FLIP_HOLD_MS,
+  drawMs: REVEAL_DRAW_MS,
+  graceMs: REVEAL_GRACE_MS,
+  fallbackMs: FALLBACK_REVEAL_MS,
+  dealingMs: DEALING_MS,
+  settleMs: TRICK_SETTLE_MS,
+  scoringMs: SCORING_MS,
+  roundEndMs: ROUND_END_MS,
+  playMs: PLAY_TIMEOUT_MS,
+  kittyExchangeMs: KITTY_EXCHANGE_MS,
+  dominanceMs: DOMINANCE_MS,
+  resetProposalMs: RESET_PROPOSAL_MS,
+  crossRiverDecideMs: CROSS_RIVER_DECIDE_MS,
+  crossRiverPickMs: CROSS_RIVER_PICK_MS,
+  autoLastMs: AUTO_LAST_MS,
+});
+
+export const TIMING_ENV_KEYS = Object.freeze({
+  flipMs: 'FLIP_MS',
+  flipHoldMs: 'FLIP_HOLD_MS',
+  drawMs: 'DRAW_MS',
+  graceMs: 'GRACE_MS',
+  fallbackMs: 'FALLBACK_MS',
+  dealingMs: 'DEALING_MS',
+  settleMs: 'SETTLE_MS',
+  scoringMs: 'SCORING_MS',
+  roundEndMs: 'ROUND_END_MS',
+  playMs: 'PLAY_MS',
+  kittyExchangeMs: 'KITTY_MS',
+  dominanceMs: 'DOMINANCE_MS',
+  resetProposalMs: 'RESET_PROPOSAL_MS',
+  crossRiverDecideMs: 'CROSS_RIVER_MS',
+  crossRiverPickMs: 'CROSS_PICK_MS',
+  autoLastMs: 'LAST_MS',
+});
+
 export function timingsFromEnv(env = process.env) {
   const num = (v, fallback) => (v === undefined || v === '' ? fallback : Number(v));
-  return {
-    flipMs: num(env.FLIP_MS, REVEAL_FLIP_MS),
-    flipHoldMs: num(env.FLIP_HOLD_MS, FLIP_HOLD_MS),
-    drawMs: num(env.DRAW_MS, REVEAL_DRAW_MS),
-    graceMs: num(env.GRACE_MS, REVEAL_GRACE_MS),
-    fallbackMs: num(env.FALLBACK_MS, FALLBACK_REVEAL_MS),
-    dealingMs: num(env.DEALING_MS, DEALING_MS),
-    settleMs: num(env.SETTLE_MS, TRICK_SETTLE_MS),
-    scoringMs: num(env.SCORING_MS, SCORING_MS),
-    roundEndMs: num(env.ROUND_END_MS, ROUND_END_MS),
-    playMs: num(env.PLAY_MS, PLAY_TIMEOUT_MS),
-    resetProposalMs: num(env.RESET_PROPOSAL_MS, RESET_PROPOSAL_MS),
-    crossRiverDecideMs: num(env.CROSS_RIVER_MS, CROSS_RIVER_DECIDE_MS),
-    crossRiverPickMs: num(env.CROSS_PICK_MS, CROSS_RIVER_PICK_MS),
-    autoLastMs: num(env.LAST_MS, AUTO_LAST_MS),
-  };
+  const out = {};
+  for (const [key, fallback] of Object.entries(DEFAULT_TIMINGS)) {
+    out[key] = num(env[TIMING_ENV_KEYS[key]], fallback);
+  }
+  return out;
 }
 
 export const SUIT_NAMES = Object.freeze({

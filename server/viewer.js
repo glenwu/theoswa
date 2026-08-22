@@ -54,6 +54,8 @@ function clipRound(round, viewerSeat) {
           declarerCrossedRiver: round.declarerCrossedRiver === true,
         }
       : null,
+    kittyDeadline: round.kittyDeadline ?? null,
+    dominanceDeadline: round.dominanceDeadline ?? null,
     leadSeat: round.leadSeat,
     turnSeat: round.turnSeat,
     playDeadline: round.playDeadline,

@@ -220,15 +220,32 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
   );
 }
 
-// 牌桌中央右上角的出牌倒计时（大号醒目；最后 10 秒变红，提示音在左栏组件内）
-function CenterTurnTimer({ game }) {
+// 牌桌中央右上角的倒计时（大号醒目；最后 10 秒变红，提示音在左栏组件内）。
+//
+// ⚠️ 每个有服务端兜底的「等一个人」的阶段都必须在这里显示倒计时。
+// 看不见的超时是陷阱 —— 换底到点会自动埋 8 张，庄家要是没看到表，
+// 只会觉得「我的牌怎么自己没了」。有兜底就必须有表，两者一起加。
+function timerSpecFor(game) {
   const round = game.round;
-  const active =
-    game.phase === 'PLAYING' && round && !round.lastTrick && round.turnSeat !== null;
-  const now = useNow(active, 300);
-  const left = secondsLeft(round?.playDeadline, now);
-  if (!active || left === null) return null;
-  const player = game.players.find(p => p.seat === round.turnSeat);
+  if (!round) return null;
+  if (game.phase === 'PLAYING' && !round.lastTrick && round.turnSeat !== null) {
+    return { deadline: round.playDeadline, seat: round.turnSeat };
+  }
+  if (game.phase === 'KITTY_EXCHANGE') {
+    return { deadline: round.kittyDeadline, seat: game.declarerSeat };
+  }
+  if (game.phase === 'DOMINANCE') {
+    return { deadline: round.dominanceDeadline, seat: null };
+  }
+  return null;
+}
+
+function CenterTurnTimer({ game }) {
+  const spec = timerSpecFor(game);
+  const now = useNow(!!spec, 300);
+  const left = secondsLeft(spec?.deadline, now);
+  if (!spec || left === null) return null;
+  const player = spec.seat === null ? null : game.players.find(p => p.seat === spec.seat);
   const urgent = left <= 10;
   return (
     // 竖屏窄屏：横排的「⏱时间 + 人名」会横跨到顶部信息条上面，把「庄家：X」压住。
@@ -1000,6 +1017,13 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
         >
           埋底 {selected.length}/8
         </button>
+      );
+      // 明说超时会发生什么。服务端到点会替他埋「最没用的 8 张」，
+      // 不提前讲清楚，庄家只会觉得牌自己没了。
+      hints.push(
+        <span key="bury-timeout" className="text-xs font-bold text-white/50">
+          超时未埋将自动埋掉最没用的 8 张
+        </span>
       );
     } else {
       buttons.push(

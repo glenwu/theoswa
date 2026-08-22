@@ -14,6 +14,7 @@ import { settleNoTrump, advanceToReadyCheck, startRevealing } from './flow.js';
 import { settleFallbackTrump } from './reveal.js';
 import { cardLabel } from './cards.js';
 import { pickAutoCards } from './trick.js';
+import { chooseKittyCards } from './bot-policy.js';
 import { KITTY_SIZE, REVEAL_TOTAL } from './constants.js';
 
 // 服务端游戏引擎：纯动作裁决 + 阶段计时器。
@@ -90,6 +91,10 @@ export class GameEngine {
       this.setTimer('fallback', t.fallbackMs, () => this.revealNextKittyCard());
     } else if (s.phase === 'DEALING') {
       this.setTimer('dealing', t.dealingMs, () => this.completeDealing());
+    } else if (s.phase === 'KITTY_EXCHANGE') {
+      // 绝对时刻：四端倒计时一致，存档恢复后接着走（不会因为重启白送庄家一轮时间）
+      if (!r.kittyDeadline) r.kittyDeadline = now + t.kittyExchangeMs;
+      this.setTimer('kitty', Math.max(0, r.kittyDeadline - now), () => this.autoBuryKitty());
     } else if (s.phase === 'CROSS_RIVER') {
       // 三主过河：决定窗口（到时未行动的候选人自动跳过）+ 每笔过河的对家回牌超时
       const cr = r.crossRiver;
@@ -117,6 +122,11 @@ export class GameEngine {
         }
         this.setTimer('play', Math.max(0, r.playDeadline - now), () => this.autoPlay());
       }
+    } else if (s.phase === 'DOMINANCE') {
+      if (!r.dominanceDeadline) r.dominanceDeadline = now + t.dominanceMs;
+      this.setTimer('dominance', Math.max(0, r.dominanceDeadline - now), () =>
+        this.autoConfirmDominance()
+      );
     } else if (s.phase === 'SCORING') {
       // 结算展示 → 本局小结
       this.setTimer('scoring', t.scoringMs, () => {
@@ -138,6 +148,10 @@ export class GameEngine {
       this.timers.delete(name);
       cb();
     }, ms);
+    // 阶段计时器不该单靠自己撑住进程：真实服务端有 http server 顶着，
+    // 而测试里造完就丢的引擎不该把 node --test 挂住不退出。
+    // 换底那条是 180 秒，加上之前整个测试进程就得干等三分钟才肯结束。
+    timer.unref?.();
     this.timers.set(name, timer);
   }
 
@@ -273,6 +287,47 @@ export class GameEngine {
       // 理论上不会发生（pickAutoCards 保证合法）
       pushLog(s, `自动出牌失败：${result.error.reason}`);
     }
+    this.afterAction();
+  }
+
+  // 换底超时：服务端替庄家埋 8 张，用的就是电脑玩家挑底牌那套算法
+  //（弃分最低、最没用的 8 张），不是随手抓 8 张糊弄。
+  // 走 applyAction 正式路径，规则校验 / 件表重建 / 阶段推进全部照常。
+  autoBuryKitty() {
+    const s = this.state;
+    const r = s.round;
+    if (s.phase !== 'KITTY_EXCHANGE' || !r || s.declarerSeat === null) return;
+    const declarer = playerBySeat(s, s.declarerSeat);
+    const cards = chooseKittyCards(declarer.hand, {
+      trumpSuit: r.trumpSuit,
+      rankCard: r.rankCard,
+    });
+    pushLog(s, `${declarer.nickname} 换底超时，服务端自动埋底`);
+    const result = applyPureAction(
+      s,
+      { type: 'buryKitty', cardIds: cards.map(c => c.id) },
+      declarer.id
+    );
+    if (!result.ok) {
+      // 兜底的兜底：算法万一给不出合法的 8 张，也不能让整局卡死在这里
+      pushLog(s, `自动埋底失败（${result.error.reason}），改埋手牌最后 8 张`);
+      applyPureAction(
+        s,
+        { type: 'buryKitty', cardIds: declarer.hand.slice(-KITTY_SIZE).map(c => c.id) },
+        declarer.id
+      );
+    }
+    this.afterAction();
+  }
+
+  // 碾压确认超时：随便找一家替他点。结算结果与谁点无关
+  //（handleConfirmDominance 只用 r.leadSeat 记虚拟轮赢家），所以不存在“替谁点”的公平问题。
+  autoConfirmDominance() {
+    const s = this.state;
+    if (s.phase !== 'DOMINANCE' || !s.round?.dominance) return;
+    const actor = playerBySeat(s, s.round.leadSeat);
+    pushLog(s, '碾压收尾确认超时，自动结算本局');
+    applyPureAction(s, { type: 'confirmDominance' }, actor.id);
     this.afterAction();
   }
 }
