@@ -754,22 +754,137 @@ test('甩尾手：同样的牌，对手手牌还很长 → 摊到他头上的主
   assert.notEqual(lead.suit, 'S', '对手手牌还长，现在甩有被整手毙掉的风险');
 });
 
-test('甩尾手：计划挂起时不把长门的牌垫掉（垫一张就少甩一张）', () => {
+// ⚠️ 这条第一版给手里留了一张 ♦3，于是不管有没有护尾逻辑，电脑都会顺手垫掉
+// 那张孤张方块 —— 被测的分支根本没参与决策，变异测试直接把它戳穿了。
+// 现在手里【只有主牌和尾巴】：要么垫一张低主（keepValue 高），要么拆尾巴，
+// 只有护尾的那 -90 才能把天平压向低主。
+test('甩尾手：计划挂起时宁可垫低主也不拆长门（垫一张就少甩一张）', () => {
   const view = followView({
     seat: 0, declarerSeat: 1,
     hand: [
       T('H', 16, 0), T('H', 16, 1),
-      ...[12, 11, 10, 9, 8, 7].map((r, i) => T('H', r, i + 2)),
-      ...[11, 9, 7, 6, 4].map((r, i) => T('S', r, i + 40)),
-      T('D', 3, 90),
+      ...[6, 5, 4].map((r, i) => T('H', r, i + 2)),      // 几张低主
+      ...[11, 9, 7, 6, 4].map((r, i) => T('S', r, i + 40)), // 尾巴：5 张可甩的黑桃
+      T('D', 11, 60), T('D', 9, 61),                     // 一门中性备选（无分、非件、不会造缺门）
     ],
-    // 对手领梅花，我一张梅花都没有 → 可以随便垫
-    currentTrick: [{ seat: 1, playSuit: 'C', cards: [T('C', 8, 95)] }],
+    // ⚠️ 这个 fixture 前后错了两次，都是「被测分支根本没参与决策」：
+    //   第一版留了一张孤张 ♦3 —— 不管护不护尾都会先垫它；
+    //   第二版让对手领牌 —— 电脑直接用主牌毙下这一墩，压根没走到垫牌。
+    // 现在：【队友已稳赢这一墩且桌上无分】，我是最后一家，毙队友要挨 -260，
+    // 于是选择纯粹变成「拆尾巴（♠4，最便宜）vs 垫中性副牌（♦9）」，
+    // 只有护尾的那 -90 能把天平从 ♠4 扳到 ♦9。
+    currentTrick: [
+      { seat: 3, playSuit: 'C', cards: [T('C', 8, 95)] },   // 对手领梅花
+      { seat: 2, cards: [T('C', 14, 96)] },                 // 队友 ♣A 稳赢
+      { seat: 1, cards: [T('C', 3, 97)] },                  // 另一个对手垫小的
+    ],
     piecesView: SPADES_THROWABLE,
   });
   const played = chooseFollowCards(view);
   assert.ok(
     played.every(c => c.suit !== 'S'),
-    `不该垫黑桃（尾巴的一部分），实际垫了 ${played.map(c => c.suit + c.rank).join(',')}`
+    `不该拆黑桃（尾巴的一部分），实际垫了 ${played.map(c => c.suit + c.rank).join(',')}`
   );
+  assert.equal(played[0].suit, 'D', '该垫的是那门中性副牌');
+});
+
+// ---- 计划成立的两个前置条件 ----
+//
+// 观察点都放在【吊主的开关】上：计划挂起（planPending）会让电脑
+// 即使副牌够强也继续吊主（削对手的主，尾巴才毙不住）。
+// 所以「本不该成立的计划」会表现为「本该转副牌却去吊主」。
+//
+// 这两条都要求 holdsTopTrump 成立（双大鬼）但主牌不足 9 张，
+// 否则 control.guaranteed 会整块跳过吊主逻辑。
+function planPrereqView({ spades, piecesView }) {
+  return leadView({
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),                     // 双大鬼 → 握住顶档
+      ...[6, 5].map((r, i) => T('H', r, i + 2)),        // 主牌只有 4 张 → 不够保底
+      ...spades.map((r, i) => T('S', r, i + 40)),
+    ],
+    declarerSeat: 0, mySeat: 0, piecesView,
+    // 显式给 pieceProbeMinLength: 6（进化权重就是 6）。不这么写的话 5 张的黑桃
+    // 会同时触发 seek-piece(450)，叠上 develop-long-side-suit(160) 凑成 610，
+    // 本来就压过吊主的 560 —— 观察点会被这条旁路盖掉，测不出计划成没成立。
+    botTuning: { pieceProbeMinLength: 6 },
+    trickHistory: [{ trickNo: 1, leadSeat: 1, leadSuit: 'C', winnerSeat: 1, points: 0, plays: [] }],
+  });
+}
+
+test('甩尾手：甩牌资格还没成立的长门不算计划（不能凭「够长」就开始布局）', () => {
+  const lead = chooseLeadCards(planPrereqView({
+    spades: [14, 13, 9, 7, 5],
+    piecesView: {
+      // 我握着两件，另两件还在别人手上 → canThrowByStatus 不成立，甩不了
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+      D: [], C: [],
+    },
+  }))[0];
+  assert.notEqual(
+    lead.suit, 'H',
+    '这门根本甩不了，不构成尾巴计划；副牌又够强，应当转副牌而不是继续吊主'
+  );
+});
+
+test('甩尾手：只有两张的门不算尾巴（甩两张没意义）', () => {
+  const lead = chooseLeadCards(planPrereqView({
+    spades: [11, 9],           // 只有两张，且四件都已现（能甩）
+    piecesView: { ...SPADES_THROWABLE },
+  }))[0];
+  assert.notEqual(lead.suit, 'H', '两张不构成尾巴计划，不该为它去吊主');
+});
+
+// ---- 时机判据只看【对手】，队友的主牌不会来毙我 ----
+test('甩尾手：估算能不能被毙时不算队友的主牌', () => {
+  const view = tailView({});
+  // 两个对手手牌都很短，队友手牌很长 —— 算错边就会把队友的主当成威胁
+  for (const p of view.players) {
+    if (p.seat === 0) continue;
+    p.handCount = p.seat % 2 === 0 ? 20 : 2;   // 座位 2 = 队友(20)，座位 1/3 = 对手(2)
+  }
+  view.round.kittyCount = 8;
+  const cards = chooseLeadCards(view);
+  assert.equal(cards.length, 5, '对手手上凑不出 5 张主，尾巴可以甩了');
+  assert.ok(cards.every(c => c.suit === 'S'));
+});
+
+// 时机一到，甩尾手要压过其它一切领牌意图。
+// 620 分的普通甩牌已经能压过吊主(520)、回队友门(400)、发展长门(160)，
+// 所以要验证「抬到 1100」有没有意义，必须造一个【分数在 620 和 1100 之间】的
+// 竞争者出来 —— 这里用 continue-contributed-piece（700）：
+// 队友求件、我贡献了 ♦K 拿到牌权、手里还剩 ♦A，按约定该续打这张 ♦A。
+// ⚠️ 必须让手里剩的是 ♦A 而不是 ♦K：♦K 自带 10 分，早盘的送分惩罚（-80）
+// 会把它从 700 压到 620 以下，竞争者就不成立了，变异体照样活着。
+// ♦A 是 0 分的件，才真正卡在 620 和 1100 之间。
+// 但尾巴已经到时机了，整门甩出去才是这一整个计划的兑现，不该被这条局部约定拦下。
+test('甩尾手：时机一到，压过「续打贡献件」这类高分约定', () => {
+  const view = leadView({
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),                          // 双大鬼 → 起手牌
+      ...[6, 5].map((r, i) => T('H', r, i + 2)),
+      ...[11, 9, 7, 6, 4].map((r, i) => T('S', r, i + 40)),  // 尾巴：5 张可甩的黑桃
+      T('D', 14, 60),                                        // 手里还剩的那张 ♦A（0 分）
+    ],
+    declarerSeat: 1, mySeat: 0,
+    piecesView: {
+      ...SPADES_THROWABLE,
+      D: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'unseen' }],
+    },
+    trickHistory: [{
+      trickNo: 1, leadSeat: 2, leadSuit: 'D', winnerSeat: 0, points: 0,
+      plays: [
+        { seat: 2, playSuit: 'D', cards: [T('D', 3, 90)] },  // 队友打小牌求件
+        { seat: 0, cards: [T('D', 13, 91)] },                // 我贡献 ♦K 并拿下
+      ],
+    }],
+  });
+  // 对手手牌很短 → 摊到他头上的主凑不出 5 张，尾巴时机已到
+  for (const p of view.players) if (p.seat !== 0) p.handCount = p.seat % 2 === 0 ? 12 : 2;
+
+  const cards = chooseLeadCards(view);
+  assert.equal(cards.length, 5, `时机已到就该整门甩出去，实际出了 ${cards.map(c => c.suit + c.rank).join(',')}`);
+  assert.ok(cards.every(c => c.suit === 'S'));
 });
