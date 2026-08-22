@@ -949,27 +949,29 @@ function hasStrongSideSuit(view, ctx) {
 //     等于拿你的小牌换他的大牌，是笔划算买卖，而且还有队友配合。
 //   · 强势主 → 可以吊 2 甚至吊鬼，求一个【能连续吊主】的局势；
 //     对手若用大牌来杀，我方剩下的大牌照样能保底或撬底。
-function canSustainTrumpDraw(trumps, ctx, control) {
-  // 顶档 = 鬼 + 主级牌 + 副级牌（cardStrength ≥ 997）
-  const topTrumps = trumps.filter(card => cardStrength(card, ctx) >= 997).length;
-  return control.holdsTopTrump || (trumps.length >= BOTTOM_MIN_TRUMPS && topTrumps >= 3);
-}
-
-function drawingTrumpCard(trumps, ctx, control) {
-  if (!canSustainTrumpDraw(trumps, ctx, control)) {
-    return lowestLead(trumps, ctx);  // 弱势：吊小牌，逼对手用大牌来杀
-  }
-  // 强势吊主 = 吊【级牌】那一档，不是吊鬼。
-  //
-  // ⚠️ 这里原来写的是 highCards(trumps, 1)，注释却是「吊 2 / 吊鬼」——
-  // 而 highCards 永远挑最高的那一张，也就是鬼，根本轮不到 2。
-  // Glen 实战反馈：BOT 一开局就领小鬼，队友马上又盖上大鬼，两张顶牌一轮打光。
-  // 鬼是保底/撬底的控制牌，是要留到中后期的优势牌，绝不能拿去吊主 ——
-  // 尤其小鬼：大鬼还没现身时领小鬼压不住，纯粹白送。
-  // 排除鬼之后，highCards 挑到的自然就是主级牌 / 副级牌（strength 998/997），
-  // 也就是真正的「吊 2」。
-  // 按【点数】认鬼（15/16），不按 suit —— 全仓判断鬼一律用 rank
-  //（cardStrength、bigJokers 统计都是），按 suit 判会跟它们不一致。
+// 吊主该出哪张。
+//
+// ⚠️ 默认一律吊【小牌】。吊大牌是为了抢主动权，只在【明确需要】时才做 ——
+// Glen 两次实战反馈都栽在这上面（先是拿鬼去吊，改完又拿级牌去吊；
+// 打 7 时级牌恰好就是主7/副7，看着就是「第一墩吊了个 7」）。
+//
+// 为什么开局尤其不能吊大牌（Glen 原话的意思）：
+//   第一墩还不知道队友要不要吊主，而「要不要吊主」直接决定后面怎么打 ——
+//   队友一旦表示不用吊，庄家就可以放心走强势副牌、甩牌也不怕底被撬。
+//   所以第一墩要先放小牌，把表态的机会让出去。
+//
+// 什么才叫「明确需要」：我有一门副牌要甩，而对手可能毙得动它 ——
+// 必须先把他的主削到毙不动。这正好就是 tailThrowPlan 挂起的那个状态，
+// 所以 aggressive 由调用方按「计划挂起」来传，这里不自己猜。
+function drawingTrumpCard(trumps, ctx, { aggressive = false } = {}) {
+  // 注：这里不必再检查「手上撑不撑得住连续吊」——
+  // 唯一会传 aggressive:true 的地方是「甩尾手计划挂起」，而 tailThrowPlan 本身
+  // 就要求 control.holdsTopTrump（握住当前最高的未出主牌），那正是「撑得住」的核心条件。
+  // 原来这里还叠了一个 canSustainTrumpDraw，在那条路径上恒为真 —— 既是死代码，
+  // 也会让变异测试误以为它被覆盖了（删掉行为一点不变，变异体照样活着）。
+  if (!aggressive) return lowestLead(trumps, ctx);
+  // 明确需要且撑得住：吊级牌那一档。鬼始终留着 —— 那是保底/撬底的本钱。
+  // 按【点数】认鬼（15/16）而不是 suit，与全仓一致。
   const withoutJokers = trumps.filter(card => card.rank !== 15 && card.rank !== 16);
   return highCards(withoutJokers.length ? withoutJokers : trumps, 1, ctx)[0];
 }
@@ -1080,7 +1082,8 @@ export function chooseLeadCards(view) {
           .sort((a, b) => cardStrength(a, ctx) - cardStrength(b, ctx))[0]
       : null;
     addProposal(
-      [pointTrump ?? drawingTrumpCard(trumps, ctx, control)],
+      // 开局绝不 aggressive：先放小牌，把「要不要吊主」的表态机会让给队友
+      [pointTrump ?? drawingTrumpCard(trumps, ctx)],
       900 * tuning.conventionPriorWeight,
       'dealer-opening-trump-signal'
     );
@@ -1104,7 +1107,8 @@ export function chooseLeadCards(view) {
       : 0;                                                             // 闲家：随便
     if (drawBonus > 0) {
       addProposal(
-        [drawingTrumpCard(trumps, ctx, control)],
+        // 只有甩尾手计划挂起时才算「明确需要」—— 那时确实要把对手的主削到毙不动
+        [drawingTrumpCard(trumps, ctx, { aggressive: planPending })],
         drawBonus * tuning.leadStrategyPriorWeight,
         'continue-trump-draw'
       );

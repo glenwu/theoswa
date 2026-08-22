@@ -367,7 +367,11 @@ test('保底：握住顶档但主牌太短（<9）→ 不算保底牌（会先�
 // 主花色的 A/K/Q 是主牌里偏小的几档，级牌和鬼才是大牌。
 // 曾经这里写成「用主花色 A/K/Q 去吊」，两头不靠。
 
-test('吊主：强势主（多张级牌/鬼）→ 吊大牌，求连续吊主的局势', () => {
+// ⚠️ 本条原来断言「强势主 → 吊大牌」，已由 Glen 纠正：
+// 吊大牌是为了抢主动权，只在【明确需要】时才做；手上主牌强不构成理由。
+// 没有明确理由时一律吊小牌 —— 打 7 时级牌恰好是主7/副7，
+// 「强势就吊级牌」在牌桌上看着就是「第一墩吊了个 7」。
+test('吊主：手上主牌再强，没有明确理由也只吊小牌', () => {
   const hand = [
     T('H', 15, 0),                                    // 小鬼
     T('H', 2, 1), T('S', 2, 2), T('D', 2, 3),         // 主2 + 两张副2（都是主牌）
@@ -378,10 +382,7 @@ test('吊主：强势主（多张级牌/鬼）→ 吊大牌，求连续吊主的
     hand, declarerSeat: 0, mySeat: 0, trickHistory: PLAYED_SOMETHING,
   }))[0];
   assert.equal(lead.suit, 'H', '仍然吊主');
-  assert.ok(
-    lead.rank === 15 || lead.rank === 2,
-    `强势主该吊 2 或吊鬼，实际出了 H${lead.rank}`
-  );
+  assert.equal(lead.rank, 10, `该吊最小的那张主，实际出了 H${lead.rank}`);
 });
 
 test('吊主：弱势主（顶档一张都没有）→ 吊最小的那张', () => {
@@ -902,20 +903,15 @@ test('甩尾手：时机一到，压过「续打贡献件」这类高分约定',
 //      首家领的是主牌时 isKill 恒为 false，于是「队友领小鬼、我盖大鬼」
 //      总共只要 15 分代价，而大鬼的 keepValue 是 180 —— 等于没有代价。
 
-test('吊主：强势主吊的是级牌那一档，不是拿鬼去吊', () => {
-  const hand = [
-    T('H', 16, 0), T('H', 15, 1),                     // 大鬼、小鬼 —— 优势牌，要留着
-    T('H', 2, 2), T('S', 2, 3), T('D', 2, 4),         // 主2 + 两张副2（都是主牌）
-    ...[14, 13, 12, 11].map((r, i) => T('H', r, i + 5)),
-    ...[9, 7, 5].map((r, i) => T('S', r, i + 20)),
-  ];
-  const lead = chooseLeadCards(leadView({
-    hand, declarerSeat: 0, mySeat: 0, trickHistory: PLAYED_SOMETHING,
-  }))[0];
-  assert.equal(lead.suit, 'H');
-  assert.notEqual(lead.rank, 16, '大鬼是保底/撬底的控制牌，不能拿去吊主');
-  assert.notEqual(lead.rank, 15, '小鬼更不行：大鬼还没现身时领小鬼压不住，纯粹白送');
-  assert.equal(lead.rank, 2, '强势吊主吊的是级牌那一档（主2）');
+// 「明确需要」= 我有一门副牌要甩、而对手可能毙得动它，必须先把他的主削掉
+//（Glen 举的正是这个例子）。这个状态就是 tailThrowPlan 挂起。
+// 只有这时候才吊大牌 —— 而且吊级牌那一档，鬼始终留着。
+test('吊主：确有理由（甩尾手计划挂起）时才吊大牌，且仍不拿鬼去吊', () => {
+  const lead = chooseLeadCards(tailView({}))[0];
+  assert.equal(lead.suit, 'H', '计划挂起时该去削对手的主');
+  assert.notEqual(lead.rank, 16, '大鬼是保底/撬底的本钱，任何时候都不拿去吊');
+  assert.notEqual(lead.rank, 15, '小鬼同理');
+  assert.equal(lead.rank, 12, '吊自己最大的那张普通主牌（这手里没有级牌）');
 });
 
 test('吊主：开局第一墩也不许领鬼', () => {
@@ -1072,4 +1068,42 @@ test('跟主牌墩：尾盘不再受早盘惩罚约束', () => {
     .find(c => c.cards[0].rank === 15).score;
   assert.ok(late > early + 100,
     `尾盘出鬼不该再挨早盘那一刀：尾盘 ${late.toFixed(0)} vs 早盘 ${early.toFixed(0)}`);
+});
+
+// ---- 开局第一墩：先放小牌，把表态机会让给队友（Glen 第三次实战反馈）----
+//
+// 「第一轮庄家吊主 7 也是有问题的。第一轮还没打过牌，并不知道对家是否需要吊主。
+//   吊主打大牌主要是为了控制主动权，是在非常明确需要吊主的时候才这么吊。
+//   通常一开始会先放小牌，让对家有机会表示 —— 因为需不需要吊主这件事，
+//   对接下来要怎么出牌非常有关系。对家一旦说明不用吊主，庄家极有可能打他的
+//   强势副牌，甩牌的时候也不怕最后的底给别人撬了。」
+
+test('开局：庄家没有大鬼时，第一墩吊最小的主牌', () => {
+  const hand = [
+    T('H', 2, 0), T('S', 2, 1),                       // 打 2 时这两张是级牌 = 大牌
+    ...[14, 13, 11, 9, 6, 4, 3].map((r, i) => T('H', r, i + 2)),
+    ...[9, 7, 5].map((r, i) => T('S', r, i + 20)),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 0, mySeat: 0, trickHistory: [],   // 第一墩
+  }))[0];
+  assert.equal(lead.suit, 'H', '庄家开局吊主');
+  assert.equal(lead.rank, 3, `该放最小的主牌，实际出了 H${lead.rank}`);
+  assert.ok(lead.rank !== 2, '级牌是大牌，第一墩不该吊出去（打 7 时它就是那张「7」）');
+});
+
+test('开局：庄家有大鬼但不够保底 → 仍走「带分吊主」那条约定，也不是大牌', () => {
+  const hand = [
+    T('H', 16, 0),                                    // 一张大鬼
+    T('H', 2, 1),                                     // 级牌
+    T('H', 10, 2), T('H', 13, 3),                     // 带分的主牌
+    ...[12, 11, 9, 6, 4, 3].map((r, i) => T('H', r, i + 4)),
+    ...[9, 7].map((r, i) => T('S', r, i + 20)),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 0, mySeat: 0, trickHistory: [],
+  }))[0];
+  assert.equal(lead.rank, 10, '带分吊主挑最小的那张带分主牌（♥10 < ♥K）');
+  assert.notEqual(lead.rank, 2, '不是级牌');
+  assert.notEqual(lead.rank, 16, '更不是大鬼');
 });
