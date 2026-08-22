@@ -1,4 +1,4 @@
-import { cardPoints, cardStrength, playSuitOf, SUITS } from './cards.js';
+import { buildDeck, cardPoints, cardStrength, playSuitOf, SUITS } from './cards.js';
 import {
   pickAutoCards,
   trickLeader,
@@ -730,6 +730,128 @@ function safeSideThrow(view, ctx, tuning = strategyTuning(view)) {
   return (worthwhile.length ? worthwhile : []).sort((a, b) => b.length - a.length)[0] ?? null;
 }
 
+// ============ 保底判定 · 角色 · 牌势（吊主决策的三块地基）============
+//
+// 以下模型来自真人牌友 Glen 的实战说明，逐条记在这里，改之前先读懂：
+//
+// 【保底牌】= 能保证最后一轮自己最大。它不是一张固定的牌型表，是【动态阶梯】。
+// 主牌强弱阶梯（见 cards.js 的 cardStrength）：
+//     大鬼 1000 ×2 > 小鬼 999 ×2 > 主级牌 998 ×2 > 副级牌 997 ×6 > 主花色 900+rank
+// 要保证最后一轮最大，就得握住【当前仍未打出的主牌里最高的那一档】，
+// 并且比它更高的档【一张都不许还留在别人手上】。同档不算数 —— 同强度先出者大，
+// 我不能指望最后一轮由我先出。
+//
+// 关键是它【随出牌动态变化】：
+//   开局什么都没出 → 只有双大鬼才算握住顶档；
+//   别人打掉一张大鬼 → 我手里剩的那张大鬼就够保底了，不再需要小鬼、主2；
+//   大鬼两张都出完了 → 我有双小鬼就够，以此类推。
+//
+// ⚠️ 底牌那 8 张对电脑是未知的，一张顶主可能躺在底牌里永远不出现。
+// 这里一律把「没见过」当成「可能在别人手上」——宁可低估自己的把握，
+// 也绝不能在没保底时误以为有。
+//
+// 另一半条件是主牌【长度】：光握住最大的一张不够，主太短会先被吊空，
+// 撑不到最后一轮。100 张牌四家分，平均每家 9 张主，低于这个数不算保底牌。
+const BOTTOM_MIN_TRUMPS = 9;
+
+function playedCardsOf(view) {
+  return [
+    ...(view.round?.trickHistory ?? []).flatMap(trick =>
+      (trick.plays ?? []).flatMap(play => play.cards ?? [])
+    ),
+    ...(view.round?.currentTrick ?? []).flatMap(play => play.cards ?? []),
+  ];
+}
+
+export function assessBottomControl(view, ctx) {
+  const hand = view.you?.hand ?? [];
+  const myTrumps = cardsOfSuit(hand, 'TRUMP', ctx);
+
+  // 把整副牌里的主牌按强度分档，统计每档 total / mine / played
+  const tiers = new Map();
+  for (const card of buildDeck()) {
+    if (suitOf(card, ctx) !== 'TRUMP') continue;
+    const key = cardStrength(card, ctx);
+    const tier = tiers.get(key) ?? { total: 0, mine: 0, played: 0 };
+    tier.total += 1;
+    tiers.set(key, tier);
+  }
+  for (const card of myTrumps) {
+    const tier = tiers.get(cardStrength(card, ctx));
+    if (tier) tier.mine += 1;
+  }
+  for (const card of playedCardsOf(view)) {
+    if (suitOf(card, ctx) !== 'TRUMP') continue;
+    const tier = tiers.get(cardStrength(card, ctx));
+    if (tier) tier.played += 1;
+  }
+
+  // 从最高档往下走
+  let holdsTopTrump = false;
+  for (const [, tier] of [...tiers.entries()].sort((a, b) => b[0] - a[0])) {
+    const outstanding = tier.total - tier.played - tier.mine; // 别人手上或底牌里
+    if (outstanding > 0) break;      // 这一档还有牌没现身 → 我压不死，断了
+    if (tier.mine > 0) { holdsTopTrump = true; break; } // 这一档我有，且更高档已出尽
+    // outstanding === 0 且我没有 → 这一档全出完了，继续往下看
+  }
+
+  return {
+    holdsTopTrump,
+    trumpCount: myTrumps.length,
+    guaranteed: holdsTopTrump && myTrumps.length >= BOTTOM_MIN_TRUMPS,
+  };
+}
+
+// 场上还有多少张主牌没露面（不含我手上的；底牌里的仍算未知，故偏高）
+function outstandingTrumpCount(view, ctx) {
+  const total = buildDeck().filter(card => suitOf(card, ctx) === 'TRUMP').length;
+  const played = playedCardsOf(view).filter(card => suitOf(card, ctx) === 'TRUMP').length;
+  const mine = cardsOfSuit(view.you?.hand ?? [], 'TRUMP', ctx).length;
+  return Math.max(0, total - played - mine);
+}
+
+// 角色：吊不吊主完全取决于这个（Glen：「没有通用思路，都要看角色和牌势」）
+function leadRole(view) {
+  const declarerSeat = view.declarerSeat;
+  if (declarerSeat === null || declarerSeat === undefined) return 'defender';
+  if (view.you.seat === declarerSeat) return 'declarer';
+  if (view.you.seat % 2 === declarerSeat % 2) return 'declarerPartner';
+  return 'defender';
+}
+
+// 庄家最近在走什么路子（队友做庄时要跟着他打）
+function declarerLeadStyle(view) {
+  const leads = (view.round?.trickHistory ?? []).filter(
+    trick => trick.leadSeat === view.declarerSeat
+  );
+  const last = leads[leads.length - 1];
+  if (!last) return null;
+  return last.leadSuit === 'TRUMP' ? 'trump' : 'side';
+}
+
+// 副牌够不够强 —— 强就该转打副牌，不用死吊主。
+// Glen 的定义：件多、够大、容易得分、能甩牌威胁对方。
+function hasStrongSideSuit(view, ctx) {
+  for (const suit of SUITS.filter(item => item !== ctx.trumpSuit)) {
+    const cards = cardsOfSuit(view.you?.hand ?? [], suit, ctx);
+    const items = view.round?.piecesView?.[suit] ?? [];
+    const mine = items.filter(item => item.status === 'mine').length;
+    if (cards.length >= 2 && canThrowByStatus(items)) return true; // 能甩 = 直接威胁
+    if (mine >= 2 && cards.length >= 5) return true;               // 件多又够长 = 容易得分
+  }
+  return false;
+}
+
+// 吊主该出哪张：用主花色的大牌去吊（A/K/Q…），把鬼和级牌留着保底。
+// 出最小的主牌等于把牌权送人，吊不动对手。
+function drawingTrumpCard(trumps, ctx) {
+  const ordinary = trumps.filter(
+    card => card.suit === ctx.trumpSuit && card.rank !== ctx.rankCard
+  );
+  if (ordinary.length > 0) return highCards(ordinary, 1, ctx)[0];
+  return lowestLead(trumps, ctx);
+}
+
 function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
   const options = [];
   for (const suit of SUITS.filter(s => s !== ctx.trumpSuit)) {
@@ -790,15 +912,47 @@ export function chooseLeadCards(view) {
   // 常规牌理只是给特定候选加分，特殊局面仍能用总分超过它。
   for (const card of hand) addProposal([card], 0, 'legal-single');
 
-  // 庄家首出：无双大鬼则先吊主，表示自己尚不能独立保底；
-  // 有双大鬼则保留两张控制牌，从副牌开始发展。
-  if (opening && isDeclarer) {
-    const bigJokers = hand.filter(card => card.rank === 16).length;
-    if (bigJokers < 2 && trumps.length > 0) {
+  // ============ 吊主决策 ============
+  // Glen（真人牌友）的实战说明，改之前先读 assessBottomControl 上面那段注释。
+  //
+  // 第一层：自己是不是【保底牌】。是 → 吃大不吊，并且用领副牌这个动作
+  //         给队友传「我不吊主」的信号（这个游戏没有叫牌，领什么就是信号）。
+  // 第二层：不是保底牌 → 看【角色】和【牌势】：
+  //   · 我做庄     → 保守，一切以保底为先（保不到底就是输，跑 200 分也没用）
+  //   · 队友做庄   → 跟着庄家的路子打：他吊主我吊主，他打副牌我打副牌；
+  //                  除非我自己够保底，那就由我主导
+  //   · 我是闲家   → 吊不吊主无所谓，哪个点容易得分就打哪
+  // 横切一刀：任何角色下，只要自己【副牌够强】（能甩 / 件多且够长）就转打副牌。
+  //
+  // ⚠️ 原来只有下面这一条开局提案，`opening` 之后整个函数再没有任何主动吊主，
+  // 所以电脑「吊一轮就忘了这回事」—— 不是忘了，是压根没写。
+  const control = assessBottomControl(view, ctx);
+  const strongSide = hasStrongSideSuit(view, ctx);
+  const outstandingTrumps = outstandingTrumpCount(view, ctx);
+  const role = leadRole(view);
+
+  // 庄家首出：不够保底就先吊主，表示「我自己保不了底」；够保底则从副牌开始发展。
+  // 判据从「有没有双大鬼」换成完整的保底判定（补上了主牌长度这一半 ——
+  // 双大鬼但只有 5 张主，照样会被吊空，不算保底牌）。
+  if (opening && isDeclarer && !control.guaranteed && trumps.length > 0) {
+    addProposal(
+      [drawingTrumpCard(trumps, ctx)],
+      900 * tuning.conventionPriorWeight,
+      'dealer-opening-trump-signal'
+    );
+  }
+
+  // 开局之后的持续吊主
+  if (!opening && trumps.length > 0 && outstandingTrumps > 0 && !control.guaranteed && !strongSide) {
+    const drawBonus =
+      role === 'declarer' ? 520                                        // 保底优先，接着吊
+      : role === 'declarerPartner' ? (declarerLeadStyle(view) === 'trump' ? 480 : 0) // 跟庄家路子
+      : 0;                                                             // 闲家：随便
+    if (drawBonus > 0) {
       addProposal(
-        [lowestLead(trumps, ctx)],
-        900 * tuning.conventionPriorWeight,
-        'dealer-opening-trump-signal'
+        [drawingTrumpCard(trumps, ctx)],
+        drawBonus * tuning.leadStrategyPriorWeight,
+        'continue-trump-draw'
       );
     }
   }
