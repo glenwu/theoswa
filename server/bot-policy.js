@@ -296,6 +296,44 @@ function sideThrowStructureValue(cards, ctx) {
   return value;
 }
 
+// 埋件（副牌 A/K）的真实代价 —— 原来完全没算，于是「断一门 +320」永远买得起一张副 A，
+// 出现真人绝不会做的「为了 8 张断门把 A 压底」。
+//
+// 关键机制（server/pieces.js）：
+//   handleBuryKitty 会把埋进底牌的副 A/K【强制公开亮出】；
+//   pieceStatusesFor 把 kittyRevealed 标成 'seen'；
+//   canThrowByStatus 只要求该门每一件都 !== 'unseen'。
+// 也就是说：只要我手上还留着这门任意一件，它对三家都是 'unseen'，这门就甩不成；
+// 一旦把这门的件全埋光，等于我们亲手把对手甩这门的资格条件凑齐了。
+//
+// 再叠一层牌力差异：同样是件，
+//   A —— 该门最大，必赢一墩，自身 0 分，被抓也不送分 → 该留；
+//   K —— 10 分的负债，留在手上迟早被主毙走送给对手 → 该埋。
+// 所以真人的直觉是「埋 K 不埋 A」。
+//
+// ⚠️ 强先验而非硬规则：代价给得足够高，正常局面绝不会埋 A，
+// 但极端局面（保底把握极高 + 同时藏掉大量分）总分仍可推翻它。
+function pieceBurialCost(hand, buried, ctx) {
+  const buriedIds = new Set(buried.map(card => card.id));
+  const retained = hand.filter(card => !buriedIds.has(card.id));
+  let cost = 0;
+  for (const suit of SUITS.filter(item => item !== ctx.trumpSuit)) {
+    const buriedHere = buried.filter(card => card.suit === suit && isSidePiece(card, ctx));
+    if (buriedHere.length === 0) continue;
+    // 埋 A：丢掉该门唯一不可能被副牌压过的牌，且亮出后对手少一道坎
+    cost += buriedHere.filter(card => card.rank === 14).length * 300;
+    // 这门的件被埋光 → 该门对三家解锁甩牌。
+    // ⚠️ 只有【这门还没断】时才算损失：留着牌却封锁不住，才会被对手一次甩掉打穿。
+    // 已经断门的话本来就靠主牌毙，不指望封锁 —— 埋 K 断门恰恰是真人打法，
+    // 不能因为「件被埋光」把它一并罚掉（第一版就罚过头，导致该断的门不敢断了）。
+    const stillHasSuit = retained.some(card => card.suit === suit && suitOf(card, ctx) === suit);
+    if (!stillHasSuit) continue;
+    const retainedHere = retained.filter(card => card.suit === suit && isSidePiece(card, ctx));
+    if (retainedHere.length === 0) cost += 260;
+  }
+  return cost;
+}
+
 function kittyPlanScore(hand, buried, ctx) {
   const buriedIds = new Set(buried.map(card => card.id));
   const retained = hand.filter(card => !buriedIds.has(card.id));
@@ -319,7 +357,8 @@ function kittyPlanScore(hand, buried, ctx) {
       const after = cardsOfSuit(retained, suit, ctx).length;
       return sum + (before > 0 && after === 0 ? 320 : 0);
     }, 0);
-  return -burialCost + hiddenPointValue + voidValue + sideThrowStructureValue(retained, ctx);
+  const unlockCost = pieceBurialCost(hand, buried, ctx);
+  return -burialCost - unlockCost + hiddenPointValue + voidValue + sideThrowStructureValue(retained, ctx);
 }
 
 function improveKittyPlan(hand, initial, ctx) {
@@ -705,10 +744,21 @@ function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
       if (king) options.push({ card: king, score: 100 + cards.length });
     }
 
-    // 缺两件以上（包括无件长门）：出最小无分牌探件/表示长门。
-    if (unseen >= 2 && cards.length >= tuning.pieceProbeMinLength) {
+    // 探件：只在【自己这门手上有件】时才做。
+    //
+    // 探件的本质是把这门剩下的件逼出来，而谁手上还攥着件，谁就从中获益：
+    // canThrowByStatus 要求该门每一件都 !== 'unseen'，所以每逼出一件，
+    // 就是替持有剩下那些件的人往甩牌资格上推一步。
+    // 自己一件都没有还去探，三家里有两家是对手 —— 平均下来是在帮对手求件。
+    // 真人牌友的判断就是「先看自己这门强不强，件不能乱求」。
+    //
+    // ⚠️ 原来的条件是 `unseen >= 2 && 牌够长`，完全不看自己有没有件，
+    // 打分还是 `cards.length * 10 - mine * 2` —— 自己件越多探件意愿越低，正好反了。
+    // 无件长门不再走这条「探件」路线（那本就不是探件，是表示长门），
+    // 它仍然由 chooseLeadCards 的 develop-long-side-suit 提案覆盖，只是不再白拿探件的高分。
+    if (mine >= 1 && unseen >= 1 && cards.length >= tuning.pieceProbeMinLength) {
       const low = lowestLead(cards.filter(card => cardPoints(card) === 0), ctx) ?? lowestLead(cards, ctx);
-      if (low) options.push({ card: low, score: cards.length * 10 - mine * 2 });
+      if (low) options.push({ card: low, score: cards.length * 10 + mine * 30 });
     }
   }
   return options.sort((a, b) => b.score - a.score)[0]?.card ?? null;
