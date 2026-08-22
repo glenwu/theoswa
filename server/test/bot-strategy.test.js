@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assessBottomControl, chooseKittyCards, chooseLeadCards } from '../bot-policy.js';
+import {
+  assessBottomControl, chooseFollowCards, chooseKittyCards, chooseLeadCards,
+  evaluateFollowChoices,
+} from '../bot-policy.js';
+import { cardPoints as cardPointsOf } from '../cards.js';
 import { buildDeck, playSuitOf } from '../cards.js';
 import { mulberry32 } from '../rng.js';
 
@@ -503,4 +507,181 @@ test('帮队友求件：队友改吊主 → 那条求件请求作废，不跟着
   }))[0];
   assert.notEqual(lead.suit, 'H', '队友领主牌不是在求件，不该被当成「回他这门」而去领主');
   assert.equal(lead.suit, 'D', '黑桃那条请求已作废，该回到发展自己最长的副牌');
+});
+
+// ============ 求件应答 · 庄家带分吊主 ============
+
+
+function followView({
+  hand, currentTrick, seat = 2, declarerSeat = 0, piecesView = { S: [], D: [], C: [] },
+  trickHistory = [],
+}) {
+  return {
+    phase: 'PLAYING', declarerSeat,
+    you: { seat, team: seat % 2, hand, crossRiver: {} },
+    players: [0, 1, 2, 3].map(s2 => ({ seat: s2, team: s2 % 2, handCount: 12 })),
+    round: { trumpSuit: 'H', rankCard: 2, kittyCount: 8, currentTrick, trickHistory, piecesView },
+    botDifficulty: 'expert',
+    botBeliefs: { players: {} },
+  };
+}
+
+// 原来 scoreFollow 里只有消极的一半（opponentProbe 罚 -320，别帮对手消件），
+// 队友求件时电脑没有任何动力把件贡献出去，于是 chooseLeadCards 里那条
+// 'continue-contributed-piece' 约定几乎触发不了。
+// 座位 2 是【第二家】，后面还有两个人 —— 这时把 10 分的 ♠K 打出去本来是亏的
+// （scoreFollow 里 candidatePoints × 12 的分牌暴露惩罚）。只有「队友求件该贡献」
+// 这条约定能把它推出去。
+// ⚠️ 第一版这条测试让 bot 坐第三家、手里是 ♠A：打 A 稳赢这一墩，本来就会打，
+// 加不加贡献分都一样 —— 变异测试证明它根本没钉住东西。
+function contributionView({ partnerLead = T('S', 4, 90), unseen = 2, difficulty = 'expert' } = {}) {
+  const items = [
+    { rank: 14, status: 'seen' }, { rank: 14, status: 'seen' },
+    { rank: 13, status: 'mine' }, { rank: 13, status: unseen >= 1 ? 'unseen' : 'seen' },
+  ];
+  if (unseen >= 2) items[1].status = 'unseen';
+  const view = followView({
+    seat: 2,
+    hand: [T('S', 13, 0), T('S', 9, 1), T('S', 6, 2), T('S', 3, 3),
+      ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10))],
+    currentTrick: [{ seat: 0, playSuit: 'S', cards: [partnerLead] }],
+    piecesView: { S: items, D: [], C: [] },
+  });
+  view.botDifficulty = difficulty;
+  return view;
+}
+
+test('求件应答：队友打小牌求件 → 把件贡献出去（哪怕是 10 分的 K、后面还有两家）', () => {
+  const cards = chooseFollowCards(contributionView({ unseen: 1 }));
+  assert.equal(cards[0].rank, 13, '队友求件，就该把 ♠K 贡献出去');
+});
+
+// 直接比评分，不虚构「决策翻转」：未现件多的时候它仍然会贡献，
+// 只是少拿那 320 的「多半能凑齐」加成。断言写成翻转就是过度声称。
+test('求件应答：只剩一件没露时，贡献的评分明显更高', () => {
+  const scoreOfKing = view =>
+    evaluateFollowChoices(view).find(c => c.cards[0].rank === 13).score;
+  const few = scoreOfKing(contributionView({ unseen: 1 }));
+  const many = scoreOfKing(contributionView({ unseen: 2 }));
+  assert.ok(
+    few > many + 200,
+    `只剩一件没露时贡献该明显更值：unseen=1 得 ${few.toFixed(0)}，unseen=2 得 ${many.toFixed(0)}`
+  );
+});
+
+test('求件应答：队友领的是大牌（不是求件）→ 不贡献', () => {
+  const cards = chooseFollowCards(contributionView({ partnerLead: T('S', 11, 90), unseen: 1 }));
+  assert.notEqual(cards[0].rank, 13, '领 ♠J 不是求件信号，别自作多情把 K 送出去');
+});
+
+test('求件应答：easy 电脑不会这一手（约定/读牌能力，inference = 0）', () => {
+  const cards = chooseFollowCards(contributionView({ unseen: 1, difficulty: 'easy' }));
+  assert.notEqual(cards[0].rank, 13);
+});
+
+test('求件应答：对手求件 → 护住不给', () => {
+  const view = followView({
+    seat: 2, declarerSeat: 1,
+    hand: [T('S', 13, 0), T('S', 9, 1), T('S', 6, 2), T('S', 3, 3),
+      ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10))],
+    currentTrick: [{ seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] }],
+    piecesView: {
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'mine' }, { rank: 13, status: 'seen' }],
+      D: [], C: [],
+    },
+  });
+  assert.notEqual(chooseFollowCards(view)[0].rank, 13, '对手求件时打出 ♠K 等于替他消掉一个未现件');
+});
+
+// Glen：「如果判断他并没有剩很多，又没分，自己可能留这个大牌还有其它用，那就不打」
+// —— 反过来说，这墩【有分】而且我这一下能赢，就该用件把分吃回来，不能死护着。
+// 护件是为了不让对手凑齐甩牌资格，不是为了把 A 带进棺材。
+//
+// 座位 2；对手(1)领 ♠4 求件；队友(0)跟一张；座位 3 还在后面。
+// 唯一变量就是队友那张牌带不带分。
+function opponentProbeView(partnerCardRank) {
+  return followView({
+    seat: 2, declarerSeat: 1,
+    hand: [T('S', 14, 0), T('S', 9, 1), T('S', 6, 2), T('S', 3, 3),
+      ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10))],
+    currentTrick: [
+      { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },
+      { seat: 0, cards: [T('S', partnerCardRank, 91)] },
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
+      D: [], C: [],
+    },
+  });
+}
+
+test('求件应答：对手求件、桌上无分 → 护住 ♠A 不打', () => {
+  assert.notEqual(chooseFollowCards(opponentProbeView(3))[0].rank, 14);
+});
+
+test('求件应答：对手求件但桌上有分、我能赢 → 用 ♠A 把分吃回来', () => {
+  assert.equal(chooseFollowCards(opponentProbeView(5))[0].rank, 14, '5 分也值得吃');
+  assert.equal(chooseFollowCards(opponentProbeView(10))[0].rank, 14, '10 分更该吃');
+});
+
+// ---- 庄家首轮吊主带分 ----
+//
+// Glen：「庄家如果首轮吊主打个分出来，证明至少有一个大鬼，但没有绝对的保底牌，
+// 希望对家表示他的大牌。对家如果有大鬼，可以用大鬼吃了之后转打副牌，
+// 或者不用大鬼吃，转打副牌，都是『不用吊主』的表达。」
+
+test('信号：庄家有大鬼但不够保底 → 首轮吊主打带分的主牌', () => {
+  // ⚠️ 手里必须有【比带分主牌更小的无分主牌】（这里的 ♥3 ♥4），
+  // 否则「最小的带分主牌」和「最小的主牌」是同一张，测不出差别 ——
+  // 第一版就是这样，变异测试直接把它戳穿了。
+  const hand = [
+    T('H', 16, 0),                                     // 一张大鬼（另一张没现身 → 不够保底）
+    T('H', 3, 1), T('H', 4, 2),                        // 更小的【无分】主牌
+    T('H', 10, 3), T('H', 13, 4),                      // 带分的主牌：♥10 / ♥K
+    ...[12, 11, 9, 8, 7].map((r, i) => T('H', r, i + 5)),
+    ...[9, 7].map((r, i) => T('S', r, i + 20)),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 0, mySeat: 0, trickHistory: [],  // 首轮
+  }))[0];
+  assert.equal(lead.suit, 'H', '首轮吊主');
+  assert.ok(
+    cardPointsOf(lead) > 0,
+    `该打带分的主牌发信号（手里有 ♥3 ♥4 更小但无分），实际出了 H${lead.rank}`
+  );
+  assert.equal(lead.rank, 10, '挑最小的那张带分主牌（♥10 < ♥K），别为了发信号丢掉大牌');
+});
+
+test('信号应答：队友收到带分吊主 + 自己有大鬼 → 转打副牌表示「不用吊主」', () => {
+  const hand = [
+    T('H', 16, 0),                                     // 我有大鬼
+    ...[12, 11, 9, 8].map((r, i) => T('H', r, i + 1)),
+    ...[11, 9, 7, 4].map((r, i) => T('S', r, i + 20)),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 2, mySeat: 0,   // 队友（座位 2）做庄
+    trickHistory: [{
+      trickNo: 1, leadSeat: 2, leadSuit: 'TRUMP', winnerSeat: 0, points: 5,
+      plays: [{ seat: 2, playSuit: 'TRUMP', cards: [T('H', 5, 90)] }],  // 带分吊主
+    }],
+  }))[0];
+  assert.notEqual(lead.suit, 'H', '我有大鬼，转打副牌就是「不用吊主」的表达');
+});
+
+test('信号应答：庄家吊主【不带分】→ 没有这层含义，照常跟着吊', () => {
+  const hand = [
+    T('H', 16, 0),
+    ...[12, 11, 9, 8].map((r, i) => T('H', r, i + 1)),
+    ...[11, 9, 7, 4].map((r, i) => T('S', r, i + 20)),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 2, mySeat: 0,
+    trickHistory: [{
+      trickNo: 1, leadSeat: 2, leadSuit: 'TRUMP', winnerSeat: 0, points: 0,
+      plays: [{ seat: 2, playSuit: 'TRUMP', cards: [T('H', 7, 90)] }],  // 无分
+    }],
+  }))[0];
+  assert.equal(lead.suit, 'H', '不带分就只是普通吊主，队友该跟着吊');
 });

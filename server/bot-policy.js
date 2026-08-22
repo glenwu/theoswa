@@ -822,6 +822,29 @@ function outstandingTrumpCount(view, ctx) {
   return Math.max(0, total - played - mine);
 }
 
+// 「求件」的领牌长什么样（Glen：「第一轮求件是需要打 5 以下，甚至 10 也可以」）。
+// 单张、不是件本身、点数很小或是 10 —— 这就是在跟同伴要件。
+// 反过来「如果不想对家把件很快放出来，千万第一轮不打 5 以下」：
+// 领大牌不算求件，别人也不该按求件来应答。
+function isPieceRequestLead(cards, ctx) {
+  return (
+    Array.isArray(cards) && cards.length === 1 &&
+    cards.every(card => !isSidePiece(card, ctx)) &&
+    cards.every(card => card.rank <= 5 || card.rank === 10)
+  );
+}
+
+// 庄家首轮吊主【带分】—— 一条明确的约定（Glen）：
+//   「庄家如果首轮吊主打个分出来，证明至少有一个大鬼，但没有绝对的保底牌，
+//     希望对家表示他的大牌。对家如果有大鬼，可以用大鬼吃了之后转打副牌，
+//     或者不用大鬼吃，转打副牌，都是『不用吊主』的表达。」
+function declarerTrumpPointSignal(view, ctx) {
+  const first = (view.round?.trickHistory ?? [])[0];
+  if (!first || first.leadSeat !== view.declarerSeat || first.leadSuit !== 'TRUMP') return false;
+  const cards = first.plays?.[0]?.cards ?? [];
+  return cards.length > 0 && cards.some(card => cardPoints(card) > 0);
+}
+
 // 角色：吊不吊主完全取决于这个（Glen：「没有通用思路，都要看角色和牌势」）
 function leadRole(view) {
   const declarerSeat = view.declarerSeat;
@@ -975,9 +998,16 @@ export function chooseLeadCards(view) {
   // 庄家首出：不够保底就先吊主，表示「我自己保不了底」；够保底则从副牌开始发展。
   // 判据从「有没有双大鬼」换成完整的保底判定（补上了主牌长度这一半 ——
   // 双大鬼但只有 5 张主，照样会被吊空，不算保底牌）。
+  const hasBigJoker = hand.some(card => card.rank === 16);
   if (opening && isDeclarer && !control.guaranteed && trumps.length > 0) {
+    // 有大鬼但不够保底 → 首轮吊主【带分】，向队友表态「我有大鬼，但保不了底，
+    // 请你表示你的大牌」。挑最小的那张带分主牌，别为了发信号丢掉大牌。
+    const pointTrump = hasBigJoker
+      ? [...trumps.filter(card => cardPoints(card) > 0)]
+          .sort((a, b) => cardStrength(a, ctx) - cardStrength(b, ctx))[0]
+      : null;
     addProposal(
-      [drawingTrumpCard(trumps, ctx, control)],
+      [pointTrump ?? drawingTrumpCard(trumps, ctx, control)],
       900 * tuning.conventionPriorWeight,
       'dealer-opening-trump-signal'
     );
@@ -987,7 +1017,11 @@ export function chooseLeadCards(view) {
   if (!opening && trumps.length > 0 && outstandingTrumps > 0 && !control.guaranteed && !strongSide) {
     const drawBonus =
       role === 'declarer' ? 520                                        // 保底优先，接着吊
-      : role === 'declarerPartner' ? (declarerLeadStyle(view) === 'trump' ? 480 : 0) // 跟庄家路子
+      : role === 'declarerPartner'
+        // 收到庄家「带分吊主」的信号而自己确实有大鬼 → 转打副牌，
+        // 这本身就是「不用吊主」的表达（Glen）。否则照常跟庄家路子。
+        ? (declarerLeadStyle(view) === 'trump' &&
+           !(hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 480 : 0)
       : 0;                                                             // 闲家：随便
     if (drawBonus > 0) {
       addProposal(
@@ -1228,15 +1262,48 @@ function scoreFollow(view, cards, ctx) {
     lead.seat % 2 !== you.team &&
     lead.playSuit !== 'TRUMP' &&
     lead.cards.every(card => !isSidePiece(card, ctx));
-  if (opponentProbe) {
-    const unseenPieces = (round.piecesView?.[lead.playSuit] ?? [])
-      .filter(item => item.status === 'unseen').length;
-    const donatedPieces = cards.filter(
-      card => suitOf(card, ctx) === lead.playSuit && isSidePiece(card, ctx)
-    ).length;
-    if (unseenPieces > 0 && donatedPieces > 0) {
-      score -= donatedPieces * 320 * pieceCaution * tuning.pieceProtectionWeight;
-    }
+  const donatedPieces = cards.filter(
+    card => suitOf(card, ctx) === lead.playSuit && isSidePiece(card, ctx)
+  ).length;
+  const unseenPieces = (round.piecesView?.[lead.playSuit] ?? [])
+    .filter(item => item.status === 'unseen').length;
+
+  if (opponentProbe && unseenPieces > 0 && donatedPieces > 0) {
+    let penalty = donatedPieces * 320 * pieceCaution * tuning.pieceProtectionWeight;
+    // Glen：「如果判断他并没有剩很多，又没分，自己可能留这个大牌还有其它用，那就不打」
+    // —— 反过来说，这墩【有分】而且我这一下能赢，就该用件把分吃回来，不能死护着。
+    // 护件是为了不让对手凑齐甩牌资格，不是为了把 A 带进棺材。
+    if (totalPoints > 0 && afterTeamWinning) penalty *= 0.45;
+    score -= penalty;
+  }
+
+  // ---- 队友求件时【贡献件】（积极的一半，以前完全没有）----
+  //
+  // 原来这里只写了消极的一半：别帮对手消件（上面的 -320）。
+  // 队友求件时电脑没有任何动力把件贡献出去，于是 chooseLeadCards 里那条
+  // 'continue-contributed-piece'（贡献一件拿到牌权后续打第二件）几乎触发不了。
+  //
+  // Glen 的判断链：
+  //   「要确认对家是在求牌才这么打」—— 正常人没有件不会求牌，
+  //     所以领出 5 以下的小牌（或 10）本身就是「我有件」的表态；
+  //   「如果判断对家有甩牌条件，则要给他」—— 贡献之后这门就齐了，那就给；
+  //   「如果在牌局中后段，看不出来他是很强势的牌，则不应该这么打」。
+  const partnerProbe =
+    lead.seat === partnerSeatOf(you.seat) && isPieceRequestLead(lead.cards, ctx);
+  if (partnerProbe && donatedPieces > 0) {
+    // unseenPieces = 我看不见的件（在队友或对手手上）。我打出【自己】的件，
+    // 对队友而言就是把一张「未现」变成「已现」，他离甩牌条件更近一步。
+    // ⚠️ 不能写成 unseenPieces - donatedPieces：打出自己的件并不会让别人
+    // 手上那些未现件现身，两者不是一回事（第一版就写错了）。
+    let bonus = 150 * donatedPieces;
+    // 场面上只剩一件没露 → 队友既然开口求件，多半就攥着它，贡献这下大概率直接凑齐
+    if (unseenPieces <= 1) bonus += 320;                  // 「有甩牌条件，则要给他」
+    if (lead.seat === view.declarerSeat) bonus += 120;    // 队友做庄更需要这门做熟
+    if (totalPoints > 0) bonus += totalPoints * 6;        // 顺带把分收回来
+    if (!early) bonus -= 200;                             // 中后段看不出强势就别这么打
+    // 乘 settings.inference：求件应答是「读牌 + 约定」类能力，
+    // easy 电脑（inference = 0）本就不该会这一手，它只会老老实实跟小牌。
+    score += bonus * settings.inference * tuning.conventionPriorWeight;
   }
 
   if (beforeTeamWinning) {
