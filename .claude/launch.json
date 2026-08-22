@@ -4,13 +4,28 @@
     {
       "name": "game",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "server"],
+      "runtimeArgs": [
+        "run",
+        "server"
+      ],
       "port": 8787
     },
     {
       "name": "game-lan",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "server:lan"],
+      "runtimeArgs": [
+        "run",
+        "server:lan"
+      ],
+      "port": 8787
+    },
+    {
+      "name": "game-debug",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "server:debug"
+      ],
       "port": 8787
     }
   ]

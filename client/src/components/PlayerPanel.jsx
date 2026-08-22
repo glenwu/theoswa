@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { levelLabel, rankLabel, suitSymbol, suitRed, PLAYER_EMOJI, TEAM_COLORS } from '../utils.js';
-import { useNow, secondsLeft } from '../useNow.js';
+import { useNow, secondsLeft, displayNow } from '../useNow.js';
 import { canThrowByStatus, missingPieceLabels } from '../../../server/pieces.js';
 import { beep } from '../beep.js';
 import Modal from './Modal.jsx';
@@ -52,6 +52,14 @@ export default function PlayerPanel({ game, send }) {
           onClick={() => setShowPropose(true)}
         >
           🔄
+        </button>
+        <button
+          className="btn-icon"
+          title={game.paused ? '游戏已暂停' : '暂停游戏（所有倒计时一起停住）'}
+          disabled={!!game.paused}
+          onClick={() => send({ type: 'pause' })}
+        >
+          ⏸
         </button>
         {you.isAdmin && (
           <button
@@ -321,7 +329,7 @@ function PlayerCard({ player, isYou, game, send }) {
   const playing =
     game.phase === 'PLAYING' && game.round && !game.round.lastTrick && game.round.turnSeat !== null;
   const isPlayTurn = playing && game.round.turnSeat === player.seat;
-  const now = useNow(isDrawer || isPlayTurn);
+  const now = displayNow(game, useNow(isDrawer || isPlayTurn));
   const drawLeft = secondsLeft(game.round?.drawDeadline, now);
   const playLeft = secondsLeft(game.round?.playDeadline, now);
   const showTimer = isDrawer ? drawLeft : isPlayTurn ? playLeft : null;

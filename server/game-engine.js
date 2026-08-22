@@ -56,6 +56,10 @@ export class GameEngine {
   scheduleTimers() {
     this.clearTimers();
     const s = this.state;
+    // 暂停中：一个计时器都不排。截止时刻原样留在状态里，
+    // 恢复时由 pause.js 的 shiftDeadlines 整体往后推「暂停了多久」，
+    // 所以这里不需要（也不应该）改动它们。
+    if (s.paused) return;
     const t = s.timing;
     const now = Date.now();
 

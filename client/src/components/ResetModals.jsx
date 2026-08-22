@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNow, secondsLeft } from '../useNow.js';
+import { useNow, secondsLeft, displayNow } from '../useNow.js';
 import Modal from './Modal.jsx';
 
 // 新开一局相关弹窗（统一走 Modal portal 路径）：
@@ -13,7 +13,7 @@ export function ResetProposalModal({ game, send, onClose }) {
   const me = game.you;
   const initiator = game.players.find(x => x.seat === p.fromSeat);
   const voted = p.yesSeats.includes(me.seat);
-  const now = useNow(true, 500);
+  const now = displayNow(game, useNow(true, 500));
   const left = secondsLeft(p.deadline, now);
   return (
     <Modal title="新开一局提案" onClose={onClose}>

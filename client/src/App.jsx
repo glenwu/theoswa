@@ -6,6 +6,7 @@ import TablePanel from './components/TablePanel.jsx';
 import ChatPanel from './components/ChatPanel.jsx';
 import { ResetProposalModal } from './components/ResetModals.jsx';
 import OnlineToast from './components/OnlineToast.jsx';
+import PauseModal from './components/PauseModal.jsx';
 import Modal from './components/Modal.jsx';
 import { PLAYER_EMOJI } from './utils.js';
 
@@ -140,6 +141,9 @@ function GameLayout({ game, send, error }) {
     >
       {/* 真人上线的下拉提示（portal 到 body，浮在最上层） */}
       <OnlineToast game={game} />
+
+      {/* 暂停：谁暂停的 + 任何真人可恢复（portal 到 body） */}
+      <PauseModal game={game} send={send} />
 
       {/* 新开一局提案：全局全屏弹窗（portal 到 body） */}
       {game.resetProposal && !proposalDismissed && (

@@ -164,6 +164,14 @@ export function viewerState(state, viewerId) {
     flipperSeat: state.flipperSeat,
     swapProposals: state.swapProposals.map(sp => ({ fromSeat: sp.fromSeat, toSeat: sp.toSeat })),
     // 新开一局提案（公开状态：发起人、已同意座位、座位选项、截止时刻）
+    // 暂停状态（公开）：谁暂停的、是不是自动暂停、从什么时候开始
+    paused: state.paused
+      ? {
+          bySeat: state.paused.bySeat ?? null,
+          auto: state.paused.auto === true,
+          at: state.paused.at,
+        }
+      : null,
     resetProposal: state.resetProposal
       ? {
           fromSeat: state.resetProposal.fromSeat,

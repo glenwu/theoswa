@@ -92,6 +92,7 @@ export function createInitialState(rng = Math.random) {
     // 新开一局提案（服务端状态：全员可见、可存档、可超时）：
     // { fromSeat, yesSeats: [seat...], reshuffleSeats, deadline }
     resetProposal: null,
+    paused: null,          // { bySeat, auto, at } —— 暂停中；见 server/pause.js
     // 管理员身份（连接时凭 ADMIN_TOKEN 授予；用于强制重置）
     adminIds: [],
     log: [],            // 系统播报（全员公开）
@@ -208,6 +209,7 @@ export function normalizeState(state) {
     swapProposals: [],
     rounds: [],
     resetProposal: null,
+    paused: null,          // { bySeat, auto, at } —— 暂停中；见 server/pause.js
     adminIds: [],
     log: [],
     chat: [],

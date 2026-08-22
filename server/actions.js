@@ -8,6 +8,7 @@ import { validateLeadPlay, validateFollowPlay, resolveTrick, assertEqualHandCoun
 import { finishRound, TEAM_NAMES } from './scoring.js';
 import { checkDominance } from './dominance.js';
 import { nextSeat, oppositeSeat } from './rotation.js';
+import { autoPauseApplies, hasConnectedHuman, pauseGame, resumeGame } from './pause.js';
 import {
   crossRiverCandidates,
   validateRiverGive,
@@ -38,6 +39,9 @@ export const ErrorCode = {
   WAIT_SETTLE: 'WAIT_SETTLE',
   // 阶段5
   STALE_STATE: 'STALE_STATE',
+  // 暂停
+  PAUSED: 'PAUSED',
+  NOT_PAUSED: 'NOT_PAUSED',
   // 阶段6
   PROPOSAL_ACTIVE: 'PROPOSAL_ACTIVE',
   ALREADY_VOTED: 'ALREADY_VOTED',
@@ -182,6 +186,36 @@ export function handleLeave(state, action, actorId) {
   if (!me) return fail(ErrorCode.UNKNOWN_PLAYER, '未知身份');
   me.connected = false;
   pushLog(state, `${me.nickname} 掉线`);
+  // 全场只剩电脑 → 自动暂停。不然四个电脑会自顾自把整局打完，
+  // 真人回来时战局早就结束了，连复盘都来不及看。
+  if (!state.paused && autoPauseApplies(state) && !hasConnectedHuman(state)) {
+    pauseGame(state, { auto: true });
+    pushLog(state, '真人玩家已全部离线，游戏自动暂停。任何真人上线后可恢复。');
+  }
+  return succeed();
+}
+
+// ---- 暂停 / 恢复 ----
+
+export function handlePause(state, action, actorId) {
+  const me = playerById(state, actorId);
+  if (!me) return fail(ErrorCode.UNKNOWN_PLAYER, '未知身份');
+  // 与「电脑不能恢复」对称：暂停是给真人用的
+  if (me.isBot) return fail(ErrorCode.FORBIDDEN, '电脑不能暂停游戏');
+  if (state.paused) return fail(ErrorCode.PAUSED, '游戏已经处于暂停状态');
+  pauseGame(state, { bySeat: me.seat, auto: false });
+  pushLog(state, `${me.nickname} 暂停了游戏`);
+  return succeed();
+}
+
+export function handleResume(state, action, actorId) {
+  const me = playerById(state, actorId);
+  if (!me) return fail(ErrorCode.UNKNOWN_PLAYER, '未知身份');
+  // 电脑不能恢复：自动暂停本来就是为了等真人回来，让电脑自己解除毫无意义
+  if (me.isBot) return fail(ErrorCode.FORBIDDEN, '电脑不能恢复游戏');
+  if (!state.paused) return fail(ErrorCode.NOT_PAUSED, '游戏当前没有暂停');
+  const elapsed = resumeGame(state);
+  pushLog(state, `${me.nickname} 恢复了游戏（暂停了 ${Math.round(elapsed / 1000)} 秒）`);
   return succeed();
 }
 
@@ -806,6 +840,8 @@ const HANDLERS = {
   confirmDominance: handleConfirmDominance,
   confirmRoundEnd: handleConfirmRoundEnd,
   confirmFlip: handleConfirmFlip,
+  pause: handlePause,
+  resume: handleResume,
   proposeReset: handleProposeReset,
   voteReset: handleVoteReset,
   forceReset: handleForceReset,
@@ -814,7 +850,14 @@ const HANDLERS = {
 };
 
 // 与阶段无关的动作：陈旧状态检查豁免（聊天/登录/重置提案随时可用）
-const PHASE_AGNOSTIC = new Set(['join', 'leave', 'chat', 'quickChat', 'proposeReset', 'voteReset', 'forceReset']);
+const PHASE_AGNOSTIC = new Set([
+  'join', 'leave', 'chat', 'quickChat', 'pause', 'resume',
+  'proposeReset', 'voteReset', 'forceReset',
+]);
+
+// 暂停期间仍然放行的动作：进出房间、聊天，以及恢复本身。
+// 其余一律拒绝 —— 暂停要是还能出牌，那就不叫暂停了。
+const ALLOWED_WHILE_PAUSED = new Set(['join', 'leave', 'chat', 'quickChat', 'pause', 'resume']);
 
 // 服务端权威裁决入口：所有客户端意图必须经过这里；
 // 前端本地校验只为 UX，不是防线。
@@ -828,6 +871,10 @@ export function applyAction(state, action, actorId) {
   // 而且把一个正常的规则事件说得像故障。这里给出准确原因。
   if (action?.type === 'declareTrump' && state.round?.trumpSuit) {
     return fail(ErrorCode.TRUMP_ALREADY_DECLARED, '已有人先亮主');
+  }
+  // 暂停闸门放在所有规则判定之前：暂停期间不接受任何推进牌局的动作
+  if (state.paused && !ALLOWED_WHILE_PAUSED.has(action?.type)) {
+    return fail(ErrorCode.PAUSED, '游戏已暂停，恢复后才能继续');
   }
   // 陈旧状态防护：客户端带上已知 phase，不一致说明点的是过期界面，
   // 返回明确的 STALE_STATE 而不是笼统的错误。

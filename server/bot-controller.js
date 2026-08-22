@@ -68,6 +68,7 @@ export class BotController {
   }
 
   nextDecision() {
+    if (this.engine.state.paused) return null; // 暂停中电脑不出手
     const bots = this.engine.state.players
       .filter(player => player.isBot)
       .sort((a, b) => a.seat - b.seat);

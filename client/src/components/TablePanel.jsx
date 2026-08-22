@@ -11,7 +11,7 @@ import {
 } from '../utils.js';
 import { PlayingCard } from './PlayingCard.jsx';
 import Modal from './Modal.jsx';
-import { useNow, secondsLeft } from '../useNow.js';
+import { useNow, secondsLeft, displayNow } from '../useNow.js';
 import { shortcutAction } from '../shortcut.js';
 import { checkSelection } from '../playCheck.js';
 import { trickLeader } from '../../../server/trick.js';
@@ -242,7 +242,7 @@ function timerSpecFor(game) {
 
 function CenterTurnTimer({ game }) {
   const spec = timerSpecFor(game);
-  const now = useNow(!!spec, 300);
+  const now = displayNow(game, useNow(!!spec, 300));
   const left = secondsLeft(spec?.deadline, now);
   if (!spec || left === null) return null;
   const player = spec.seat === null ? null : game.players.find(p => p.seat === spec.seat);
@@ -401,7 +401,7 @@ function CenterEventOverlay({ game, send }) {
 function FlipHoldConfirm({ game, send }) {
   const round = game.round;
   const confirms = round?.flipConfirms ?? [];
-  const now = useNow(true, 500);
+  const now = displayNow(game, useNow(true, 500));
   const left = secondsLeft(round?.flipHoldDeadline, now);
   const mine = confirms.includes(game.you.seat);
   return (
@@ -463,7 +463,7 @@ function CenterInfo({ game }) {
   const trumpSuit = round?.trumpSuit ?? null;
   const pts = round?.defenderTrickPoints ?? 0;
   const pct = Math.min(100, (pts / 80) * 100);
-  const now = useNow(game.phase === 'REVEALING');
+  const now = displayNow(game, useNow(game.phase === 'REVEALING'));
   const drawLeft = secondsLeft(round?.drawDeadline, now);
   const graceLeft = secondsLeft(round?.graceDeadline, now);
 
@@ -679,7 +679,7 @@ function SettlementPanel({ game, send }) {
 function RoundEndConfirm({ game, send }) {
   const round = game.round;
   const confirms = round?.roundEndConfirms ?? [];
-  const now = useNow(true, 500);
+  const now = displayNow(game, useNow(true, 500));
   const left = secondsLeft(round?.roundEndDeadline, now);
   const mine = confirms.includes(game.you.seat);
   return (
@@ -889,7 +889,18 @@ function PlayZone({ player, game, side = 'top', isYou }) {
       </div>
       {/* 出牌区自适应：没牌时只剩方位名一条细线；有牌按张数展开（容量 10 张，超出再压缩） */}
       {hasPlay && (
-        <div className="flex items-center justify-center">
+        <div className="relative flex items-center justify-center">
+          {/* 甩牌张数角标：多张时牌是叠着的，光看牌面数不清到底甩了几张 —— 
+              而张数正是跟牌方必须凑够的数量，是这一墩最关键的信息。
+              单张不显示（一张牌不用标 1）。 */}
+          {play.cards.length > 1 && (
+            <span
+              className="pointer-events-none absolute -right-1.5 -top-1.5 z-20 grid h-6 w-6 place-items-center rounded-full bg-amber-400 text-xs font-black text-amber-950 shadow-md shadow-black/40 portrait:max-lg:-right-1 portrait:max-lg:-top-1 portrait:max-lg:h-5 portrait:max-lg:w-5 portrait:max-lg:text-[10px]"
+              title={`甩了 ${play.cards.length} 张`}
+            >
+              {play.cards.length}
+            </span>
+          )}
           {/* 左右两侧在竖屏手机上改为竖向叠放：竖屏横向空间本来就窄，
               甩牌多张时横排会把中间牌桌挤没。单张时横竖一样，无影响。
               仅限竖屏 + 窄屏，横屏和桌面保持原来的横排。 */}
@@ -921,7 +932,7 @@ function PlayZone({ player, game, side = 'top', isYou }) {
 function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, onTogglePlayers, onToggleChat }) {
   const you = game.you;
   const round = game.round;
-  const now = useNow(game.phase === 'REVEALING');
+  const now = displayNow(game, useNow(game.phase === 'REVEALING'));
   const buttons = [];
   const hints = []; // 提示与辅助按钮：单独一行放在主按钮下方，不跟主按钮抢横向空间
 

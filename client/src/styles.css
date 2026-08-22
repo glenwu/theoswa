@@ -43,7 +43,7 @@ body {
     @apply rounded-full bg-gradient-to-b from-gold-300 to-gold-600 px-3 py-1 text-xs font-black text-amber-950 shadow-md transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40;
   }
   .btn-icon {
-    @apply grid h-9 w-9 place-items-center rounded-full bg-white/10 text-base transition hover:bg-white/20;
+    @apply grid h-9 w-9 place-items-center rounded-full bg-white/10 text-base transition hover:bg-white/20 disabled:pointer-events-none disabled:opacity-35;
   }
   /* 移动端浮层开关：56px 拇指可点 */
   .btn-float {
