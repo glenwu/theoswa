@@ -917,6 +917,17 @@ function PlayZone({ player, game, side = 'top', isYou }) {
         )}
         {isWinner ? ' 🏆' : leading ? ' 👑' : ''}
       </div>
+      {/* 托管标记也要出现在【牌桌上】的名字下面：
+          手机竖屏时左栏玩家列表是藏在 👥 浮层里的，标记只放那儿等于看不见。
+          牌桌是所有人一直盯着的地方，做得小而醒目，不占额外行高。 */}
+      {player.autoPlay && !player.isBot && (
+        <div
+          className="rounded-full bg-cyan-400/90 px-1.5 text-[10px] font-black leading-[1.35] text-cyan-950"
+          title={`${player.nickname} 已开启电脑托管，由 AI 代打`}
+        >
+          🤖 托管中
+        </div>
+      )}
       {/* 出牌区自适应：没牌时只剩方位名一条细线；有牌按张数展开（容量 10 张，超出再压缩） */}
       {hasPlay && (
         <div className="relative flex items-center justify-center">
