@@ -1045,6 +1045,84 @@ test('吊主：手上只剩鬼当主牌 → 不再吊主，转副牌', () => {
     `不该拿鬼去吊，实际领了 ${lead.suit}${lead.rank}`);
 });
 
+// ---- 清顶：对手主牌见底时，反过来该用大牌一次清完（Glen 纠正上一版的绝对化）----
+//
+// 「这个结论也太绝对，潮汕升级的玩法就是随时都需要看当时形势来定要出的牌，
+//   如果当时判断对手的主已经很少、很可能把大牌撞出来的时候，
+//   那这情况就可以吊大鬼小鬼主2。」
+// 两条同时成立才解锁：单独一家最多可能握 ≤2 张主，且顶端只剩 ≤2 张没现身。
+
+// 把 ♥3–♥A 都打出去（♥5 ♥6 各留一张在我手上），22 张
+function sweptTrumps() {
+  const out = [];
+  for (let r = 3; r <= 14; r += 1) {
+    out.push(T('H', r, 500 + r));
+    if (r !== 5 && r !== 6) out.push(T('H', r, 600 + r));
+  }
+  return out;
+}
+
+// ⚠️ fixture 说明：把已出的主牌一股脑塞进首墩「我自己」的那一手，纯粹是为了
+// 喂给 playedCardsOf；牌桌上不会这样出牌，但这几条断言只依赖「哪些牌已现身」。
+// handCount 一律压到 4 —— maxOpponentTrumpEstimate 是按各家手牌数摊分未现主牌的。
+function clearingView({ hand, played, handCount = 4 }) {
+  const view = leadView({
+    hand, declarerSeat: 0, mySeat: 0,
+    trickHistory: [{
+      trickNo: 1, leadSeat: 0, leadSuit: 'TRUMP', winnerSeat: 0, points: 0,
+      plays: [{ seat: 0, playSuit: 'TRUMP', cards: played }],
+    }],
+  });
+  for (const p of view.players) p.handCount = handCount;
+  return view;
+}
+
+const LOW_TRUMPS_AND_SIDES = [
+  T('H', 6, 10), T('H', 5, 11),
+  ...[9, 7].map((r, i) => T('S', r, i + 20)),
+  ...[8, 6].map((r, i) => T('D', r, i + 30)),
+];
+
+test('清顶：对手主牌见底 + 顶端只剩一张 → 该领大鬼把顶端撞出来', () => {
+  const lead = chooseLeadCards(clearingView({
+    hand: [T('JOKER', 16, 0), T('JOKER', 15, 1), ...LOW_TRUMPS_AND_SIDES],
+    played: [...sweptTrumps(), T('JOKER', 16, 700)],  // 另一张大鬼已现身
+  }))[0];
+  assert.equal(lead.rank, 16, `形势到了就该领大鬼，实际领了 ${lead.suit}${lead.rank}`);
+});
+
+// 对照一：只放宽第一条 —— 已出的主少得多，对手手上还可能攥着一把。
+// 顶端仍然只剩一张（另一张大鬼已现身），所以这条单独钉住「对手主牌很少」。
+test('清顶：顶端虽只剩一张，但对手主牌还多 → 不动鬼，照常吊小牌', () => {
+  const lead = chooseLeadCards(clearingView({
+    hand: [T('JOKER', 16, 0), T('JOKER', 15, 1), ...LOW_TRUMPS_AND_SIDES],
+    played: [T('JOKER', 16, 700), ...[14, 13, 12, 11, 10, 9].map(r => T('H', r, 500 + r))],
+  }))[0];
+  assert.ok(lead.rank !== 16 && lead.rank !== 15,
+    `对手主牌还多，领大牌撞不出什么，实际领了 ${lead.suit}${lead.rank}`);
+});
+
+// 对照二：只放宽第二条 —— 对手主牌一样少，但我手上没有大鬼、
+// 两张大鬼都还没现身，顶端在外的有 3 张。领小鬼只会被撞掉。
+test('清顶：对手主牌虽少，但顶端还剩一大把没现身 → 不动鬼', () => {
+  const lead = chooseLeadCards(clearingView({
+    hand: [T('JOKER', 15, 1), ...LOW_TRUMPS_AND_SIDES],
+    played: [...sweptTrumps(),
+      T('S', 2, 710), T('S', 2, 711), T('D', 2, 712), T('D', 2, 713)],
+  }))[0];
+  assert.ok(lead.rank !== 16 && lead.rank !== 15,
+    `顶上还有两张大鬼在外，小鬼出去会被撞掉，实际领了 ${lead.suit}${lead.rank}`);
+});
+
+// 连吊「先大后小」：大鬼打出去之后重新评估，次大的那张就是新的最大张。
+test('清顶：大鬼已经领掉 → 下一墩接着领小鬼（先大后小）', () => {
+  const lead = chooseLeadCards(clearingView({
+    hand: [T('JOKER', 15, 1), ...LOW_TRUMPS_AND_SIDES],
+    played: [...sweptTrumps(), T('JOKER', 16, 700), T('JOKER', 16, 701)],
+  }))[0];
+  assert.equal(lead.rank, 15, `该接着把顶端清完，实际领了 ${lead.suit}${lead.rank}`);
+});
+
 test('吊主：开局第一墩也不许领鬼', () => {
   const hand = [
     T('H', 16, 0), T('H', 15, 1),

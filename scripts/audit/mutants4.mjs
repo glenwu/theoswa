@@ -20,6 +20,26 @@ runMutants([
     trick => trick.leadSeat === partner && trick.leadSuit !== 'TRUMP'
   );`, '  return false;', '不认「队友吃下后转领副牌」这种应答'],
   [F, '(!strongSide || planPending)', '(true)', '副牌再强也死吊主'],
+  // ---- 清顶（Glen 纠正「永远不含鬼」之后加的） ----
+  [F, 'const drawPool = clearing ? trumps : drawableTrumps;', 'const drawPool = drawableTrumps;',
+      '清顶时鬼仍然不进候选（回到写死的绝对规则）'],
+  [F, 'const clearing = trumpClearingOut(view, ctx, control);', 'const clearing = false;',
+      '清顶整块失效'],
+  [F, "mode: clearing ? 'clearing' : planPending ? 'tier' : 'low',",
+      "mode: planPending ? 'tier' : 'low',", '清顶的档位没接上（候选放开了却还吊小牌）'],
+  [F, "  if (mode === 'clearing') return highCards(trumps, 1, ctx)[0];",
+      "  if (mode === 'clearing') return lowestLead(trumps, ctx);", '清顶时反而领最小的'],
+  [F, '  if (control.topOutstanding > CLEARING_MAX_TOP_OUTSTANDING) return false;', '',
+      '清顶不看顶端还剩几张没现身'],
+  [F, 'return maxOpponentTrumpEstimate(view, ctx) <= CLEARING_MAX_OPPONENT_TRUMPS;', 'return true;',
+      '清顶不看对手手上还有多少主'],
+  [F, 'const CLEARING_MAX_OPPONENT_TRUMPS = 2;', 'const CLEARING_MAX_OPPONENT_TRUMPS = 6;',
+      '「对手主牌很少」的门槛放宽到 6'],
+  [F, 'const CLEARING_MAX_TOP_OUTSTANDING = 2;', 'const CLEARING_MAX_TOP_OUTSTANDING = 6;',
+      '「顶端只剩一两张」的门槛放宽到 6'],
+  [F, 'if (tier.mine > 0 && topOutstanding === null) topOutstanding = threats;',
+      'if (tier.mine > 0 && topOutstanding === null) topOutstanding = 0;',
+      'topOutstanding 恒为 0（顶端永远算「已清空」）'],
   [F, `  const drawable = trumps.filter(
     card => !(card.rank === ctx.rankCard && card.suit === ctx.trumpSuit)
   );`, '  const drawable = trumps;', '吊主又去挑主级牌（Glen 的「主7」）'],
@@ -27,10 +47,10 @@ runMutants([
       '保底判定退回「独占顶档」（丢掉张数对比）'],
   [F, 'if (tier.mine > 0 && threats < mineAtOrAbove)', 'if (tier.mine > 0 && threats <= mineAtOrAbove)',
       '保底判定把「刚好换得完」也当成保底'],
-  [F, `    mineAtOrAbove += tier.mine;
-    threats += tier.total - tier.played - tier.mine; // 别人手上或底牌里
+  [F, `    threats += tier.total - tier.played - tier.mine; // 别人手上或底牌里
+    if (tier.mine > 0 && topOutstanding === null) topOutstanding = threats;
     if (tier.mine > 0 && threats < mineAtOrAbove) { holdsTopTrump = true; break; }`,
-      `    mineAtOrAbove += tier.mine;
+      `    if (tier.mine > 0 && topOutstanding === null) topOutstanding = threats;
     if (tier.mine > 0 && threats < mineAtOrAbove) { holdsTopTrump = true; break; }
     threats += tier.total - tier.played - tier.mine;`,
       '同档的威胁先判后加（等于不把同强度算成威胁）'],

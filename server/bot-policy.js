@@ -816,15 +816,20 @@ export function assessBottomControl(view, ctx) {
   // outstanding 必须和 mine 在同一轮里一起累加，不能先判后加。
   //
   // 原来那条「独占顶档」是本式在第一档的特例（threats 0 < mine 1），已被包含。
-  let mineAtOrAbove = 0, threats = 0, holdsTopTrump = false;
+  // 顺带记下 topOutstanding：走到【我手上最大的那一张】所在的档时，
+  // 比它更大或与它同档、还没现身的牌一共几张 —— 也就是「还有几张能从我手里
+  // 抢走一墩」。清顶判断（trumpClearingOut）用的就是它。我一张主都没有时为 ∞。
+  let mineAtOrAbove = 0, threats = 0, holdsTopTrump = false, topOutstanding = null;
   for (const [, tier] of [...tiers.entries()].sort((a, b) => b[0] - a[0])) {
     mineAtOrAbove += tier.mine;
     threats += tier.total - tier.played - tier.mine; // 别人手上或底牌里
+    if (tier.mine > 0 && topOutstanding === null) topOutstanding = threats;
     if (tier.mine > 0 && threats < mineAtOrAbove) { holdsTopTrump = true; break; }
   }
 
   return {
     holdsTopTrump,
+    topOutstanding: topOutstanding ?? Number.POSITIVE_INFINITY,
     trumpCount: myTrumps.length,
     guaranteed: holdsTopTrump && myTrumps.length >= BOTTOM_MIN_TRUMPS,
   };
@@ -972,6 +977,32 @@ function hasStrongSideSuit(view, ctx) {
   return false;
 }
 
+// ---- 清顶：对手主牌见底时，反过来该用大牌把顶端一次清完 ----
+//
+// Glen 纠正了上一版的绝对化（「永远不含鬼」写死了）：
+//   「这个结论也太绝对，潮汕升级的玩法就是随时都需要看当时形势来定要出的牌，
+//     如果当时判断对手的主已经很少、很可能把大牌撞出来的时候，
+//     那这情况就可以吊大鬼小鬼主2。」
+// 常态仍然是「鬼和主级牌留着杀」，但那是【强先验】，不是硬规则 ——
+// 形势到了就该翻过来。
+//
+// 两条同时成立才算（Glen 定的口径）：
+//   1. 对手的主已经很少：单独一家最多可能握 ≤2 张。用的是甩尾手那把尺
+//      （未现主按各家手牌数摊分，底牌那 8 张也占一份，正好把底牌里的主扣掉）。
+//   2. 顶端只剩 ≤2 张没现身：这时候领大牌才「撞」得出他的大牌；
+//      顶上还有一大把在外，领大鬼只是白花本钱。
+const CLEARING_MAX_OPPONENT_TRUMPS = 2;
+const CLEARING_MAX_TOP_OUTSTANDING = 2;
+
+//
+// 注：这里【不】另外判「主牌是不是已经吊光」——两个调用点本来就拦住了那个局面
+// （开局时主牌不可能已出尽；开局之后那条提案自带 outstandingTrumps > 0）。
+// 多写一条是恒真守卫，删掉行为不变，却会让变异测试误以为它被覆盖了。
+function trumpClearingOut(view, ctx, control) {
+  if (control.topOutstanding > CLEARING_MAX_TOP_OUTSTANDING) return false;
+  return maxOpponentTrumpEstimate(view, ctx) <= CLEARING_MAX_OPPONENT_TRUMPS;
+}
+
 // 吊主该出哪张 —— 不是「出大牌」和「出小牌」二选一，取决于自己主牌强弱。
 //
 // ⚠️ 先纠正一个很容易搞错的地方：打 2 时主牌的强弱阶梯是
@@ -1000,17 +1031,18 @@ function hasStrongSideSuit(view, ctx) {
 // 必须先把他的主削到毙不动。这正好就是 tailThrowPlan 挂起的那个状态，
 // 所以 aggressive 由调用方按「计划挂起」来传，这里不自己猜。
 //
-// ⚠️ 传进来的 trumps 已经【不含鬼】——那一层筛在 chooseLeadCards 的 drawableTrumps，
-// 只留一处，这里不再重复（重复的筛在这条路径上恒真，是会骗过变异测试的死代码）。
-function drawingTrumpCard(trumps, ctx, { aggressive = false } = {}) {
-  // 注：这里不必再检查「手上撑不撑得住连续吊」——
-  // 唯一会传 aggressive:true 的地方是「甩尾手计划挂起」，而 tailThrowPlan 本身
-  // 就要求 control.holdsTopTrump（握住当前最高的未出主牌），那正是「撑得住」的核心条件。
-  if (!aggressive) return lowestLead(trumps, ctx);
-  // 明确需要且撑得住：吊【副级牌】那一档 —— Glen：「通常都是打副7，
-  // 主7以上一般拿来杀的」。打 7 时的阶梯是 大鬼 > 小鬼 > 主7 > 副7 > 主花色 A…，
-  // 副级牌是级牌里最便宜的一档：够大、能逼出对手的主，又不是毙牌的本钱。
-  // 原来这里是「除鬼以外最大的一张」，恰好会挑中主级牌 —— 正是他说的「主7」。
+// 三档，由调用方按形势选（trumps 里含不含鬼也由调用方决定，见 drawPool）：
+//   'low'      默认。弱势吊小牌，逼对手用大牌来杀 —— 拿我的小牌换他的大牌。
+//   'tier'     甩尾手计划挂起、明确需要削对手的主：吊【副级牌】那一档。
+//              Glen：「通常都是打副7，主7以上一般拿来杀的」。打 7 时阶梯是
+//              大鬼 > 小鬼 > 主7 > 副7 > 主花色 A…，副级牌是级牌里最便宜的一档：
+//              够大、逼得出对手的主，又不是毙牌的本钱。
+//   'clearing' 对手主牌见底、顶端只剩一两张：反过来领最大的，把顶端一次清完。
+//              连吊「先大后小」是自然结果 —— 大鬼打出去之后重新评估，
+//              次大的那张就成了新的最大张。
+function drawingTrumpCard(trumps, ctx, { mode = 'low' } = {}) {
+  if (mode === 'low') return lowestLead(trumps, ctx);
+  if (mode === 'clearing') return highCards(trumps, 1, ctx)[0];
   const drawable = trumps.filter(
     card => !(card.rank === ctx.rankCard && card.suit === ctx.trumpSuit)
   );
@@ -1115,11 +1147,16 @@ export function chooseLeadCards(view) {
   // 判据从「有没有双大鬼」换成完整的保底判定（补上了主牌长度这一半 ——
   // 双大鬼但只有 5 张主，照样会被吊空，不算保底牌）。
   const hasBigJoker = hand.some(card => card.rank === 16);
-  // 吊主的候选里【永远不含鬼】。Glen：「主7以上一般拿来杀的」——
+  // 吊主的候选【常态下不含鬼】。Glen：「主7以上一般拿来杀的」——
   // 领鬼不是吊主，是把毙牌的本钱扔掉。手上只剩鬼当主牌时干脆不提吊主，
   // 让副牌路线接手（真到了全手只剩主牌，low-card-fallback 仍会兜住）。
+  //
+  // 例外是【清顶】：对手主牌见底、顶端只剩一两张时，鬼重新进候选，而且要领最大的
+  // 把顶端一次清完（Glen：「这个结论也太绝对……那这情况就可以吊大鬼小鬼主2」）。
   const drawableTrumps = trumps.filter(card => card.rank !== 15 && card.rank !== 16);
-  if (opening && isDeclarer && !control.guaranteed && drawableTrumps.length > 0) {
+  const clearing = trumpClearingOut(view, ctx, control);
+  const drawPool = clearing ? trumps : drawableTrumps;
+  if (opening && isDeclarer && !control.guaranteed && drawPool.length > 0) {
     // 有大鬼但不够保底 → 首轮吊主【带分】，向队友表态「我有大鬼，但保不了底，
     // 请你表示你的大牌」。挑最小的那张带分主牌，别为了发信号丢掉大牌。
     const pointTrump = hasBigJoker
@@ -1128,7 +1165,7 @@ export function chooseLeadCards(view) {
       : null;
     addProposal(
       // 开局绝不 aggressive：先放小牌，把「要不要吊主」的表态机会让给队友
-      [pointTrump ?? drawingTrumpCard(drawableTrumps, ctx)],
+      [pointTrump ?? drawingTrumpCard(drawPool, ctx)],
       900 * tuning.conventionPriorWeight,
       'dealer-opening-trump-signal'
     );
@@ -1139,7 +1176,7 @@ export function chooseLeadCards(view) {
   // 吊主正是在削减对手手上的主牌，等他们凑不出足够的主，尾巴那一甩才毙不住。
   // Glen：「求到件了可以转吊主」。
   const planPending = plan !== null && !plan.ready;
-  if (!opening && drawableTrumps.length > 0 && outstandingTrumps > 0 &&
+  if (!opening && drawPool.length > 0 && outstandingTrumps > 0 &&
       !control.guaranteed && (!strongSide || planPending)) {
     const drawBonus =
       planPending ? 560                                                // 为尾巴削对手的主
@@ -1154,7 +1191,10 @@ export function chooseLeadCards(view) {
     if (drawBonus > 0) {
       addProposal(
         // 只有甩尾手计划挂起时才算「明确需要」—— 那时确实要把对手的主削到毙不动
-        [drawingTrumpCard(drawableTrumps, ctx, { aggressive: planPending })],
+        // 清顶优先于甩尾手的「吊副级牌」：顶端马上就能清完，先清完再说
+        [drawingTrumpCard(drawPool, ctx, {
+          mode: clearing ? 'clearing' : planPending ? 'tier' : 'low',
+        })],
         drawBonus * tuning.leadStrategyPriorWeight,
         'continue-trump-draw'
       );
