@@ -21,7 +21,11 @@ const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '127.0.0.1';
 // 服务端专用口令，不能放进前后端共享的 constants.js：浏览器没有 process.env，
 // 而且管理员口令不应被打包进客户端代码。
-const ADMIN_RESET_TOKEN = process.env.ADMIN_RESET_TOKEN ?? 'Y';
+// ⚠️ 没有默认值。原来缺省是 'Y' —— 忘了设环境变量，任何人都能抹掉存档、
+// 强制新开一局。未配置时一律视为「管理员能力关闭」，而不是「口令是 Y」。
+const ADMIN_RESET_TOKEN = process.env.ADMIN_RESET_TOKEN || null;
+const adminTokenMatches = token =>
+  ADMIN_RESET_TOKEN !== null && typeof token === 'string' && token === ADMIN_RESET_TOKEN;
 
 // 持久化恢复：启动时若有 12 小时内的存档，自动恢复（进程重启不丢战果）
 function reviveState(saved) {
@@ -84,7 +88,12 @@ const connections = new Map();
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
-app.get('/api/health', (req, res) => res.json({ ok: true, phase: state.phase, seed: state.seed ?? null }));
+// ⚠️ 绝不要把 state.seed 加回这个响应。
+// 种子完全决定牌堆顺序（beginRound 里 shuffleArray(buildDeck(), state.rng)），
+// 而起揭人是公开信息 —— 拿到 seed 就能在本地把四家 25 张手牌和 8 张底牌全部算出来。
+// viewer.js 那套递归牌形扫描器再严也拦不住：攻击者根本不看 payload。
+// 想复现牌局请看服务端启动日志里打印的 SEED。
+app.get('/api/health', (req, res) => res.json({ ok: true, phase: state.phase }));
 app.get('/api/occupancy', (req, res) => {
   res.json({
     phase: state.phase,
@@ -97,8 +106,12 @@ app.get('/api/occupancy', (req, res) => {
 // 必须带管理员口令：这是个不可逆的破坏性操作，无鉴权等于任何人都能抹掉一晚上的战果。
 // 口令走请求头而不是 query —— URL 会进访问日志、浏览器历史和 Referer。
 app.delete('/api/save', (req, res) => {
-  if (req.get('x-admin-token') !== ADMIN_RESET_TOKEN) {
-    return res.status(403).json({ error: '需要管理员口令（请求头 x-admin-token）' });
+  if (!adminTokenMatches(req.get('x-admin-token'))) {
+    return res.status(403).json({
+      error: ADMIN_RESET_TOKEN === null
+        ? '服务端未配置 ADMIN_RESET_TOKEN，管理员能力已关闭'
+        : '需要管理员口令（请求头 x-admin-token）',
+    });
   }
   clearSave();
   res.json({ ok: true, cleared: true });
@@ -223,7 +236,7 @@ wss.on('connection', (ws) => {
       playerId = id;
       connections.set(id, ws);
       // 管理员能力：连接时携带正确口令才授予（伪造动作在服务端一律拒绝）
-      if (msg.adminToken === ADMIN_RESET_TOKEN) {
+      if (adminTokenMatches(msg.adminToken)) {
         if (!state.adminIds.includes(id)) state.adminIds.push(id);
       } else if (state.adminIds.includes(id)) {
         state.adminIds = state.adminIds.filter(x => x !== id); // 不带口令重连 → 撤销
@@ -263,6 +276,11 @@ server.listen(PORT, HOST, () => {
   console.log(`[潮汕升级] 服务端已启动: http://${HOST}:${PORT}`);
   console.log(`[潮汕升级] WebSocket: ws://${HOST}:${PORT}/ws`);
   if (HOST === '0.0.0.0') {
-    console.warn('[潮汕升级] ⚠️ 正在监听所有网卡（HOST=0.0.0.0）：请确认防火墙已配置，或改用反向代理。');
+    console.warn('[潮汕升级] ⚠️ 正在监听所有网卡（HOST=0.0.0.0）。');
+    console.warn('[潮汕升级] ⚠️ 本服务没有任何身份验证：知道地址的人可以选任意一家并看到那家的手牌。');
+    console.warn('[潮汕升级] ⚠️ 对外只转发这一个端口，不要用 DMZ（DMZ 会把整台机器暴露出去）。');
+  }
+  if (ADMIN_RESET_TOKEN === null) {
+    console.log('[潮汕升级] 未设置 ADMIN_RESET_TOKEN，管理员能力已关闭（清档 / 强制新开一局不可用）。');
   }
 });

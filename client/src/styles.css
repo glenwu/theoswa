@@ -266,3 +266,16 @@ body {
     transform: translate(-50%, -4px) scale(1.14);
   }
 }
+
+/* 上线提示：从顶部滑下淡入，停留由 JS 计时（到点整条卸载） */
+@keyframes online-toast-in {
+  from { opacity: 0; transform: translateY(-140%); }
+  60%  { opacity: 1; transform: translateY(6%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.online-toast {
+  animation: online-toast-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .online-toast { animation: none; }
+}

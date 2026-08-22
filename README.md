@@ -105,7 +105,19 @@ systemctl daemon-reload && systemctl enable --now chaoshan
 ```
 
 服务默认只监听 `127.0.0.1`，公网访问请在前面放反向代理（nginx / caddy）终结 TLS 再转发到 8787。
-确实要让进程直接对外监听时才设 `HOST=0.0.0.0`，并自行确认防火墙（目标机器上 ufw 可能是 inactive）。
+确实要让进程直接对外监听时才设 `HOST=0.0.0.0`（有快捷脚本 `npm run server:lan`），并自行确认防火墙（目标机器上 ufw 可能是 inactive）。
+
+> ### ⚠️ 对外开放前必读
+>
+> **本服务没有任何身份验证。** 身份就是 `T/H/B/M` 四个字母，写死在前后端共享常量里，
+> 客户端 bundle 里也有。知道地址的人可以选任意一家，立刻看到那家的完整手牌，
+> 并把原来那位踢下线。`viewer.js` 的保密裁剪拦不住这个 —— 他就是那一家。
+>
+> 因此：
+> - **只转发需要的那一个端口，不要用 DMZ。** DMZ 会把整台机器的所有端口
+>   （SSH、文件共享、打印服务……）一并暴露到公网。
+> - 只发给认识的人，玩完就把端口转发关掉。
+> - 真要长期开放，请在前面套一层反向代理做 basic auth，或走 Tailscale / WireGuard 之类的私有网络。
 
 存档：`/opt/chaoshan/server/savegame.json`（12 小时内重启自动恢复）。清档：游戏内四人表决「新开一局」、管理员强制重置，或带管理员口令调接口：
 
@@ -120,7 +132,7 @@ curl -X DELETE -H "x-admin-token: 你的口令" http://127.0.0.1:8787/api/save
 | PORT | 8787 | 监听端口 |
 | HOST | `127.0.0.1` | 监听地址。默认只绑回环，公网请走反向代理；设 `0.0.0.0` 才对外暴露 |
 | SEED | 随机并打印 | 发牌种子，`SEED=<数字>` 可复现整局 |
-| ADMIN_RESET_TOKEN | `Y` | 管理员强制重置口令 |
+| ADMIN_RESET_TOKEN | *（无）* | 管理员强制重置口令。**不设则管理员能力整个关闭**，不再有默认口令 |
 | FLIP_MS / DRAW_MS / GRACE_MS / FALLBACK_MS / DEALING_MS | 800/3000/3000/800/600 | 揭牌定主各节奏 |
 | SETTLE_MS / SCORING_MS / ROUND_END_MS | 1500/600/3000 | 收牌/结算/小结停留 |
 | PLAY_MS | 60000 | 出牌限时（超时自动出最小合法牌） |

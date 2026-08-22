@@ -262,7 +262,11 @@ export function playerBySeat(state, seat) {
   return state.players.find(p => p.seat === seat) ?? null;
 }
 
-export function pushLog(state, text) {
-  state.log.push({ kind: 'SYSTEM', text, ts: Date.now() });
+// extra：附加在日志条目上的结构化字段（如 { event: 'ONLINE', playerId }）。
+// kind 保持 'SYSTEM'，所以消息流的渲染不用改；客户端另按 event 做特殊处理。
+export function pushLog(state, text, extra = null) {
+  const entry = { kind: 'SYSTEM', text, ts: Date.now() };
+  if (extra) Object.assign(entry, extra);
+  state.log.push(entry);
   if (state.log.length > 500) state.log.splice(0, 200);
 }

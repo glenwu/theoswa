@@ -81,6 +81,21 @@ function clearProposalsFor(state, seat) {
 
 // ---- 登录 / 掉线 ----
 
+// 上线播报的冷却窗口：网络抖动会让同一个人反复 join，
+// 不设冷却就会连弹好几条「XX 已上线」。不另存状态，直接看最近的日志 ——
+// 这样存档恢复、进程重启后冷却依然有效。
+const ONLINE_ANNOUNCE_COOLDOWN_MS = 60000;
+
+function announceOnline(state, player, suffix = '') {
+  const now = Date.now();
+  const justAnnounced = state.log.some(
+    l => l.event === 'ONLINE' && l.playerId === player.id && now - l.ts < ONLINE_ANNOUNCE_COOLDOWN_MS
+  );
+  const text = `${player.nickname} 已上线${suffix}，大家欢迎！`;
+  // 冷却期内仍然记一条普通日志（流水账不能断），只是不带 event —— 客户端就不会弹提示。
+  pushLog(state, text, justAnnounced ? null : { event: 'ONLINE', playerId: player.id });
+}
+
 export function handleJoin(state, action, actorId) {
   if (!PLAYERS.some(p => p.id === actorId)) return fail(ErrorCode.UNKNOWN_PLAYER, '未知身份');
   const me = playerById(state, actorId);
@@ -90,12 +105,14 @@ export function handleJoin(state, action, actorId) {
   if (me.isBot) {
     me.isBot = false;
     me.connected = true;
-    pushLog(state, `${me.nickname} 回来了，接管了电脑玩家的位置`);
+    announceOnline(state, me, '，接管了电脑玩家的位置');
     return succeed();
   }
+  // 已经在线时重复 join（同一人开第二个标签页 / 断线重连顶替）不再播报：
+  // 这不是「上线」，弹提示只会打扰另外三家。
   if (!me.connected) {
     me.connected = true;
-    pushLog(state, `${me.nickname} 进入房间`);
+    announceOnline(state, me);
   }
   return succeed();
 }
