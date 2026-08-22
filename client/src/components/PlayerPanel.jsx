@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { levelLabel, rankLabel, suitSymbol, suitRed, PLAYER_EMOJI, TEAM_COLORS } from '../utils.js';
 import { useNow, secondsLeft, displayNow } from '../useNow.js';
+import { playedCounts, totalCounts } from '../playedCounts.js';
+import { seatStatusText } from '../seatStatus.js';
 import { canThrowByStatus, missingPieceLabels } from '../../../server/pieces.js';
 import { beep } from '../beep.js';
 import Modal from './Modal.jsx';
@@ -226,19 +228,11 @@ function VsBadge({ game }) {
   );
 }
 
-// 状态胶囊：准备状态只在 SEATING/READY_CHECK 有意义；
-// 进入揭牌之后换成当前阶段相关的信息（换底/过河），其余阶段不显示，不误导。
+// 状态胶囊：名字下面永远告诉你「这个人到底点没点」。
+// 文案判定抽成纯函数放在 seatStatus.js，便于单测 —— 这一块最容易在加了新阶段
+// 之后忘了同步，而漏掉的表现就是「四个人干等着，谁也不知道还差谁」。
 function statusPill(game, player) {
-  let text = null;
-  if (game.phase === 'SEATING') {
-    text = player.seatLocked ? '已确认✓' : '未确认';
-  } else if (game.phase === 'READY_CHECK') {
-    text = player.ready ? '已准备✓' : '未准备';
-  } else if (game.phase === 'KITTY_EXCHANGE') {
-    text = player.isDeclarer ? '换底中' : '等待换底';
-  } else if (game.phase === 'CROSS_RIVER') {
-    text = game.round?.crossRiver?.doneTeams?.includes(player.team) ? '已过河' : '过河阶段';
-  }
+  const text = seatStatusText(game, player);
   if (!text) return null;
   return <span className="pill bg-white/10 text-white/70">{text}</span>;
 }
@@ -250,13 +244,31 @@ function MyDetails({ game }) {
   const round = game.round;
   const trumpSuit = round?.trumpSuit ?? null;
   const suits = ['S', 'H', 'D', 'C'].filter(s => s !== trumpSuit);
+  // 第一行从「我自己的手牌构成」改成「场上已经打出来的数量」（Glen）：
+  // 自己有几张主自己看得见，反倒是「还剩几张主没出、大鬼走了几张」才需要记，
+  // 而且直接决定敢不敢甩、能不能保底。全是公开信息（trickHistory + currentTrick）。
+  // 大小鬼本来就算主牌，所以「主」里包含它们，大鬼/小鬼两项是细分。
+  const played = playedCounts(round);
+  const total = totalCounts(trumpSuit);
+  const seen = (label, key, cls) => (
+    <span key={key} className={`pill ${cls}`} title={`已打出 ${played[key]} / 共 ${total[key]} 张`}>
+      {label} {played[key]}
+    </span>
+  );
   return (
     <div className="rounded-2xl border-2 border-amber-300/60 bg-amber-400/5 p-2">
+      <div className="mb-0.5 text-[10px] font-bold text-white/35">场上已打出</div>
       <div className="mb-1 flex flex-wrap items-center gap-1 text-xs font-bold text-white/80">
-        <span className="pill bg-amber-400/20 text-amber-300">主 {comp.trump}</span>
+        {seen('主', 'trump', 'bg-amber-400/20 text-amber-300')}
+        {seen('大鬼', 'bigJoker', 'bg-rose-500/20 text-rose-200')}
+        {seen('小鬼', 'smallJoker', 'bg-white/10 text-white/70')}
         {suits.map(s => (
-          <span key={s} className={`pill bg-white/10 ${suitRed(s) ? 'text-rose-300' : 'text-white/70'}`}>
-            {suitSymbol(s)}{comp[s]}
+          <span
+            key={s}
+            className={`pill bg-white/10 ${suitRed(s) ? 'text-rose-300' : 'text-white/70'}`}
+            title={`${suitSymbol(s)} 已打出 ${played[s]} / 共 ${total[s]} 张`}
+          >
+            {suitSymbol(s)}{played[s]}
           </span>
         ))}
       </div>
