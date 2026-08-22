@@ -986,21 +986,32 @@ function hasStrongSideSuit(view, ctx) {
 // 常态仍然是「鬼和主级牌留着杀」，但那是【强先验】，不是硬规则 ——
 // 形势到了就该翻过来。
 //
-// 两条同时成立才算（Glen 定的口径）：
-//   1. 对手的主已经很少：单独一家最多可能握 ≤2 张。用的是甩尾手那把尺
-//      （未现主按各家手牌数摊分，底牌那 8 张也占一份，正好把底牌里的主扣掉）。
-//   2. 顶端只剩 ≤2 张没现身：这时候领大牌才「撞」得出他的大牌；
-//      顶上还有一大把在外，领大鬼只是白花本钱。
-const CLEARING_MAX_OPPONENT_TRUMPS = 2;
-const CLEARING_MAX_TOP_OUTSTANDING = 2;
+// Glen 给的两条是「对手的主已经很少」+「很可能把大牌撞出来」。
+//
+// ⚠️ 第二条我第一版译成了「顶端只剩一两张没现身」——【错的】。
+// 领大鬼【逼不出】对手的大鬼：他手里只要还剩一张小主，跟一张小的就躲过去了，
+// 我白花一张顶牌。真正撞得出来的条件是【外面剩的主牌基本全是大牌】——
+// 他没有小主可垫，只能拿大牌来跟。
+// 400 局逐局配对实测（scripts/audit/clearing-paired.mjs）：
+//   错的那版 保底 283 → 269，结果翻转 2 好 / 16 坏；换成这条 284，1 好 / 0 坏。
+// 放宽到「还允许剩 2 张小主」立刻退回 283（1 好 1 坏），剩 3 张退到 281。
+//
+// 第一条【不再单独判】：本判据成立时它恒为真，写上去就是会骗过变异测试的死代码。
+// 四家手牌数始终相等（每墩各出同样张数），所以
+//   maxOpponentTrumpEstimate = 外面主牌数 × h / (3h + 8) < 外面主牌数 / 3 ≤ 1 ≤ 2。
+// 400 局逐局对比也确认：去掉它之后每一局的结果都一模一样。
+const CLEARING_MAX_TOP_OUTSTANDING = 2;   // 顶端还剩几张没现身
+const CLEARING_MAX_LOW_OUTSTANDING = 1;   // 外面还允许剩几张【压不到我】的小主
 
 //
 // 注：这里【不】另外判「主牌是不是已经吊光」——两个调用点本来就拦住了那个局面
 // （开局时主牌不可能已出尽；开局之后那条提案自带 outstandingTrumps > 0）。
 // 多写一条是恒真守卫，删掉行为不变，却会让变异测试误以为它被覆盖了。
 function trumpClearingOut(view, ctx, control) {
-  if (control.topOutstanding > CLEARING_MAX_TOP_OUTSTANDING) return false;
-  return maxOpponentTrumpEstimate(view, ctx) <= CLEARING_MAX_OPPONENT_TRUMPS;
+  const top = control.topOutstanding;
+  if (top < 1) return false;                          // 顶端已经空了，没有大牌可撞
+  if (top > CLEARING_MAX_TOP_OUTSTANDING) return false; // 顶上还有一大把，撞不干净
+  return outstandingTrumpCount(view, ctx) - top <= CLEARING_MAX_LOW_OUTSTANDING;
 }
 
 // 吊主该出哪张 —— 不是「出大牌」和「出小牌」二选一，取决于自己主牌强弱。
