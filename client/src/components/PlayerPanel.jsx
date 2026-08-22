@@ -394,16 +394,20 @@ function PlayerCard({ player, isYou, game, send }) {
             {player.isBot && (
               <span className="pill bg-cyan-400/20 text-cyan-200">🤖 电脑</span>
             )}
-            {/* 托管：人还在线、身份不变，只是这段时间让 AI 代打。
-                和「🤖 电脑」分开显示 —— 那是座位已经没人了，这是人还在但托管了。 */}
-            {!player.isBot && player.autoPlay && (
-              <span className="pill bg-cyan-400/20 text-cyan-200" title="该玩家已开启电脑托管">
-                🤖 托管中
-              </span>
-            )}
             {isYou && <span className="text-sm text-amber-300">（我）</span>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1">
+            {/* 托管：放在名字【下边】这一行的最前面，四家都要看得见谁现在是 AI 在打。
+                和「🤖 电脑」分开 —— 那个是座位已经没人了，这个是人还在、只是托管了，
+                所以用实心底色，比其它状态胶囊更跳眼一点。 */}
+            {!player.isBot && player.autoPlay && (
+              <span
+                className="pill bg-cyan-400/85 font-black text-cyan-950"
+                title={`${player.nickname} 已开启电脑托管，由 AI 代打`}
+              >
+                🤖 托管中
+              </span>
+            )}
             <span className={`pill ${colors.bg} ${colors.text}`}>
               打 {levelLabel(game.teamLevels[player.team])}
             </span>
