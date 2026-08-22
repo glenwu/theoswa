@@ -968,3 +968,108 @@ test('跟牌：桌上有分时，盖过队友的惩罚明显轻于一分没有�
     `有分时该明显更愿意抢：有分 ${withPoints.toFixed(0)} vs 无分 ${noPoints.toFixed(0)}`
   );
 });
+
+// ---- 跟牌时也不许早早把鬼交出去（Glen 第二次实战反馈）----
+//
+// 「又有一局 BOT 第一张打了小鬼，完全没意义。」
+// 查下来根本不是领出 —— 是【庄家开局吊主、后面几家拿鬼去压】。
+// 原来两条保护都盖不住：
+//   · spentLastBigJoker 只认「最后一张大鬼」，小鬼一点保护都没有；
+//   · isKill 的空毙惩罚要求 lead.playSuit !== 'TRUMP'，
+//     而首家领主牌时 isKill 恒为 false —— 代价为零。
+// 实测 40 局里前两墩打鬼 11 次，全部是跟主牌墩。
+
+// ⚠️ bot 必须坐【最后一家】：实测出问题的 11 次全是第 4 手 ——
+// 抢牌权的加分在最后一家最大（lastToAct 额外 +45、分值 ×10），
+// 坐第 3 手时鬼本来就不会被选中，被测的惩罚项根本没参与决策。
+// 出牌顺序从座位 0 逆时针：0 → 3 → 2 → 1，所以最后一家是座位 1。
+// ⚠️ 这个 fixture 前后错了两次，都是「被测分支根本没参与决策」：
+//   1. bot 坐第 3 手 —— 抢牌权的加分在【最后一家】才最大（lastToAct 额外 +45、
+//      分值 ×10），坐第 3 手时鬼本来就不会被选中；
+//   2. bot 手里留了 H9 —— 它本来就能赢下这一墩，压根用不上鬼，
+//      于是鬼恒为负分，改什么系数结果都一样。
+// 真正要测的局面是【只有鬼能赢】：首家领主 A，我手上除了鬼全是更小的主。
+// 出牌顺序从座位 0 逆时针：0 → 3 → 2 → 1，最后一家是座位 1。
+function trumpLeadFollowView({ points = 0, sideCards = 6 } = {}) {
+  // ⚠️ 座位 1 的队友是座位 3、对手是座位 0 和 2。
+  // 造局面时必须让【对手】领先 —— 队友领先时不抢是对的（上面那条「盖过队友」
+  // 的惩罚），会把这条测试变成测别的东西。
+  // 首家（座位 0，对手）领 ♥K 一直领先；队友座位 3 垫小的；对手座位 2 再加分。
+  // 首家领【主 A】：0 分，但在主花色里只有鬼压得过（主级牌 ♥2 没人有）。
+  // 这样桌面分完全由两个跟牌位决定，points 参数才名副其实。
+  const fillers = {
+    0: [[T('H', 3, 90)], [T('H', 4, 91)]],
+    5: [[T('H', 5, 90)], [T('H', 4, 91)]],
+    20: [[T('H', 13, 90)], [T('H', 10, 91)]],  // ♥K(10) + ♥10(10)
+  }[points];
+  const sides = [
+    ...[9, 7, 5].map((r, i) => T('S', r, i + 20)),
+    ...[8, 6, 4].map((r, i) => T('D', r, i + 30)),
+  ].slice(0, sideCards);
+  return followView({
+    seat: 1, declarerSeat: 0,
+    // 小鬼 + 三张小主：只有小鬼压得过首家的主 A
+    hand: [...[15, 9, 7, 4].map((r, i) => T('H', r, i)), ...sides],
+    currentTrick: [
+      { seat: 0, playSuit: 'TRUMP', cards: [T('H', 14, 80)] },  // 首家领主 A（0 分）
+      { seat: 3, cards: fillers[0] },
+      { seat: 2, cards: fillers[1] },
+    ],
+  });
+}
+
+test('跟主牌墩：开局桌上没分，不许拿小鬼去压', () => {
+  const cards = chooseFollowCards(trumpLeadFollowView({ points: 0 }));
+  assert.notEqual(cards[0].rank, 15, `一分没有，小鬼留着；实际出了 H${cards[0].rank}`);
+});
+
+test('跟主牌墩：只有 5 分也不值一张鬼', () => {
+  const cards = chooseFollowCards(trumpLeadFollowView({ points: 5 }));
+  assert.notEqual(cards[0].rank, 15, '开局那 5 分不值一张鬼');
+});
+
+// 反向保护：别矫枉过正到把鬼烂在手里 —— 分够多就该真的拿下。
+// ⚠️ 只比「10 分 vs 0 分的评分差」是不够的：其它跟分数相关的加分照样存在，
+// 就算惩罚完全不看桌面分，差值也还在（变异测试戳穿过一次）。
+// 所以这里断言一个真实行为：25 分在桌上时它确实会把鬼打出来。
+test('跟主牌墩：桌上 20 分时确实会用鬼拿下', () => {
+  const cards = chooseFollowCards(trumpLeadFollowView({ points: 20 }));
+  assert.equal(cards[0].rank, 15, `20 分值一张小鬼，实际出了 H${cards[0].rank}`);
+});
+
+// 惩罚里的 `- totalPoints * 8` 那一项没法靠「决策翻转」来钉：
+// 分数越高，出鬼的优势涨得比罚额减免还快，删掉它决策也不变。
+// 所以直接钉住【桌面分对出鬼意愿的影响幅度】：
+//   0 分 → 20 分，小鬼的评分差实测约 500；
+//   其中 totalPoints × 8 × controlReserve(1.25) = 200 来自这一项，
+//   其余约 300 来自 afterTeamWinning / 抢牌权那些本来就跟分数挂钩的加分。
+// 门槛取 400：删掉这一项只剩 ~300，会红；保留则 ~500，通过。
+test('跟主牌墩：桌面分对「要不要出鬼」的影响必须足够大', () => {
+  const scoreOf = points => evaluateFollowChoices(trumpLeadFollowView({ points }))
+    .find(c => c.cards[0].rank === 15).score;
+  const delta = scoreOf(20) - scoreOf(0);
+  assert.ok(delta > 400, `0→20 分应当让出鬼的评分抬升 400 以上，实际 ${delta.toFixed(0)}`);
+});
+
+test('跟主牌墩：手里只剩鬼这一张主牌时照样得跟（规则要求，不是策略）', () => {
+  const cards = chooseFollowCards(followView({
+    seat: 2, declarerSeat: 0,
+    hand: [T('H', 15, 0), ...[9, 7, 5].map((r, i) => T('S', r, i + 20))],
+    currentTrick: [
+      { seat: 0, playSuit: 'TRUMP', cards: [T('H', 6, 80)] },
+      { seat: 3, cards: [T('H', 8, 90)] },
+    ],
+  }));
+  assert.equal(cards[0].rank, 15, '有主必须跟主，这时候没得选');
+});
+
+// 反向保护：尾盘（early = 手牌 > 8 不再成立）该出手就得出手，
+// 不能因为这条早盘惩罚把鬼一直烂在手里。
+test('跟主牌墩：尾盘不再受早盘惩罚约束', () => {
+  const late = evaluateFollowChoices(trumpLeadFollowView({ points: 0, sideCards: 2 }))
+    .find(c => c.cards[0].rank === 15).score;
+  const early = evaluateFollowChoices(trumpLeadFollowView({ points: 0, sideCards: 6 }))
+    .find(c => c.cards[0].rank === 15).score;
+  assert.ok(late > early + 100,
+    `尾盘出鬼不该再挨早盘那一刀：尾盘 ${late.toFixed(0)} vs 早盘 ${early.toFixed(0)}`);
+});

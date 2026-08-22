@@ -1329,6 +1329,24 @@ function scoreFollow(view, cards, ctx) {
     score -= 360 * settings.controlReserve * controlCaution;
   }
 
+  // 早中盘拿【鬼】去跟牌本身就该有代价 —— 鬼是保底/撬底的本钱，
+  // 不是用来抢开局那几分的。值不值得只看这一墩的分够不够多。
+  //
+  // ⚠️ 原来两条保护都盖不住最常见的那个局面（Glen 两次实战反馈）：
+  //   · spentLastBigJoker 只认【最后一张大鬼】，小鬼一点保护都没有；
+  //   · isKill 的空毙惩罚要求 lead.playSuit !== 'TRUMP'，而【首家领主牌时
+  //     isKill 恒为 false】—— 庄家开局吊主、后面几家拿鬼去压，代价为零。
+  // 实测 40 局里，前两墩打鬼 11 次，全部是跟主牌墩。
+  const jokersSpent = cards.filter(card => card.rank === 15 || card.rank === 16);
+  if (early && jokersSpent.length > 0) {
+    const cost = jokersSpent.reduce((sum, card) => sum + keepValue(card, ctx), 0);
+    // 2.2 这个系数是扫出来的，不是拍的：只用 cost 本身时抢牌权的加分仍然压得过它，
+    // 桌上 5 分就肯把小鬼扔出去；1.6 还剩 2 次；2.2 归零；3.0 没有更好 —— 拐点在 2.2。
+    // 效果大致是「20 分以上才划算」，跟真人的直觉一致：开局那 5 分不值一张鬼。
+    // 也确认过没有矫枉过正：领鬼次数 13 → 12，仍然都发生在第 3 轮之后。
+    score -= Math.max(0, cost * 2.2 - totalPoints * 8) * settings.controlReserve * controlCaution;
+  }
+
   // 第三手封分：前两手都不大时，若最后的对手仍可能用 10/K 等分牌反超，
   // 提高当前牌面上限；公开记录已证明对手缺门或分牌均已现时风险自然归零。
   score -= lastSeatPointRisk * 24 * settings.inference * coverCaution * tuning.coverRiskWeight;
