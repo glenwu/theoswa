@@ -873,6 +873,13 @@ function PlayZone({ player, game, side = 'top', isYou }) {
           谱掉你
         </div>
       )}
+      {/* 被大鬼压制那家的回嘴（捏一个吉 / 谱依阿姨 / 小到下）。
+          再高一档：同一家可能先用大鬼压过人（pudiao）、随后又被更大的压回来。 */}
+      {play?.beatenEgg && (
+        <div className="beaten-bubble absolute -top-[6.5rem] left-1/2 z-30 -translate-x-1/2">
+          {play.beatenEgg}
+        </div>
+      )}
       <div className="flex items-center gap-1 text-xs font-black text-white/80">
         {PLAYER_EMOJI[player.id]} {player.nickname}
         {isYou ? '(我)' : ''}

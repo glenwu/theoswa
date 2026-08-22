@@ -33,6 +33,24 @@ export const QUICK_PHRASES = Object.freeze({
   sanpu: '散谱母落',
 });
 
+// 被大鬼压制的那一家的彩蛋：按【顺序】独立掷骰，命中即停 —— 一次压制最多弹一句。
+// 注意不是「三选一按权重抽」：三次都是独立事件，总触发率
+// 0.2 + 0.8×0.3 + 0.8×0.7×0.3 ≈ 60.8%，而不是 80%。
+export const SUPPRESSED_EGGS = Object.freeze([
+  { id: 'nieyige', text: '捏一个吉', chance: 0.2 },
+  { id: 'puyiayi', text: '谱依阿姨', chance: 0.3 },
+  { id: 'xiaodaoxia', text: '小到下', chance: 0.3 },
+]);
+
+// random 必须是彩蛋专用随机源（state.niiRandom），绝不能用发牌 rng ——
+// 掷骰会推进 RNG 状态，SEED=42 就复现不出同一副牌（验收用例 §10-52）。
+export function rollSuppressedEgg(random) {
+  for (const egg of SUPPRESSED_EGGS) {
+    if (random() < egg.chance) return egg.text;
+  }
+  return null;
+}
+
 export const PLAYER_COUNT = 4;
 export const HAND_SIZE = 25;
 export const KITTY_SIZE = 8;

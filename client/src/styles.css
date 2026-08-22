@@ -279,3 +279,39 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .online-toast { animation: none; }
 }
+
+/* 被大鬼压制那家的回嘴气泡（捏一个吉 / 谱依阿姨 / 小到下）。
+   刻意跟「谱掉你」的琥珀金拉开：那是压人的一方在得意，这是被压的一方在回嘴，
+   一眼要能看出是两个人在对话，而不是同一个人连弹两句。 */
+.beaten-bubble {
+  background: linear-gradient(135deg, #a5b4fc, #4f46e5);
+  color: #f8fafc;
+  border-radius: 1rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  box-shadow: 0 2px 12px rgba(79, 70, 229, 0.65);
+  animation: bubble-in 0.25s ease 0.2s both, beaten-shake 0.5s ease 0.45s 2,
+    bubble-out 0.4s ease 3s forwards;
+}
+.beaten-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid #4f46e5;
+}
+/* 被压了当然是气得抖，不是得意地跳 */
+@keyframes beaten-shake {
+  0%, 100% { transform: translate(-50%, 0) rotate(0deg); }
+  25% { transform: translate(-50%, 0) rotate(-4deg); }
+  75% { transform: translate(-50%, 0) rotate(4deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .beaten-bubble { animation: bubble-in 0.2s ease both, bubble-out 0.4s ease 3s forwards; }
+}

@@ -1,10 +1,10 @@
-import { PLAYERS, PLAYER_COUNT, QUICK_PHRASES, KITTY_SIZE, REVEAL_TOTAL, SUIT_NAMES, CROSS_RIVER_DECIDE_MS, CROSS_RIVER_PICK_MS } from './constants.js';
+import { PLAYERS, PLAYER_COUNT, QUICK_PHRASES, KITTY_SIZE, REVEAL_TOTAL, SUIT_NAMES, CROSS_RIVER_DECIDE_MS, CROSS_RIVER_PICK_MS, rollSuppressedEgg } from './constants.js';
 import { playerById, playerBySeat, pushLog, resetGameState } from './state.js';
 import { chooseRevealEntry, advanceToReadyCheck, startRevealing } from './flow.js';
 import { beginRound, drawOneCard } from './round.js';
 import { isRankCard, cardLabel, sortHand } from './cards.js';
 import { rebuildPieces, pieceStatusesFor, migratePlayedPieces, trumpDumpVerdict, relocateTableCards } from './pieces.js';
-import { validateLeadPlay, validateFollowPlay, resolveTrick, assertEqualHandCounts } from './trick.js';
+import { validateLeadPlay, validateFollowPlay, resolveTrick, trickLeader, assertEqualHandCounts } from './trick.js';
 import { finishRound, TEAM_NAMES } from './scoring.js';
 import { checkDominance } from './dominance.js';
 import { nextSeat, oppositeSeat } from './rotation.js';
@@ -577,16 +577,41 @@ export function handlePlay(state, action, actorId) {
     playedCards.length === 1 &&
     playedCards[0].rank === 12 &&
     (state.niiRandom ?? Math.random)() < 0.4;
-  // 「谱掉你」彩蛋：打出大鬼且不是最后一轮时 80% 触发。
-  // 最后一轮谁出什么都没得选，甩狠话就没意思了 —— 手上的牌正好被这一手打空即为最后一轮
-  //（四家手牌数恒等，我打空了就是大家都打空了）。
-  // 与「妮！」共用同一条独立随机源：绝不能用发牌 rng，否则掷骰会推进 RNG 状态、
-  // SEED=42 就复现不出同一副牌（验收用例 §10-52）。
+  // ---- 大鬼「压制」判定：「谱掉你」与被压制方彩蛋共用这一道闸 ----
+  //
+  // 打出大鬼算「压制」要同时满足：
+  //   · 不是最后一轮 —— 最后一轮谁出什么都没得选，甩狠话没意思
+  //     （四家手牌数恒等，我这一手正好打空就是最后一轮）
+  //   · 不是本轮首家 —— 自己领出大鬼没有「压」谁，是自己起的头
+  //   · 这张大鬼当下确实赢着这一墩 —— 「被碰出来的」不算：
+  //     两张大鬼同强度、先出者大，后出的那张压不过人家，反倒是自己被压
+  //
+  // 与「妮！」共用同一条独立随机源：绝不能用发牌 rng，否则掷骰会推进 RNG
+  // 状态、SEED=42 就复现不出同一副牌（验收用例 §10-52）。
   const isLastTrick = me.hand.length === playedCards.length;
-  const pudiao =
+  const trickCtx = { trumpSuit: r.trumpSuit, rankCard: r.rankCard };
+  const provisional = { seat: me.seat, cards: playedCards };
+  const beatenSeat = r.currentTrick.length > 0
+    ? trickLeader(r.currentTrick, trickCtx)?.seat ?? null
+    : null;
+  const winsNow =
+    trickLeader([...r.currentTrick, provisional], trickCtx)?.seat === me.seat;
+  // 注：这里不必再写 !isLead —— 首家出牌时 currentTrick 为空，beatenSeat 必然为 null，
+  // 「非首家」已经被 beatenSeat !== null 完整覆盖。多写一条恒真的条件既是死代码，
+  // 也会让变异测试误以为它被覆盖了（实际上删掉它行为一点不变）。
+  const suppresses =
     !isLastTrick &&
-    playedCards.some(c => c.rank === 16) &&
-    (state.niiRandom ?? Math.random)() < 0.8;
+    winsNow &&
+    beatenSeat !== null &&
+    beatenSeat !== me.seat &&
+    playedCards.some(c => c.rank === 16);
+
+  const pudiao = suppresses && (state.niiRandom ?? Math.random)() < 0.8;
+  // 被压制的那家（通常是上家）自己回一句 —— 与「谱掉你」各掷各的骰，
+  // 「谱掉你」没弹出来也照样可能回嘴。
+  const beatenEgg = suppresses
+    ? rollSuppressedEgg(state.niiRandom ?? Math.random)
+    : null;
 
   me.hand = me.hand.filter(c => !playedCards.some(p => p.id === c.id));
   const play = { seat: me.seat, cards: playedCards };
@@ -594,6 +619,11 @@ export function handlePlay(state, action, actorId) {
   if (nii) play.nii = true;
   if (pudiao) play.pudiao = true;
   r.currentTrick.push(play);
+  if (beatenEgg) {
+    // 挂在【被压制那家】已经出过的牌上，不是打大鬼这家
+    const victim = r.currentTrick.find(p => p.seat === beatenSeat);
+    if (victim) victim.beatenEgg = beatenEgg;
+  }
 
   if (r.currentTrick.length < 4) {
     r.turnSeat = nextSeat(me.seat);
