@@ -12,6 +12,7 @@
     "server": "node server/index.js",
     "server:lan": "HOST=0.0.0.0 node server/index.js",
     "server:debug": "env DEBUG=1 HOST=0.0.0.0 node server/index.js",
+    "server:fast": "env DEBUG=1 PLAY_MS=2500 SETTLE_MS=500 HOST=0.0.0.0 node server/index.js",
     "client": "npm run dev -w client",
     "build": "npm run build -w client",
     "start:prod": "npm run build && node server/index.js",

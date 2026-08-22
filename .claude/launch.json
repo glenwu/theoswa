@@ -27,6 +27,15 @@
         "server:debug"
       ],
       "port": 8787
+    },
+    {
+      "name": "game-fast",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "server:fast"
+      ],
+      "port": 8787
     }
   ]
 }
