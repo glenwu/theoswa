@@ -956,9 +956,22 @@ function canSustainTrumpDraw(trumps, ctx, control) {
 }
 
 function drawingTrumpCard(trumps, ctx, control) {
-  return canSustainTrumpDraw(trumps, ctx, control)
-    ? highCards(trumps, 1, ctx)[0]   // 强势：吊 2 / 吊鬼，求连续吊主
-    : lowestLead(trumps, ctx);       // 弱势：吊小牌，逼对手用大牌来杀
+  if (!canSustainTrumpDraw(trumps, ctx, control)) {
+    return lowestLead(trumps, ctx);  // 弱势：吊小牌，逼对手用大牌来杀
+  }
+  // 强势吊主 = 吊【级牌】那一档，不是吊鬼。
+  //
+  // ⚠️ 这里原来写的是 highCards(trumps, 1)，注释却是「吊 2 / 吊鬼」——
+  // 而 highCards 永远挑最高的那一张，也就是鬼，根本轮不到 2。
+  // Glen 实战反馈：BOT 一开局就领小鬼，队友马上又盖上大鬼，两张顶牌一轮打光。
+  // 鬼是保底/撬底的控制牌，是要留到中后期的优势牌，绝不能拿去吊主 ——
+  // 尤其小鬼：大鬼还没现身时领小鬼压不住，纯粹白送。
+  // 排除鬼之后，highCards 挑到的自然就是主级牌 / 副级牌（strength 998/997），
+  // 也就是真正的「吊 2」。
+  // 按【点数】认鬼（15/16），不按 suit —— 全仓判断鬼一律用 rank
+  //（cardStrength、bigJokers 统计都是），按 suit 判会跟它们不一致。
+  const withoutJokers = trumps.filter(card => card.rank !== 15 && card.rank !== 16);
+  return highCards(withoutJokers.length ? withoutJokers : trumps, 1, ctx)[0];
 }
 
 function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
@@ -1392,7 +1405,25 @@ function scoreFollow(view, cards, ctx) {
       // 只有自己是最后一家时才能确定把分送到朋友手上。
       score += candidatePoints * (lastToAct || guaranteedPartnerControl ? 12 : 1);
       if (isKill) score -= 260;
-      if (after?.seat === you.seat) score -= 15;
+      if (after?.seat === you.seat) {
+        // 盖过【已经领先的队友】：这一墩本来就是我们的，压上去纯属浪费。
+        //
+        // ⚠️ 原来这里只罚 15 分，而 isKill 那条 -260 只在「副牌墩用主牌毙」时成立
+        //（isKill 要求 lead.playSuit !== 'TRUMP'）。首家领的是主牌时 isKill 恒为
+        // false，于是「队友领小鬼、我盖大鬼」总共只要 15 分代价，而大鬼的
+        // keepValue 是 180 —— 等于没有代价。Glen 实战里正是这么出的问题。
+        //
+        // 罚额跟着【浪费掉的那张牌有多值钱】走：盖一张小牌无所谓，盖一张鬼是灾难。
+        //
+        // 但要分清「浪费」和「保分」：桌上有分、后面还有对手没出时，
+        // 抢在队友前面拿下反而是在护住这些分，那时只能轻罚 ——
+        // 第一版一律重罚，把这种正确的抢分也一并罚掉了。
+        // 一分没有还盖上去，才是纯粹的浪费。
+        const wasted = cards.reduce((best, card) => Math.max(best, keepValue(card, ctx)), 0);
+        const protectingPoints = totalPoints > 0 && !lastToAct;
+        score -= (15 + wasted * (protectingPoints ? 0.15 : 1.2)) *
+          settings.controlReserve * controlCaution;
+      }
     }
   } else if (afterTeamWinning) {
     // 对手领先：有分时用“刚好能赢”的牌去抢，无分时早盘少浪费主牌。

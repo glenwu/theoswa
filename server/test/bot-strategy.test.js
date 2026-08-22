@@ -888,3 +888,83 @@ test('甩尾手：时机一到，压过「续打贡献件」这类高分约定',
   assert.equal(cards.length, 5, `时机已到就该整门甩出去，实际出了 ${cards.map(c => c.suit + c.rank).join(',')}`);
   assert.ok(cards.every(c => c.suit === 'S'));
 });
+
+// ============ 优势牌不能一开局就打光（Glen 实战反馈）============
+//
+// 「BOT 一开局就打小鬼，然后 BOT 对家马上还回了大鬼 —— 一般这是优势牌，
+//   都会留到中后期。」
+//
+// 两个独立的 bug：
+//   1. drawingTrumpCard 写的是 highCards(trumps, 1)，永远挑最高的那张 = 鬼，
+//      注释却是「吊 2 / 吊鬼」—— 根本轮不到 2。
+//   2. 盖过【已经领先的队友】只罚 15 分，而 isKill 那条 -260 只在
+//      「副牌墩用主牌毙」时成立（要求 lead.playSuit !== 'TRUMP'）。
+//      首家领的是主牌时 isKill 恒为 false，于是「队友领小鬼、我盖大鬼」
+//      总共只要 15 分代价，而大鬼的 keepValue 是 180 —— 等于没有代价。
+
+test('吊主：强势主吊的是级牌那一档，不是拿鬼去吊', () => {
+  const hand = [
+    T('H', 16, 0), T('H', 15, 1),                     // 大鬼、小鬼 —— 优势牌，要留着
+    T('H', 2, 2), T('S', 2, 3), T('D', 2, 4),         // 主2 + 两张副2（都是主牌）
+    ...[14, 13, 12, 11].map((r, i) => T('H', r, i + 5)),
+    ...[9, 7, 5].map((r, i) => T('S', r, i + 20)),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 0, mySeat: 0, trickHistory: PLAYED_SOMETHING,
+  }))[0];
+  assert.equal(lead.suit, 'H');
+  assert.notEqual(lead.rank, 16, '大鬼是保底/撬底的控制牌，不能拿去吊主');
+  assert.notEqual(lead.rank, 15, '小鬼更不行：大鬼还没现身时领小鬼压不住，纯粹白送');
+  assert.equal(lead.rank, 2, '强势吊主吊的是级牌那一档（主2）');
+});
+
+test('吊主：开局第一墩也不许领鬼', () => {
+  const hand = [
+    T('H', 16, 0), T('H', 15, 1),
+    T('H', 2, 2), T('S', 2, 3),
+    ...[14, 13, 12, 11, 10].map((r, i) => T('H', r, i + 5)),
+    ...[9, 7].map((r, i) => T('S', r, i + 20)),
+  ];
+  const lead = chooseLeadCards(leadView({
+    hand, declarerSeat: 0, mySeat: 0, trickHistory: [],  // 开局首墩
+  }))[0];
+  assert.ok(lead.suit !== 'JOKER' && lead.rank !== 16 && lead.rank !== 15,
+    `开局不该领鬼，实际领了 ${lead.suit}${lead.rank}`);
+});
+
+// 队友领主牌领先了，我手里有大鬼 —— 桌上一分没有，盖上去纯属浪费
+test('跟牌：队友已领先且桌上无分 → 绝不拿大鬼盖过他', () => {
+  const cards = chooseFollowCards(followView({
+    seat: 2, declarerSeat: 1,
+    hand: [T('H', 16, 0), T('H', 9, 1), T('H', 7, 2), T('H', 4, 3),
+      ...[9, 7, 5].map((r, i) => T('S', r, i + 20))],
+    currentTrick: [
+      { seat: 0, playSuit: 'TRUMP', cards: [T('H', 15, 90)] },  // 队友领小鬼，已经领先
+      { seat: 3, cards: [T('H', 5, 91)] },                       // 对手跟了张小主
+    ],
+  }));
+  assert.notEqual(cards[0].rank, 16, '这一墩本来就是我们的，一分没有，大鬼留着');
+});
+
+// ⚠️ 这条不能断言「有分就一定用大鬼抢下来」—— 为 10 分烧掉大鬼本来就不划算，
+// 跟一张小主、信任队友是合理打法。第一版这么断言纯属我想当然。
+// 真正要钉住的是【惩罚力度有区别】：一分没有时盖队友是纯浪费（重罚），
+// 桌上有分、后面还有对手时可能是在护分（轻罚）。所以直接比评分。
+test('跟牌：桌上有分时，盖过队友的惩罚明显轻于一分没有时', () => {
+  const scoreOfBigJoker = partnerCard =>
+    evaluateFollowChoices(followView({
+      seat: 2, declarerSeat: 1,
+      hand: [T('H', 16, 0), T('H', 4, 1), ...[9, 7, 5].map((r, i) => T('S', r, i + 20))],
+      currentTrick: [
+        { seat: 1, playSuit: 'TRUMP', cards: [T('H', 6, 90)] },  // 对手领
+        { seat: 0, cards: [partnerCard] },                        // 队友领先
+      ],
+    })).find(c => c.cards[0].rank === 16).score;
+
+  const withPoints = scoreOfBigJoker(T('H', 13, 91));  // 主K = 10 分
+  const noPoints = scoreOfBigJoker(T('H', 9, 91));     // 主9 = 0 分
+  assert.ok(
+    withPoints > noPoints + 100,
+    `有分时该明显更愿意抢：有分 ${withPoints.toFixed(0)} vs 无分 ${noPoints.toFixed(0)}`
+  );
+});
