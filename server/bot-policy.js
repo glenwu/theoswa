@@ -121,6 +121,18 @@ function keepValue(card, ctx) {
     if (card.rank === ctx.rankCard) return card.suit === ctx.trumpSuit ? 150 : 140;
     return 75 + card.rank;
   }
+  // 副牌：点数 + 分值 + 件加成。
+  //
+  // ⚠️ 这里算出来的顺序是「副A(59) < 副K(88)」，看着是反的 —— K 自带 10 分，
+  // 被 points*3 抬到了 A 之上，而 A 才是这门的老大、才是牵制对手的那张。
+  // 【但不要顺手去"修"它】，已经推演过一遍：
+  //   · A 与 K 之间的取舍【永远由分值项决定】，轮不到件加成 ——
+  //     keepValue 的差经过 preserve 的 0.25 之后只有个位数，而「副K 带 10 分」
+  //     那条 candidatePoints * 12 是 120 分，差两个数量级，怎么调都翻不过来。
+  //     实测把件加成改成 A=80/K=40，300 局里「A 先走」只从 58% 动到 56%。
+  //   · 真正会被改动的是【副A 和低主牌】的相对顺序（副A 59 vs 主花色最低 78），
+  //     那是另一个问题（垫副A 还是垫小主），没有牌理依据前不要顺带改掉。
+  // 真正管住件的是「亮件的基础代价」那条显式规则，不是这张牌值表。
   return card.rank + cardPoints(card) * 3 + (isSidePiece(card, ctx) ? 45 : 0);
 }
 
@@ -1085,6 +1097,26 @@ function drawingTrumpCard(trumps, ctx, { mode = 'low' } = {}) {
   return highCards(drawable.length ? drawable : trumps, 1, ctx)[0];
 }
 
+// 「求件方资格」—— 这门够不够强，值不值得去求件（Glen 口述的门槛）：
+//   「求件方一般会这门副牌比较强，如有两件以上不少于 6 支，
+//     或是有一件但很长，8 支 9 支以上。」
+//
+// ⚠️ 这一条管的是【我该不该主动求件】，不是【该不该应答队友的求件】——
+// 应答看的是队友有没有表示 + 桌上有没有大分，两码事。
+//
+// tuning.pieceProbeMinLength 仍然管两件那一档的长度门槛（进化权重是 6，正好对上）；
+// 单件那一档另外要求更长，原来一律用同一个门槛，单件时松了两三张。
+const SINGLE_PIECE_MIN_LENGTH = 8;
+
+function strongPieceSuit(view, ctx, suit, tuning = strategyTuning(view)) {
+  const cards = cardsOfSuit(view.you?.hand ?? [], suit, ctx);
+  const mine = (view.round?.piecesView?.[suit] ?? [])
+    .filter(item => item.status === 'mine').length;
+  if (mine >= 2) return cards.length >= tuning.pieceProbeMinLength;
+  if (mine >= 1) return cards.length >= SINGLE_PIECE_MIN_LENGTH;
+  return false;
+}
+
 function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
   const options = [];
   for (const suit of SUITS.filter(s => s !== ctx.trumpSuit)) {
@@ -1125,7 +1157,10 @@ function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
     // 打分还是 `cards.length * 10 - mine * 2` —— 自己件越多探件意愿越低，正好反了。
     // 无件长门不再走这条「探件」路线（那本就不是探件，是表示长门），
     // 它仍然由 chooseLeadCards 的 develop-long-side-suit 提案覆盖，只是不再白拿探件的高分。
-    if (mine >= 1 && unseen >= 1 && cards.length >= tuning.pieceProbeMinLength) {
+    // ⚠️ 门槛按 Glen 的口径分两档（strongPieceSuit）：两件以上 ≥6 支，或单件 ≥8 支。
+    // 原来两档共用 pieceProbeMinLength，单件时松了两三张 —— 一件配六张就去求件，
+    // 那门其实并不强，逼出来的件多半是喂给对手。
+    if (unseen >= 1 && strongPieceSuit(view, ctx, suit, tuning)) {
       const low = lowestLead(cards.filter(card => cardPoints(card) === 0), ctx) ?? lowestLead(cards, ctx);
       if (low) options.push({ card: low, score: cards.length * 10 + mine * 30 });
     }

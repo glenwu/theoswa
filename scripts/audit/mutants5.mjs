@@ -4,6 +4,14 @@ import { runMutants } from './mutate.mjs';
 // 「吊主候选里不含鬼」「不挑主级牌」这两条已经移到 mutants4（和吊主的其它开关放一起）。
 const F = 'server/bot-policy.js';
 runMutants([
+  // ---- 求件方资格：两件 ≥6 支 / 单件 ≥8 支（Glen 口述的两档门槛）----
+  [F, 'const SINGLE_PIECE_MIN_LENGTH = 8;', 'const SINGLE_PIECE_MIN_LENGTH = 6;',
+      '单件那一档的长度门槛降回 6（两档合一）'],
+  [F, '  if (mine >= 2) return cards.length >= tuning.pieceProbeMinLength;\n  if (mine >= 1) return cards.length >= SINGLE_PIECE_MIN_LENGTH;',
+      '  if (mine >= 1) return cards.length >= tuning.pieceProbeMinLength;',
+      '不分两档，一件两件同一个门槛'],
+  [F, '  if (mine >= 2) return cards.length >= tuning.pieceProbeMinLength;',
+      '  if (mine >= 2) return true;', '两件那一档不看牌长'],
   [F, "if (mode === 'low') return lowestLead(trumps, ctx);", 'if (false) return lowestLead(trumps, ctx);', '一律吊大牌（回到实战踩到的 bug）'],
   [F, 'return highCards(drawable.length ? drawable : trumps, 1, ctx)[0];',
       'return lowestLead(drawable.length ? drawable : trumps, ctx);', '该吊大牌时反而吊小牌'],

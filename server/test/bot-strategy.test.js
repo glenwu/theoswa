@@ -106,13 +106,18 @@ function probeView() {
     you: {
       seat: 0,
       team: 0,
+      // ⚠️ 方块从 6 张改成 8 张，是因为 Glen 后来给了「求件方资格」的门槛：
+      // 两件以上要 ≥6 支，【只有一件要 8 支 9 支以上】。原来的 6 张单件不够格 ——
+      // 那门其实不强，逼出来的件多半是喂给对手。
+      // 这几条测试要钉的是「探有件的那门、不探无件的长门」，意图没变，只是把
+      // fixture 抬到新门槛之上，否则它钉住的是一条 Glen 明确否掉的打法。
       hand: [
-        ...[12, 11, 10, 9, 8, 7, 6].map((r, i) => C('S', r, i)), // 黑桃 7 张，一件都没有
-        ...[14, 10, 9, 8, 7, 6].map((r, i) => C('D', r, i)),     // 方块 6 张，握着 ♦A
-        ...[16, 5, 4].map((r, i) => C('H', r, i)),               // 3 张主
+        ...[12, 11, 10, 9, 8, 7, 6].map((r, i) => C('S', r, i)),    // 黑桃 7 张，一件都没有
+        ...[14, 10, 9, 8, 7, 6, 5, 3].map((r, i) => C('D', r, i)),  // 方块 8 张，握着 ♦A
+        ...[16, 5, 4].map((r, i) => C('H', r, i)),                  // 3 张主
       ],
     },
-    players: [0, 1, 2, 3].map(seat => ({ seat, team: seat % 2, handCount: 16 })),
+    players: [0, 1, 2, 3].map(seat => ({ seat, team: seat % 2, handCount: 18 })),
     round: {
       trumpSuit: 'H',
       rankCard: 2,
@@ -144,7 +149,7 @@ test('求件：自己无件的长门不去探（那是替对手求件）', () =>
 test('求件：优先探自己握着件的那门', () => {
   const lead = chooseLeadCards(probeView())[0];
   assert.equal(lead.suit, 'D', '方块握着 ♦A，探它才是给自己凑甩牌条件');
-  assert.equal(lead.rank, 6, '探件用该门最小的无分牌');
+  assert.equal(lead.rank, 3, '探件用该门最小的无分牌（方块补长后最小的无分牌是 ♦3）');
 });
 
 // ⚠️ 上面两条钉住的其实是【打分】，不是【条件】：旧条件配新打分照样能过。
@@ -155,15 +160,74 @@ test('求件：无件长门再长也不探（钉住条件本身，不只是打�
   const view = probeView();
   view.you.hand = [
     ...[12, 11, 10, 9, 8, 7, 6, 5, 4, 3].map((r, i) => C('S', r, i)), // 黑桃 10 张，一件没有
-    ...[14, 10, 9, 8, 7, 6].map((r, i) => C('D', r, i)),              // 方块 6 张，握 ♦A
+    ...[14, 10, 9, 8, 7, 6, 5, 3].map((r, i) => C('D', r, i)),        // 方块 8 张，握 ♦A（够求件资格）
     ...[16, 5].map((r, i) => C('H', r, i)),
   ];
+  for (const p of view.players) p.handCount = 20;
   const lead = chooseLeadCards(view)[0];
   assert.notEqual(
     lead.suit, 'S',
     '黑桃 10 张但一件都没有：旧代码会因为「牌最长」去探它，等于替对手求出 4 件黑桃'
   );
   assert.equal(lead.suit, 'D', '该探的是自己握着 ♦A 的方块');
+});
+
+// Glen 给的「求件方资格」门槛分两档：两件以上 ≥6 支，【只有一件要 8 支 9 支以上】。
+// 上面几条走的是单件 8 支那一档；这一条钉住【单件不够长就不去求】——
+// 少了它，把 SINGLE_PIECE_MIN_LENGTH 改回 6 也照样绿。
+// ⚠️ 黑桃必须是【最长的门】，否则 develop-long-side-suit 自己就会挑中 ♦3，
+// 求件分支在不在结果都一样 —— 被测的分支根本没参与决策（第一版就栽在这里）。
+// 黑桃 8 张无件（develop 会选它）vs 方块 6 张单件（只有求件分支才会选它）。
+test('求件：只有一件而且这门不够长（6 支）→ 不去求件', () => {
+  const C = (suit, rank, i) => ({ id: `${suit}${rank}_${i}`, suit, rank });
+  const view = probeView();
+  view.you.hand = [
+    ...[12, 11, 10, 9, 8, 7, 6, 4].map((r, i) => C('S', r, i)), // 黑桃 8 张，一件没有
+    ...[14, 10, 9, 8, 7, 3].map((r, i) => C('D', r, i)),        // 方块只有 6 张，握 ♦A
+    ...[16, 5].map((r, i) => C('H', r, i)),
+  ];
+  for (const p of view.players) p.handCount = 16;
+  const lead = chooseLeadCards(view)[0];
+  assert.equal(lead.suit, 'S',
+    `一件配六张不算强，不该去求方块，实际领了 ${lead.suit}${lead.rank}`);
+});
+
+// 两件那一档仍然是 6 支就够 —— 两条一起才钉得住「分两档」这件事本身。
+test('求件：两件而且这门有 6 支 → 够格，去求件', () => {
+  const C = (suit, rank, i) => ({ id: `${suit}${rank}_${i}`, suit, rank });
+  const view = probeView();
+  view.you.hand = [
+    ...[12, 11, 10, 9, 8, 7, 6, 4].map((r, i) => C('S', r, i)), // 同上：黑桃 8 张无件
+    ...[14, 13, 9, 8, 7, 3].map((r, i) => C('D', r, i)),        // 方块 6 张，握 ♦A ♦K 两件
+    ...[16, 5].map((r, i) => C('H', r, i)),
+  ];
+  view.round.piecesView.D = [
+    { rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+    { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' },
+  ];
+  for (const p of view.players) p.handCount = 16;
+  const lead = chooseLeadCards(view)[0];
+  assert.equal(lead.suit, 'D', '两件配六张够格，该探方块（黑桃更长，但一件都没有）');
+  assert.equal(lead.rank, 3, '探件用该门最小的无分牌');
+});
+
+// 两件那一档也要看牌长（≥6 支）。少了这条，把它写成「有两件就够」也照样绿。
+test('求件：两件但这门只有 4 支 → 太短，不去求件', () => {
+  const C = (suit, rank, i) => ({ id: `${suit}${rank}_${i}`, suit, rank });
+  const view = probeView();
+  view.you.hand = [
+    ...[12, 11, 10, 9, 8, 7, 6, 4].map((r, i) => C('S', r, i)), // 黑桃 8 张无件（develop 会选它）
+    ...[14, 13, 9, 3].map((r, i) => C('D', r, i)),              // 方块只有 4 张，但握两件
+    ...[16, 5].map((r, i) => C('H', r, i)),
+  ];
+  view.round.piecesView.D = [
+    { rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+    { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' },
+  ];
+  for (const p of view.players) p.handCount = 14;
+  const lead = chooseLeadCards(view)[0];
+  assert.equal(lead.suit, 'S',
+    `两件配四张太短，逼出来的件多半喂给对手，实际领了 ${lead.suit}${lead.rank}`);
 });
 
 // ============ 吊主 ============
