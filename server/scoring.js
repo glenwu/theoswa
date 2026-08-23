@@ -9,6 +9,10 @@ import { SUIT_NAMES } from './constants.js';
 
 export const TEAM_NAMES = ['金队', '青队'];
 
+// 移庄线：闲家台面分到这个数就能把庄移走（撬底时算的是 P_final）。
+// 电脑判断「让掉这一墩安不安全」用的也是它 —— 别在别处再抄一个 80。
+export const DEFENDER_TARGET_POINTS = 80;
+
 // 底牌分数
 export function kittyPointsOf(kitty) {
   return kitty.reduce((sum, c) => sum + cardPoints(c), 0);
@@ -63,16 +67,17 @@ export function settleRound({
       transfer: true,
       upgradedTeam: 1 - declarerTeam,
       // 撬底且够 80 分 → 档位 +1 级（80→1、100→2、120→3…）
-      upgradeCount: (P_final >= 80 ? Math.floor((P_final - 80) / 20) + 1 : 0) + crossRiverPenalty,
+      upgradeCount: (P_final >= DEFENDER_TARGET_POINTS
+        ? Math.floor((P_final - DEFENDER_TARGET_POINTS) / 20) + 1 : 0) + crossRiverPenalty,
       crossRiverPenalty,
     };
   }
-  if (defenderTrickPoints >= 80) {
+  if (defenderTrickPoints >= DEFENDER_TARGET_POINTS) {
     return {
       defenderPoints: P_final,
       transfer: true,
       upgradedTeam: 1 - declarerTeam,
-      upgradeCount: Math.floor((defenderTrickPoints - 80) / 20),
+      upgradeCount: Math.floor((defenderTrickPoints - DEFENDER_TARGET_POINTS) / 20),
       crossRiverPenalty: 0,
     };
   }
@@ -80,7 +85,8 @@ export function settleRound({
     defenderPoints: P_final,
     transfer: false,
     upgradedTeam: declarerTeam,
-    upgradeCount: defenderTrickPoints === 0 ? 5 : Math.ceil((80 - defenderTrickPoints) / 20),
+    upgradeCount: defenderTrickPoints === 0
+      ? 5 : Math.ceil((DEFENDER_TARGET_POINTS - defenderTrickPoints) / 20),
     crossRiverPenalty: 0,
   };
 }

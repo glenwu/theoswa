@@ -17,4 +17,16 @@ runMutants([
   [F, '      const set = [winner, ...lowCards(rest, count - 1, ctx)];',
       '      const set = [winner, ...highCards(rest, count - 1, ctx)];',
       '凑张数的那几张挑最贵的'],
+
+  // ---- 「砍下去就保不了底、而分还不到 80」→ 放走这一墩（Glen 给的判据）----
+  [F, '    concededTotal < DEFENDER_TARGET_POINTS &&\n', '',
+      '不看闲家离 80 还有多远，一律不砍（回到我第一版测负的写法）'],
+  [F, '    you.team === declarerTeam &&\n', '',
+      '闲家也套这本账（闲家让掉的分是被庄家跑掉，完全不同）'],
+  [F, '    bottomControlOf(view, ctx).holdsTopTrump &&\n    !bottomControlAfter(view, ctx, cards).holdsTopTrump',
+      'true', '不看这一毙到底有没有丢掉顶端，逢低分就不砍'],
+  [F, '    !bottomControlAfter(view, ctx, cards).holdsTopTrump',
+      '    !bottomControlOf(view, ctx).holdsTopTrump', '拿毙之前的状态当毙之后（等于永不触发）'],
+  [F, 'const OVER_KILL_PENALTY = 1200;', 'const OVER_KILL_PENALTY = 120;',
+      '罚得太轻，压不过接管加分'],
 ]);

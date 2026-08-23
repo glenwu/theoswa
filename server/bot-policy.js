@@ -5,6 +5,7 @@ import {
   validateFollowPlay,
 } from './trick.js';
 import { canThrowByStatus } from './pieces.js';
+import { DEFENDER_TARGET_POINTS } from './scoring.js';
 
 // 电脑玩家只接收 viewerState 返回的本人视角，绝不读取服务端完整 GameState。
 // 这一版的目标是“像一个正常牌友”：识别庄闲、不杀队友、会送分/保分、
@@ -768,6 +769,10 @@ function safeSideThrow(view, ctx, tuning = strategyTuning(view)) {
 // 撑不到最后一轮。100 张牌四家分，平均每家 9 张主，低于这个数不算保底牌。
 const BOTTOM_MIN_TRUMPS = 9;
 
+// 「砍下去就保不了底、而且分还没到移庄线」时，放走这一墩的分量。
+// 要压得过接管加分（最后一家时是 100 + 分×10 + 45），否则拦不住。
+const OVER_KILL_PENALTY = 1200;
+
 function playedCardsOf(view) {
   return [
     ...(view.round?.trickHistory ?? []).flatMap(trick =>
@@ -844,6 +849,26 @@ function bottomControlOf(view, ctx) {
   const value = assessBottomControl(view, ctx);
   BOTTOM_CONTROL_CACHE.set(view, value);
   return value;
+}
+
+// 打出 cards 之后的保底判定 —— 「这一下会不会把底丢掉」。
+//
+// ⚠️ 不能只把 cards 从手牌里删掉：assessBottomControl 把「既不在我手上、又没现过身」
+// 的牌算成【别人可能攥着的威胁】，那样刚打出去的牌会凭空变成威胁。
+// 照实构造「我出完这一手之后」的视角：手牌里去掉，currentTrick 里加上。
+function bottomControlAfter(view, ctx, cards) {
+  const spent = new Set(cards.map(card => card.id));
+  return assessBottomControl(
+    {
+      ...view,
+      you: { ...view.you, hand: (view.you?.hand ?? []).filter(card => !spent.has(card.id)) },
+      round: {
+        ...view.round,
+        currentTrick: [...(view.round?.currentTrick ?? []), { seat: view.you.seat, cards }],
+      },
+    },
+    ctx
+  );
 }
 
 // 场上还有多少张主牌没露面（不含我手上的；底牌里的仍算未知，故偏高）
@@ -1603,6 +1628,34 @@ function scoreFollow(view, cards, ctx) {
     if (topTrump && cards.some(card => card.id === topTrump.id)) {
       score -= 240 * settings.controlReserve * controlCaution;
     }
+  }
+
+  // ---- 毙牌之前先算「保底」的总账（Glen 给的判据）----
+  //
+  // 「就简单那个例子，两个大鬼，别人那边还有小鬼，肯定两个都砍下去就保不了底了；
+  //   送的分要看是送多少，判断一下风险，如果送出去的分还有已经吃的分加起来还不到 80，
+  //   那就判断如果不吃大，把小牌跑掉，大牌后边可以把分都跑了然后保底，
+  //   肯定收益要比这轮把别人砍了更加多。」
+  //
+  // 两个条件【同时】成立才放走这一墩：
+  //   1. 这一毙之后我就握不住顶端了 —— 双大鬼一起交出去，外面那张小鬼就成了场上最大的
+  //   2. 让掉之后闲家的总分【仍然不到 80】—— 没到移庄线，大牌留着，
+  //      后面的分照样跑得回来，底也保得住
+  //
+  // ⚠️ 只对【庄家一方】成立：这笔账算的是闲家的台面分。闲家让掉一墩是把分
+  // 永久送进庄家那个黑洞（庄家跑分、分作废），完全是另一本账，这里不碰。
+  //
+  // ⚠️ 也必须排在 economical 候选之后才有意义：能用「一鬼 + 一张小主」毙下来时
+  // 顶端根本没丢，条件 1 就不成立 —— 先挑最省的打法，省不下来了才谈放不放。
+  const concededTotal = (round.defenderTrickPoints ?? 0) + playedPointTotal(current);
+  if (
+    isKill &&
+    you.team === declarerTeam &&
+    concededTotal < DEFENDER_TARGET_POINTS &&
+    bottomControlOf(view, ctx).holdsTopTrump &&
+    !bottomControlAfter(view, ctx, cards).holdsTopTrump
+  ) {
+    score -= OVER_KILL_PENALTY * bottomWeight * tuning.bottomControlWeight;
   }
 
   // 垫完一门短牌可以制造缺门，之后才有杀牌机会。

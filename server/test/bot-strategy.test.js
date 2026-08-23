@@ -615,13 +615,16 @@ test('帮队友求件：队友改吊主 → 那条求件请求作废，不跟着
 
 function followView({
   hand, currentTrick, seat = 2, declarerSeat = 0, piecesView = { S: [], D: [], C: [] },
-  trickHistory = [],
+  trickHistory = [], defenderTrickPoints = 0,
 }) {
   return {
     phase: 'PLAYING', declarerSeat,
     you: { seat, team: seat % 2, hand, crossRiver: {} },
     players: [0, 1, 2, 3].map(s2 => ({ seat: s2, team: s2 % 2, handCount: 12 })),
-    round: { trumpSuit: 'H', rankCard: 2, kittyCount: 8, currentTrick, trickHistory, piecesView },
+    round: {
+      trumpSuit: 'H', rankCard: 2, kittyCount: 8,
+      currentTrick, trickHistory, piecesView, defenderTrickPoints,
+    },
     botDifficulty: 'expert',
     botBeliefs: { players: {} },
   };
@@ -1195,16 +1198,54 @@ test('毙牌：一张够大的配一张最小的主，绝不把两只大鬼一�
   assert.ok(played.some(c => c.suit === 'H' && c.rank === 14), '♥A 就够大了');
 });
 
-// 反向保护：省不下来的时候不能因此不毙。
-// 手上当主牌用的只剩两只大鬼，那就只能两只一起上 —— 桌上 30 分不能不要。
-test('毙牌：手上只剩两只大鬼当主牌 → 照样毙下来', () => {
+// ---- 省不下来的时候，砍不砍要看总账（Glen 给的判据）----
+//
+// 「就简单那个例子，两个大鬼，别人那边还有小鬼，肯定两个都砍下去就保不了底了；
+//   送的分要看是送多少……如果送出去的分还有已经吃的分加起来还不到 80，
+//   那就判断如果不吃大，把小牌跑掉，大牌后边可以把分都跑了然后保底，
+//   肯定收益要比这轮把别人砍了更加多。」
+//
+// ⚠️ 这两条测试里的 fixture 是同一个，只差【闲家已经吃了多少分】——
+// 这正是判据本身，所以必须成对出现，单看任何一条都钉不住。
+const ONLY_TWO_BIG_JOKERS = [
+  T('JOKER', 16, 0), T('JOKER', 16, 1),          // 当主牌用的只有这两只
+  ...[9, 7, 5].map((r, i) => T('D', r, i + 30)),
+];
+
+test('毙牌：砍下去就保不了底、而闲家离 80 还远 → 放走这一墩，大牌留着', () => {
   const trick = killTrick();
   const played = chooseFollowCards(followView({
-    hand: [T('JOKER', 16, 0), T('JOKER', 16, 1), ...[9, 7, 5].map((r, i) => T('D', r, i + 30))],
-    currentTrick: trick, seat: 2, declarerSeat: 0,
+    hand: ONLY_TWO_BIG_JOKERS, currentTrick: trick, seat: 2, declarerSeat: 0,
+    defenderTrickPoints: 0,   // 让掉之后闲家才 30 分，离移庄线还远
+  }));
+  assert.notEqual(trickLeader([...trick, { seat: 2, cards: played }], KILL_CTX).seat, 2,
+    `两只大鬼一起交出去就保不了底，这 30 分该放，实际出了 ${played.map(c => c.suit + c.rank).join(',')}`);
+  assert.equal(played.filter(c => c.rank === 16).length, 0, '放走就该垫小牌，别把鬼搭进去');
+});
+
+// ⚠️ 这条断言是我自己先写错、再按 Glen 的判据改过来的：
+// 原来写的是「没有更省的打法时，30 分该用两只大鬼毙回来」——
+// 那正是他说的「见牌就砍」。真正决定砍不砍的是【让掉之后闲家到不到 80】。
+test('毙牌：同一手牌，但闲家已有 60 分 → 让掉就到 90 过线，必须砍', () => {
+  const trick = killTrick();
+  const played = chooseFollowCards(followView({
+    hand: ONLY_TWO_BIG_JOKERS, currentTrick: trick, seat: 2, declarerSeat: 0,
+    defenderTrickPoints: 60,  // 60 + 桌上 30 = 90 ≥ 80，放走就直接移庄
   }));
   assert.equal(trickLeader([...trick, { seat: 2, cards: played }], KILL_CTX).seat, 2,
-    '没有更省的打法时，30 分该用两只大鬼毙回来');
+    '再不砍就到移庄线了，保底也没意义');
+});
+
+// 这条账只对【庄家一方】成立：闲家让掉一墩是把分永久送进庄家的黑洞（庄家跑分），
+// 完全是另一本账。同一个局面换成闲家视角，就该照砍。
+test('毙牌：同样的牌，但我是闲家 → 这本账不适用，照砍', () => {
+  const trick = killTrick();
+  const played = chooseFollowCards(followView({
+    hand: ONLY_TWO_BIG_JOKERS, currentTrick: trick, seat: 2, declarerSeat: 1,
+    defenderTrickPoints: 0,
+  }));
+  assert.equal(trickLeader([...trick, { seat: 2, cards: played }], KILL_CTX).seat, 2,
+    '闲家不吃这一墩，这 30 分就被庄家跑掉了');
 });
 
 // 同门跟多张也是一样的道理：赢只看最大那张，第二张该垫最小的。

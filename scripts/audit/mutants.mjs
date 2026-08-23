@@ -4,8 +4,9 @@ import { runMutants } from './mutate.mjs';
 
 runMutants([
   // ---- 计分（规则核心）----
-  ['server/scoring.js', 'P_final >= 80', 'P_final > 80', '撬底档位边界 80 分'],
-  ['server/scoring.js', 'Math.floor((P_final - 80) / 20) + 1', 'Math.floor((P_final - 80) / 20)', '撬底档位 +1 级'],
+  ['server/scoring.js', 'P_final >= DEFENDER_TARGET_POINTS', 'P_final > DEFENDER_TARGET_POINTS', '撬底档位边界 80 分'],
+  ['server/scoring.js', 'Math.floor((P_final - DEFENDER_TARGET_POINTS) / 20) + 1',
+   'Math.floor((P_final - DEFENDER_TARGET_POINTS) / 20)', '撬底档位 +1 级'],
   ['server/scoring.js', 'last.winnerSeat % 2 !== state.declarerSeat % 2', 'last.winnerSeat % 2 === state.declarerSeat % 2', '撬底判定取反'],
   // ---- 跟牌合法性 ----
   ['server/trick.js', 'if (mySuitCount >= N)', 'if (mySuitCount > N)', '「手里够 N 张就必须全跟」的边界'],
