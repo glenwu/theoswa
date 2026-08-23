@@ -1239,11 +1239,25 @@ export function chooseLeadCards(view) {
 
   // 已确认有全主对手能全毙最后一手副牌时，甩牌扣底路线在张数守恒下已经断掉。
   // 若自己还有大鬼，先兑现这墩确定牌权，让朋友安全上分，而不是先甩后两墩全输。
+  //
+  // ⚠️ trumps.length === 1 这一条是 Glen 实战反馈后补上的：
+  //   「上家无缘无故吊主吊了只大鬼出来……当时也不是场上的主已经出了很多、想把别人的
+  //     大鬼碰出来的情况，也不是吊了大鬼就有一手长的副牌可以甩的情况。
+  //     刚好这局我有一只大鬼和两个小鬼，那么上家一把大鬼打出来，我就没有任何的威胁了。」
+  // 这条提案原来只看「对手全主」，不看自己手上还有没有别的主牌，于是中盘就把大鬼扔了出去，
+  // 等于把顶端让给对手 —— 他剩下的鬼立刻变成场上最大的。
+  //
+  // 分界在【大鬼是不是我唯一的主牌】：
+  //   · 是 → 留着也买不到第二次用处（既续不了吊、也毙不了第二墩），
+  //     趁它还稳赢兑现一墩、让队友安全上分，是对的（这条路径原本就是为这个局面写的）
+  //   · 否 → 手上还有别的主牌，办法多得是，大鬼必须留着
+  // 实测 400 局：中前段领鬼 40 → 3 次。
   const bigJoker = hand.find(card => card.rank === 16);
   const sideSuitSet = new Set(nonTrumps.map(card => suitOf(card, ctx)));
   if (
     bigJoker &&
     nonTrumps.length > 0 &&
+    trumps.length === 1 &&
     sideSuitSet.size === 1 &&
     confirmedFullKillThreat(view, nonTrumps.length)
   ) {

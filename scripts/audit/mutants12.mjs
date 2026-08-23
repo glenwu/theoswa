@@ -2,6 +2,9 @@
 import { runMutants } from './mutate.mjs';
 const F = 'server/bot-policy.js';
 runMutants([
+  // 「已确认对手全主 → 兑现大鬼」这条只在【大鬼是唯一主牌】时才成立（Glen 实战反馈）
+  [F, '    trumps.length === 1 &&\n', '', '手上还有别的主牌也照样把大鬼兑现掉'],
+  [F, '    trumps.length === 1 &&', '    trumps.length >= 1 &&', '门槛放宽成「有主牌就行」'],
   [F, 'const drawableTrumps = trumps.filter(card => card.rank !== 15 && card.rank !== 16);',
       'const drawableTrumps = trumps;', '吊主候选里又混进了鬼（回到实战踩到的 bug）'],
   [F, 'card.rank !== 15 && card.rank !== 16', 'card.rank !== 16', '只挡大鬼，小鬼照领'],

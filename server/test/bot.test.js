@@ -375,6 +375,35 @@ test('已确认对手全主能全毙时先兑现大鬼，朋友在确定大鬼�
   assert.equal(chooseFollowCards(feed)[0].id, 'feed-main-5');
 });
 
+// Glen 实战反馈：「上家无缘无故吊主吊了只大鬼出来……刚好这局我有一只大鬼和两个小鬼，
+// 那么上家一把大鬼打出来，我就没有任何的威胁了。」
+//
+// 上一条测试的 fixture 里，大鬼是手上【唯一的主牌】—— 留着也买不到第二次用处，
+// 兑现掉是对的。这一条只改一处：再给它一张普通主牌。手上还有别的主牌就有别的办法，
+// 大鬼必须留着，否则等于把顶端拱手让人（对手剩下的鬼立刻变成场上最大的）。
+// 两条必须成对看，单看任何一条都钉不住这个分界。
+test('已确认对手全主，但我手上还有别的主牌 → 大鬼留着，不兑现', () => {
+  const view = playView({
+    seat: 2,
+    declarerSeat: 1,
+    hand: [
+      card('keep-big', 'JOKER', 16),
+      card('keep-trump', 'H', 7),      // ← 与上一条的唯一差别：多一张普通主
+      card('keep-c3', 'C', 3),
+      card('keep-c4', 'C', 4),
+      card('keep-c6', 'C', 6),
+    ],
+    trickHistory: [{ trickNo: 1, leadSeat: 1, leadSuit: 'S', plays: [] }],
+  });
+  view.botBeliefs = {
+    kittySlots: 8,
+    players: { 1: { seat: 1, team: 1, handCount: 5, allTrumpConfirmed: true } },
+  };
+  const lead = chooseLeadCards(view);
+  assert.notEqual(lead[0].id, 'keep-big',
+    `手上还有别的主牌就不该把大鬼扔出去，实际领了 ${lead.map(c => c.id).join(',')}`);
+});
+
 test('庄家首轮没有双大鬼时先吊最小主牌', () => {
   const view = playView({
     seat: 0,
