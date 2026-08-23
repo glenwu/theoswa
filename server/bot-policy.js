@@ -1338,11 +1338,40 @@ function followCandidates(view, ctx) {
     ]);
   };
 
+  // 「刚好够赢 + 其余垫最便宜的」，多张跟牌版的「刚好能赢」。
+  //
+  // ⚠️ 判牌只比【最大的那一张】（server/trick.js 的 trickLeader → maxStrength），
+  // 所以拿下一墩只需要一张够大的，其余张数用最便宜的凑就行。
+  // 而上面的 selections 只生成三种形状：全小 / 全大 / 全分 ——
+  // 一旦「全小」赢不下来，「全大」就成了唯一能赢的选项。
+  // Glen 实战里毙对手两张甩牌时把【两只大鬼】一起交了出去，正是这么来的
+  //（一只鬼配一张最小的主完全够，剩下那只鬼还留着保底）。
+  //
+  // 按牌力从小往大试，第一组赢得下的就是最省的那组，只加这一个候选。
+  const economical = pool => {
+    if (pool.length < count) return [];
+    const byStrength = [...pool].sort(
+      (a, b) => cardStrength(a, ctx) - cardStrength(b, ctx) || a.id.localeCompare(b.id)
+    );
+    for (const winner of byStrength) {
+      const rest = pool.filter(card => card.id !== winner.id);
+      const set = [winner, ...lowCards(rest, count - 1, ctx)];
+      if (set.length !== count) continue;
+      const led = trickLeader(
+        [...view.round.currentTrick, { seat: view.you.seat, cards: set }],
+        ctx
+      );
+      if (led?.seat === view.you.seat) return [set];
+    }
+    return [];
+  };
+
   if (count === 1) {
     // 单张跟牌把所有合法牌都交给评分器，才能选出“刚好能赢”的那张。
     for (const card of hand) sets.push([card]);
   } else if (leadSuitCards.length >= count) {
     sets.push(...selections(leadSuitCards, count));
+    sets.push(...economical(leadSuitCards));
   } else if (leadSuitCards.length > 0) {
     const rest = hand.filter(card => !leadSuitCards.includes(card));
     for (const fill of selections(rest, count - leadSuitCards.length)) {
@@ -1352,6 +1381,7 @@ function followCandidates(view, ctx) {
     sets.push(...selections(hand, count));
     const trumps = cardsOfSuit(hand, 'TRUMP', ctx);
     sets.push(...selections(trumps, count));
+    sets.push(...economical(trumps)); // 毙牌：一张够大的 + 最便宜的凑张数
     // 尽量把一门短牌整组垫完，为后续杀牌制造缺门。
     for (const suit of SUITS.filter(s => s !== ctx.trumpSuit)) {
       const group = cardsOfSuit(hand, suit, ctx);

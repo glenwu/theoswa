@@ -7,6 +7,7 @@ import {
 import { cardPoints as cardPointsOf } from '../cards.js';
 import { buildDeck, playSuitOf } from '../cards.js';
 import { mulberry32 } from '../rng.js';
+import { trickLeader } from '../trick.js';
 
 // 真人牌友（Glen）报的问题：电脑做庄压底时会为了「正好 8 张断一门」把副 A 压进底牌。
 //
@@ -1155,6 +1156,73 @@ test('吊主：开局第一墩也不许领鬼', () => {
   }))[0];
   assert.ok(lead.suit !== 'JOKER' && lead.rank !== 16 && lead.rank !== 15,
     `开局不该领鬼，实际领了 ${lead.suit}${lead.rank}`);
+});
+
+// ---- 毙牌只要「一张够大的 + 凑张数的」（Glen 实战反馈）----
+//
+// 「用主牌毙别人两张的甩牌时，用了两只大鬼去毙，这个不对，看的只是最大那支，
+//   一支大鬼还有一支小牌即可……当时他的主牌还很多，这个操作导致后来保不了底。」
+//
+// 判牌确实只比【最大的那一张】（server/trick.js 的 trickLeader → maxStrength）。
+// 根子不在排序，在【候选生成】：selections 只给三种形状 —— 全小 / 全大 / 全分。
+// 一旦「全小」赢不下来，「全大」就成了唯一能赢的选项。
+const KILL_CTX = { trumpSuit: 'H', rankCard: 2 };
+
+// 中后段（手牌 8 张，early 的门槛是 > 8）：对手甩两张黑桃 20 分，
+// 另一个对手已经用 ♥K 毙下（再添 10 分），轮到我，黑桃已断。
+// ⚠️ 逆时针 0 → 3 → 2 → 1：座位 1 领牌时顺序是 1 → 0 → 3 → 2，我（座位 2）最后出。
+// 座位 0 是我队友，座位 1/3 是对手 —— 必须让【对手】领先，否则走的是「别杀队友」那条路。
+const killTrick = () => [
+  { seat: 1, playSuit: 'S', cards: [T('S', 13, 90), T('S', 10, 91)] },
+  { seat: 0, cards: [T('C', 4, 92), T('C', 3, 93)] },
+  { seat: 3, cards: [T('H', 13, 94), T('H', 11, 95)] },
+];
+
+test('毙牌：一张够大的配一张最小的主，绝不把两只大鬼一起交出去', () => {
+  const trick = killTrick();
+  const played = chooseFollowCards(followView({
+    hand: [
+      T('JOKER', 16, 0), T('JOKER', 16, 1), T('JOKER', 15, 2),
+      ...[14, 13, 4, 3].map((r, i) => T('H', r, i + 10)),
+      T('D', 7, 30),
+    ],
+    currentTrick: trick, seat: 2, declarerSeat: 0,
+  }));
+  assert.equal(trickLeader([...trick, { seat: 2, cards: played }], KILL_CTX).seat, 2,
+    '桌上 30 分，这一墩该拿下来');
+  assert.equal(played.filter(c => c.rank === 16).length, 0,
+    `不该动大鬼，实际出了 ${played.map(c => c.suit + c.rank).join(',')}`);
+  assert.ok(played.some(c => c.suit === 'H' && c.rank === 14), '♥A 就够大了');
+});
+
+// 反向保护：省不下来的时候不能因此不毙。
+// 手上当主牌用的只剩两只大鬼，那就只能两只一起上 —— 桌上 30 分不能不要。
+test('毙牌：手上只剩两只大鬼当主牌 → 照样毙下来', () => {
+  const trick = killTrick();
+  const played = chooseFollowCards(followView({
+    hand: [T('JOKER', 16, 0), T('JOKER', 16, 1), ...[9, 7, 5].map((r, i) => T('D', r, i + 30))],
+    currentTrick: trick, seat: 2, declarerSeat: 0,
+  }));
+  assert.equal(trickLeader([...trick, { seat: 2, cards: played }], KILL_CTX).seat, 2,
+    '没有更省的打法时，30 分该用两只大鬼毙回来');
+});
+
+// 同门跟多张也是一样的道理：赢只看最大那张，第二张该垫最小的。
+// 这个 fixture 里【没有】鬼参与，钉的纯粹是「刚好够赢」这条本身。
+test('跟牌：同门跟两张也是「刚好够赢 + 垫最小」，不搭上第二张大牌', () => {
+  const trick = [{ seat: 1, playSuit: 'S', cards: [T('S', 13, 90), T('S', 10, 91)] }];
+  const played = chooseFollowCards(followView({
+    hand: [
+      ...[14, 12, 4, 3].map((r, i) => T('S', r, i + 40)),
+      ...[9, 7].map((r, i) => T('H', r, i + 10)),
+    ],
+    currentTrick: trick, seat: 2, declarerSeat: 0,
+  }));
+  assert.equal(trickLeader([...trick, { seat: 2, cards: played }], KILL_CTX).seat, 2,
+    '♠A 能赢这 20 分');
+  assert.ok(played.some(c => c.rank === 14), '要赢就得出 ♠A');
+  assert.ok(played.every(c => c.rank !== 12),
+    `第二张该垫最小的，实际出了 ${played.map(c => c.suit + c.rank).join(',')}`);
 });
 
 // 队友领主牌领先了，我手里有大鬼 —— 桌上一分没有，盖上去纯属浪费
