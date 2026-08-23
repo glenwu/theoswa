@@ -1236,16 +1236,33 @@ test('毙牌：同一手牌，但闲家已有 60 分 → 让掉就到 90 过线�
     '再不砍就到移庄线了，保底也没意义');
 });
 
-// 这条账只对【庄家一方】成立：闲家让掉一墩是把分永久送进庄家的黑洞（庄家跑分），
-// 完全是另一本账。同一个局面换成闲家视角，就该照砍。
-test('毙牌：同样的牌，但我是闲家 → 这本账不适用，照砍', () => {
+// ---- 闲家是【同一本账】，不是另一本（Glen 纠正）----
+//
+// 「闲家一个道理，这一墩杀下去，有可能本来的撬底牌就没有了……
+//   如果杀下去超过 80 分爆底，那么也无所谓撬不撬底了；
+//   如果杀下去分可能不够，那肯定不如留到最后撬底。」
+//
+// ⚠️ 我第一版写成「只对庄家成立、闲家照砍」，被这段话推翻了。
+// 被罚的动作两边同一个（拿顶主去毙），衡量的数也同一个：闲家台面分 + 这墩的分。
+// 差别只在理由叫「保底」还是「撬底」。
+test('毙牌：闲家杀下去也到不了 80 → 撬底牌留着，别为这一墩花掉', () => {
   const trick = killTrick();
   const played = chooseFollowCards(followView({
     hand: ONLY_TWO_BIG_JOKERS, currentTrick: trick, seat: 2, declarerSeat: 1,
-    defenderTrickPoints: 0,
+    defenderTrickPoints: 0,   // 杀下去也才 30 分，离 80 还远
+  }));
+  assert.notEqual(trickLeader([...trick, { seat: 2, cards: played }], KILL_CTX).seat, 2,
+    `杀完还不够 80，不如留着撬底，实际出了 ${played.map(c => c.suit + c.rank).join(',')}`);
+});
+
+test('毙牌：闲家杀下去就到 90 爆底 → 撬不撬底无所谓了，照杀', () => {
+  const trick = killTrick();
+  const played = chooseFollowCards(followView({
+    hand: ONLY_TWO_BIG_JOKERS, currentTrick: trick, seat: 2, declarerSeat: 1,
+    defenderTrickPoints: 60,  // 60 + 30 = 90 ≥ 80，已经移庄
   }));
   assert.equal(trickLeader([...trick, { seat: 2, cards: played }], KILL_CTX).seat, 2,
-    '闲家不吃这一墩，这 30 分就被庄家跑掉了');
+    '这一墩就把 80 拿下了，撬底的边际收益已经不重要');
 });
 
 // 同门跟多张也是一样的道理：赢只看最大那张，第二张该垫最小的。

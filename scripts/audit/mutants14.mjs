@@ -19,10 +19,14 @@ runMutants([
       '凑张数的那几张挑最贵的'],
 
   // ---- 「砍下去就保不了底、而分还不到 80」→ 放走这一墩（Glen 给的判据）----
-  [F, '    concededTotal < DEFENDER_TARGET_POINTS &&\n', '',
-      '不看闲家离 80 还有多远，一律不砍（回到我第一版测负的写法）'],
-  [F, '    you.team === declarerTeam &&\n', '',
-      '闲家也套这本账（闲家让掉的分是被庄家跑掉，完全不同）'],
+  [F, '    afterDefenderPoints < DEFENDER_TARGET_POINTS &&\n', '',
+      '不看离 80 还有多远，一律不砍（回到我第一版测负的写法）'],
+  [F, '    afterDefenderPoints < DEFENDER_TARGET_POINTS &&',
+      '    afterDefenderPoints < DEFENDER_TARGET_POINTS && you.team === declarerTeam &&',
+      '只算庄家那一半的账，闲家照砍（我第一版就写窄了）'],
+  [F, 'const afterDefenderPoints = (round.defenderTrickPoints ?? 0) + totalPoints;',
+      'const afterDefenderPoints = totalPoints;',
+      '只看这一墩的分，不看闲家已经吃了多少'],
   [F, '    bottomControlOf(view, ctx).holdsTopTrump &&\n    !bottomControlAfter(view, ctx, cards).holdsTopTrump',
       'true', '不看这一毙到底有没有丢掉顶端，逢低分就不砍'],
   [F, '    !bottomControlAfter(view, ctx, cards).holdsTopTrump',
