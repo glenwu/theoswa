@@ -620,9 +620,25 @@ function partnerSideProtocolChoice(view, choices, ctx) {
     higherUnseen === 0 &&
     !lastKnownVoid;
 
-  // 朋友领小牌是求件；领 5/10/K 更是强烈求 A。
-  // 求件指令高于普通走分：即使朋友当前暂时领先，也先把他要的件贡献出来。
-  const asksForPiece = cardPoints(leadCard) > 0 || !isSidePiece(leadCard, ctx);
+  // 朋友领小牌是求件；领副 K 是强烈求 A。
+  // 求件指令高于普通走分（+700 的约定加分）：即使朋友当前暂时领先，
+  // 也先把他要的件贡献出来 —— 正因为这条压得过一切，它的触发条件必须严。
+  //
+  // ⚠️ 原来写的是 `cardPoints(leadCard) > 0 || !isSidePiece(leadCard, ctx)`，
+  // 等于【朋友单张领这门、只要不是副 A，就算求件】——6、7、8、9、J、Q 全算。
+  // 这是 Glen 说的「件还是容易打出来」的真正出处：约定加分 700 稳压亮件代价，
+  // 而且下面的排序是 rank 从大到小，先交出去的还是 A。
+  // 实测「有得选却把件交出去」2443 次决策里，纯亏的那 68 次全是被这条推出去的
+  //（评分本来是负的，靠 priorBonus 翻上来）。
+  //
+  // 求件的判据全项目只有一个：isPieceRequestLead —— 单张、本身不是件、
+  // 5 以下或者 10（Glen：「第一轮求件是需要打 5 以下」）。这里改成用同一个，
+  // 外加「领副 K 求 A」这个更具体的请求。
+  // 再叠上一次性规则：我方在这门已经求过，就不存在新的求件。
+  const asksForPiece =
+    (isPieceRequestLead(lead.cards, ctx) ||
+      (isSidePiece(leadCard, ctx) && cardPoints(leadCard) > 0)) &&
+    !teamAskedPieceBefore(view, ctx, lead.playSuit, view.you.seat % 2);
   const pieceContributions = asksForPiece
     ? sameSuitChoices.filter(choice => isSidePiece(choice.cards[0], ctx))
     : [];
@@ -690,14 +706,22 @@ function partnerSideProtocolChoice(view, choices, ctx) {
 // 领出 5 以下的小牌是明确的求件请求；领大牌只是普通发展，帮的力度小得多。
 function partnerRequest(view, ctx) {
   const partnerSeat = partnerSeatOf(view.you.seat);
-  const leads = (view.round?.trickHistory ?? []).filter(trick => trick.leadSeat === partnerSeat);
-  const last = leads[leads.length - 1];
+  const history = view.round?.trickHistory ?? [];
+  let lastIndex = -1;
+  for (let i = 0; i < history.length; i += 1) {
+    if (history[i].leadSeat === partnerSeat) lastIndex = i;
+  }
+  const last = lastIndex >= 0 ? history[lastIndex] : null;
   if (!last || last.leadSuit === 'TRUMP') return null;
   if (cardsOfSuit(view.you.hand ?? [], last.leadSuit, ctx).length === 0) return null;
   const cards = last.plays?.[0]?.cards ?? [];
   return {
     suit: last.leadSuit,
-    seeking: cards.length > 0 && cards.every(card => card.rank <= 5),
+    // 「回队友这门」这个意图一直成立，但【求件】只算我方在这门的第一次。
+    // 他贡献完件再领一张小牌，那不是在求件，是牌权到手随手往回打。
+    seeking:
+      cards.length > 0 && cards.every(card => card.rank <= 5) &&
+      !teamAskedPieceBefore(view, ctx, last.leadSuit, view.you.seat % 2, lastIndex),
     partnerIsDeclarer: partnerSeat === view.declarerSeat,
   };
 }
@@ -821,6 +845,15 @@ const PIECE_READ_NOBODY_ASKED = 0.7;
 // 打完这一手之后这门只剩几张就算「快断了」。Glen：「如果自己这门已经快断了，
 // 比如打 A 后再捅多一支或两支就断了，可以毙别人，这个时候也可以吃。」
 const PIECE_NEAR_VOID_AFTER = 2;
+// 这门外面还剩多少分，才值得为了护件放走桌上的分（见 coverNeedsFirstPiece）。
+const PIECE_COVER_MIN_POINTS = 30;
+// 打完这一支之后这门至少还得剩几张 —— 顶端再大，只剩一张也压不住两张的甩牌。
+//
+// ⚠️ 「Q 或是 J 多」的「多」这里【不】读成「同一档有两三张」。两种读法都实测过：
+// 要求同档两张时，400 局里只剩 12 次机会（顶端在手的局面本来有 314 次），
+// 等于写了条死规则；而 Glen 给的目的是「别人的甩牌自己可能可以大」——
+// 那要的是【顶端在我手上 + 还剩得够长】，不是一个对子。
+const PIECE_FORCE_MIN_LEFT = 2;
 
 // 「砍下去就保不了底、而且分还没到移庄线」时，放走这一墩的分量。
 // 要压得过接管加分（最后一家时是 100 + 分×10 + 45），否则拦不住。
@@ -972,10 +1005,59 @@ function outstandingTrumpCount(view, ctx) {
   return Math.max(0, TOTAL_TRUMPS - played - mine);
 }
 
+// 这一手主牌【还有没有人压得过】—— 只看公开信息：
+// 比我这手最大那张更强的主牌，扣掉已经现身的、扣掉还攥在我自己手里的，
+// 一张不剩，那这一墩就已经是我的了。
+//
+// ⚠️ 只算【严格更大】的：同强度后出者不大（server/trick.js 用「严格大于才换赢家」
+// 实现先出者大），所以同档的牌威胁不到我。
+// 底牌里的牌算不出来，一律当成还在对手手上 —— 偏保守，宁可少豁免。
+function unbeatableTrumpPlay(view, ctx, cards) {
+  if (cards.length === 0) return false;
+  let mine = -Infinity;
+  for (const card of cards) {
+    if (suitOf(card, ctx) !== 'TRUMP') return false; // 不是满手主牌，谈不上压不压
+    mine = Math.max(mine, cardStrength(card, ctx));
+  }
+  let above = 0;
+  for (const [strength, total] of trumpTierTemplate(ctx)) {
+    if (strength > mine) above += total;
+  }
+  if (above === 0) return true;
+  for (const card of playedCardsOf(view)) {
+    if (suitOf(card, ctx) === 'TRUMP' && cardStrength(card, ctx) > mine) above -= 1;
+  }
+  for (const card of view.you?.hand ?? []) {
+    if (suitOf(card, ctx) === 'TRUMP' && cardStrength(card, ctx) > mine) above -= 1;
+  }
+  return above <= 0;
+}
+
 // 「求件」的领牌长什么样（Glen：「第一轮求件是需要打 5 以下，甚至 10 也可以」）。
 // 单张、不是件本身、点数很小或是 10 —— 这就是在跟同伴要件。
 // 反过来「如果不想对家把件很快放出来，千万第一轮不打 5 以下」：
 // 领大牌不算求件，别人也不该按求件来应答。
+// 「求件」是一次性的表态，不是一门牌的永久属性（Glen 实战反馈①）：
+//   「一方 BOT 求了个件，对方打出来后又打了个 5 以下，其实这个时候已经不代表
+//     求件了，因为之前对家已经求过……我似乎看到他们互出件，然后给我方甩牌。」
+//
+// 我方在一门副牌上只有【一次】求件机会：第一次领小牌是在问「你有没有件」，
+// 队友答过之后，同门再领小牌就只是普通打法。再当成求件去贡献，就是白白把
+// 一支「未现」变成「已现」—— canThrowByStatus 只要求每支件都 !== 'unseen'，
+// 两个人来回互贡献，等于替【攥着这门长牌的那家】凑齐甩牌资格，而三家里两家是对手。
+//
+// 实测 400 局：第 2 次求件贡献了 185 次，第 3 次及以后又贡献 21 次。
+function teamAskedPieceBefore(view, ctx, suit, team, beforeIndex = Infinity) {
+  const history = view.round?.trickHistory ?? [];
+  const limit = Math.min(history.length, beforeIndex);
+  for (let i = 0; i < limit; i += 1) {
+    const trick = history[i];
+    if (trick.leadSuit !== suit || trick.leadSeat % 2 !== team) continue;
+    if (isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) return true;
+  }
+  return false;
+}
+
 function isPieceRequestLead(cards, ctx) {
   return (
     Array.isArray(cards) && cards.length === 1 &&
@@ -1218,6 +1300,93 @@ function suitAskSignal(view, ctx, suit) {
   return null;                          // 谁都没求过
 }
 
+// 「逼件」的资格 —— Glen 的「第三家 10 分要不要打 A 封」里的第 2 种情况：
+//   「如果此门副牌不长，但也不短，大概 5 张，没有出过件的情况，最好也是不杀，
+//     风险一样，如果判断件有可能在自己对家，然后自己还有大牌，比如 Q 或是 J 多，
+//     可以逼别人的件出来的情况，特别是别人可能只剩一件，逼出来之后，
+//     别人的甩牌自己可能可以大，也可以杀。」
+//
+// 「Q 或是 J 多」的「多」不去猜几张算多，照他给的【目的】写 ——
+// 「逼出来之后，别人的甩牌自己可能可以大」：
+//   · 件全部逼出来之后，这门的顶端得还在我手上（比我大的非件牌外面一张不剩）
+//   · 而且打完之后这门还剩得够长，压得住对手甩出来的多张
+function forcesPiecesOut(view, ctx, suit, cards) {
+  const spent = new Set(cards.map(card => card.id));
+  const rest = cardsOfSuit(view.you?.hand ?? [], suit, ctx)
+    .filter(card => !spent.has(card.id) && !isSidePiece(card, ctx));
+  // 至少还得剩两张，才压得住对手两张的甩牌；只剩一张只能压单张。
+  if (rest.length < PIECE_FORCE_MIN_LEFT) return false;
+  let top = 0;
+  for (const card of rest) if (card.rank > top) top = card.rank;
+  for (let rank = top + 1; rank <= 14; rank += 1) {
+    const probe = { id: `force-${suit}-${rank}`, suit, rank };
+    if (suitOf(probe, ctx) !== suit) continue;
+    if (isSidePiece(probe, ctx)) continue; // 件本来就是要被逼出来的，不算威胁
+    if (unseenCopiesOf(view, suit, rank, ctx) > 0) return false;
+  }
+  return true;
+}
+
+// 这一墩要封住最后一家，我手上唯一压得过去的是这门【还没现过的第一支件】吗？
+// 是的话，Glen 裁定这一墩就不必封 —— 亮出第一支件等于把这门的甩牌资格从零推起来，
+// 比桌上那点分重得多。例外见 forcesPiecesOut。
+//
+// 只在 lastSeatPointExposure 会返回非零的那个形状里才有意义（第三家、首家单张、
+// 副牌墩），所以先按同一组前提短路掉，免得每个候选都白算一遍。
+// 这是【一墩一次】的事实，却在 scoreFollow 里按每个候选问一遍 ——
+// 和 bottomControlOf / playedCardsOf 一样按 view 记忆化。
+const COVER_FIRST_PIECE_CACHE = new WeakMap();
+function coverNeedsFirstPiece(view, ctx) {
+  const cached = COVER_FIRST_PIECE_CACHE.get(view);
+  if (cached !== undefined) return cached;
+  const value = coverNeedsFirstPieceUncached(view, ctx);
+  COVER_FIRST_PIECE_CACHE.set(view, value);
+  return value;
+}
+
+function coverNeedsFirstPieceUncached(view, ctx) {
+  const current = view.round?.currentTrick ?? [];
+  const lead = current[0];
+  if (current.length !== 2 || !lead || lead.playSuit === 'TRUMP' || lead.cards.length !== 1) {
+    return false;
+  }
+  const items = view.round?.piecesView?.[lead.playSuit] ?? [];
+  if (items.length === 0) return false;
+  if (!items.some(item => item.status === 'unseen')) return false; // 全现了，无所谓
+  if (items.some(item => item.status === 'seen')) return false;    // 已经有人开过头了
+  // Glen 的另一条例外（第 1 种情况里给的，第 2 种同理）：
+  //   「比如说打 10 或打 K，如果判断现在即使对方甩了也得不了多少分，那么就可以杀。」
+  // 护件是为了不让对手甩这门刮分，这门本来就没多少分可刮时就不必护。
+  // 门槛用 30 分不是拍的：打 10 / 打 K 时该门的 10 或 K 升为主牌，
+  // 这门【天生】就从 50 分掉到 30 分 —— 那正是 Glen 举的两个例子。
+  if (suitPointsAtLarge(view, ctx, lead.playSuit) <= PIECE_COVER_MIN_POINTS) return false;
+  // 要的是【稳稳封得住】的牌：压得过眼前的牌面，而且这门没有更大的牌还没现身。
+  // ⚠️ 只看「压得过眼前」不够 —— 手上 A Q J 10 时 Q、J 也压得过桌面，
+  // 但外面还有未现的 K/A，最后一家照样反超。那种「封不牢的封」不算数，
+  // 否则这条裁定在最常见的牌型（A 带一串 Q J 10）上直接失效。
+  const mine = cardsOfSuit(view.you?.hand ?? [], lead.playSuit, ctx);
+  const covers = mine.filter(card => {
+    if (trickLeader([...current, { seat: view.you.seat, cards: [card] }], ctx)?.seat
+        !== view.you.seat) return false;
+    for (let rank = card.rank + 1; rank <= 14; rank += 1) {
+      const probe = { id: `cover-${lead.playSuit}-${rank}`, suit: lead.playSuit, rank };
+      if (suitOf(probe, ctx) !== lead.playSuit) continue;
+      if (unseenCopiesOf(view, lead.playSuit, rank, ctx) > 0) return false;
+    }
+    return true;
+  });
+  if (covers.length === 0) return false;                 // 本来就封不牢，不用谈
+  // 注：这里【不需要】再问一句「有没有不是件的牌也能封牢」——
+  // 任何非件的牌之上都压着这门的件，而上面已经要求「还有件没现身」，
+  // 所以能封得牢的必然全是件。写了那一句变异测试也杀不掉（它恒真）。
+  // 例外（Glen）：件可能在对家，而且逼出来之后这门的顶端还在我手上 —— 那就该杀
+  if (
+    suitAskSignal(view, ctx, lead.playSuit) === 'partner' &&
+    forcesPiecesOut(view, ctx, lead.playSuit, covers)
+  ) return false;
+  return true;
+}
+
 // 这一手里【亮出去几份件的风险】——领牌和跟牌共用同一份判据（Glen）。
 //
 // 「如果对家没表示，那么最好是不随便出，因为这个是冒险的行为。比如别人有三件，
@@ -1252,8 +1421,8 @@ function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
     if (partnerAskedSuit === suit) return sum;
     const spentHere = cards.filter(item => suitOf(item, ctx) === suit).length;
     if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) return sum;
-    const threat = maxOpponentSuitEstimate(view, ctx, suit) / PIECE_THREAT_BASELINE;
     const signal = suitAskSignal(view, ctx, suit);
+    const threat = maxOpponentSuitEstimate(view, ctx, suit) / PIECE_THREAT_BASELINE;
     const read = signal === 'partner' ? PIECE_READ_PARTNER_ASKED
       : signal === null ? PIECE_READ_NOBODY_ASKED
       : 1;
@@ -1712,6 +1881,7 @@ function followCandidates(view, ctx) {
   const leadSuitCards = cardsOfSuit(hand, lead.playSuit, ctx);
   const sets = [];
 
+  // 能参与比大小的位置：满额跟花色、或满额主牌毙。挑大的才有意义。
   const selections = (cards, n) => {
     if (n < 0 || cards.length < n) return [];
     if (n === 0) return [[]];
@@ -1719,6 +1889,27 @@ function followCandidates(view, ctx) {
       lowCards(cards, n, ctx),
       highCards(cards, n, ctx),
       pointCards(cards, n, ctx),
+    ]);
+  };
+
+  // 垫牌位置：这一组【赢不下这一墩】。
+  //
+  // ⚠️ 混合花色的一手永远不参与比大小 —— server/trick.js 的 trickLeader 分支 A
+  // 只认「满额跟花色」和「满额主牌毙」两种形状，凑张数的那几张连比都不比。
+  // 所以在这些位置挑大的纯粹是白扔，一张也换不回来。
+  //
+  // Glen 实战②：我方甩一门牌，电脑把这门跟完，再拿【小鬼】去凑张数。
+  // 根因不在牌值表而在候选形状 —— 赢不了的位置生成了 highCards：
+  //   垫一张副 10 要按 candidatePoints * 14 罚 140，
+  //   白扔一张小鬼只按 keepValue * 0.25 罚 40（早盘那条护鬼规则要求
+  //   手牌 > 8 张，甩牌多发生在中后段，那时一分保护都没有）。
+  // 于是「宁可扔鬼也不送 10 分」成了评分器的正解。这里直接不给它这个选项。
+  const discards = (cards, n) => {
+    if (n < 0 || cards.length < n) return [];
+    if (n === 0) return [[]];
+    return uniqueCardSets([
+      lowCards(cards, n, ctx),
+      pointCards(cards, n, ctx), // 队友已经赢下这一墩时把分送过去
     ]);
   };
 
@@ -1731,12 +1922,23 @@ function followCandidates(view, ctx) {
   // Glen 实战里毙对手两张甩牌时把【两只大鬼】一起交了出去，正是这么来的
   //（一只鬼配一张最小的主完全够，剩下那只鬼还留着保底）。
   //
-  // 按牌力从小往大试，第一组赢得下的就是最省的那组，只加这一个候选。
+  // 按牌力从小往大试，把【每一档够大的牌 + 最便宜的凑张数】都作为候选。
+  //
+  // ⚠️ 原来这里在第一组赢得下的地方就 return 了，理由是「那就是最省的一组」。
+  // 但 trickLeader 只判【眼前这半墩】，后面还没出牌的人不算数 —— 于是电脑
+  // 手上只剩两个极端：最小的那组（便宜，可后面两家能压过去）和 highCards
+  //（安全，可要交两只鬼）。Glen 说的那个中间答案「一支大鬼还有一支小牌即可」
+  // 从来没被生成过。
+  // 实测 400 局里有 4 次因此一口气交出两只鬼，最贵的一次是
+  //   手上 大鬼+小鬼+小鬼+H2+H14+H11+H10+H3，对手甩 ♦A♦K
+  //   候选只有 [H3,H10] 和 [大鬼,小鬼]，而 [大鬼,H3] 才是对的。
+  // 该出多大仍然由评分器按局面决定，这里只负责【把选项摆全】。
   const economical = pool => {
     if (pool.length < count) return [];
     const byStrength = [...pool].sort(
       (a, b) => cardStrength(a, ctx) - cardStrength(b, ctx) || a.id.localeCompare(b.id)
     );
+    const out = [];
     for (const winner of byStrength) {
       const rest = pool.filter(card => card.id !== winner.id);
       const set = [winner, ...lowCards(rest, count - 1, ctx)];
@@ -1745,9 +1947,9 @@ function followCandidates(view, ctx) {
         [...view.round.currentTrick, { seat: view.you.seat, cards: set }],
         ctx
       );
-      if (led?.seat === view.you.seat) return [set];
+      if (led?.seat === view.you.seat) out.push(set);
     }
-    return [];
+    return out;
   };
 
   if (count === 1) {
@@ -1758,11 +1960,11 @@ function followCandidates(view, ctx) {
     sets.push(...economical(leadSuitCards));
   } else if (leadSuitCards.length > 0) {
     const rest = hand.filter(card => !leadSuitCards.includes(card));
-    for (const fill of selections(rest, count - leadSuitCards.length)) {
+    for (const fill of discards(rest, count - leadSuitCards.length)) {
       sets.push([...leadSuitCards, ...fill]);
     }
   } else {
-    sets.push(...selections(hand, count));
+    sets.push(...discards(hand, count));
     const trumps = cardsOfSuit(hand, 'TRUMP', ctx);
     sets.push(...selections(trumps, count));
     sets.push(...economical(trumps)); // 毙牌：一张够大的 + 最便宜的凑张数
@@ -1771,7 +1973,7 @@ function followCandidates(view, ctx) {
       const group = cardsOfSuit(hand, suit, ctx);
       if (group.length === 0 || group.length > count) continue;
       const rest = hand.filter(card => !group.includes(card));
-      for (const fill of selections(rest, count - group.length)) sets.push([...group, ...fill]);
+      for (const fill of discards(rest, count - group.length)) sets.push([...group, ...fill]);
     }
   }
 
@@ -1864,16 +2066,46 @@ function scoreFollow(view, cards, ctx) {
 
   // 第三手封分：前两手都不大时，若最后的对手仍可能用 10/K 等分牌反超，
   // 提高当前牌面上限；公开记录已证明对手缺门或分牌均已现时风险自然归零。
-  score -= lastSeatPointRisk * 24 * settings.inference * coverCaution * tuning.coverRiskWeight;
+  //
+  // ⚠️ 但「封分」和「亮件」是两笔账，谁让路由 Glen 裁定（「第三家 10 分要不要
+  // 打 A 封」的第 2 种情况）：
+  //   「如果此门副牌不长，但也不短，大概 5 张，没有出过件的情况，最好也是不杀，
+  //     风险一样……如果判断件有可能在自己对家，然后自己还有大牌，比如 Q 或是 J 多，
+  //     可以逼别人的件出来的情况，特别是别人可能只剩一件，逼出来之后，
+  //     别人的甩牌自己可能可以大，也可以杀。」
+  // 这门【一支件都还没现过】时，亮出第一支就是把这门的甩牌资格从零推起来，
+  // 比桌上那 10 分重得多 —— 所以「封住最后一家」这个理由对这种候选不成立。
+  // 例外就是他给的那条：件可能在对家（对家在这门求过牌），而且逼出来之后
+  // 这门的顶端还在我手上（forcesPiecesOut）—— 那时候件是逼出来给自己用的。
+  //
+  // 代码里原来留着一条注释说这一档「还没有裁定，没裁定的事不写成断言」，现在裁定了。
+  //
+  // ⚠️ 这条【不是挂在候选上，是挂在整墩上】。第一版写成「含件的候选不吃封分加成」，
+  // 一点用没有 —— 那 161 分的差距来自【垫小牌那个候选被罚】，不是打 ♠A 被奖。
+  // 要表达「这一墩不必封」，就得让整墩的封分账归零，垫小牌的那些候选才不挨罚。
+  score -= (coverNeedsFirstPiece(view, ctx) ? 0 : lastSeatPointRisk) *
+    24 * settings.inference * coverCaution * tuning.coverRiskWeight;
 
   // 还有后家时只是“暂时领先”，不能把桌面分当成已经收下。
   if (afterTeamWinning) score += 40 + totalPoints * (lastToAct ? 5 : 1);
   else score -= 30 + totalPoints * 8;
 
   // 分牌暴露是独立风险：后面还有人未出时，K/10/5 不能因“暂时领先”反而加分。
+  //
+  // ⚠️ 第三种「公开信息已排除反超」的情形：我这一手是满额主牌（毙牌或跟主），
+  // 而且外面没有任何一张更大的主牌还没现身 —— 这一墩已经落袋，带上去的分
+  // 一点风险都没有。原来只写了 publiclySafeThirdFeed / guaranteedPartnerControl
+  // 两个很窄的情形，毙牌完全不在里面，结果是：
+  //   带一张主 10 去毙 → 罚 candidatePoints × 12 = 120
+  //   多交一只小鬼去毙 → 只罚 keepValue × 0.25 = 40
+  // 于是电脑宁可多花一只鬼，也不肯把自己那张带分的主牌打出去。
+  // Glen 实战反馈③「鬼还是有乱出的情况」里剩下的那几例全是这个形状。
+  const unbeatableTake =
+    playersBehind > 0 && candidatePoints > 0 &&
+    after?.seat === you.seat && unbeatableTrumpPlay(view, ctx, cards);
   if (playersBehind > 0 && candidatePoints > 0) {
-    if (publiclySafeThirdFeed || guaranteedPartnerControl) {
-      // 只有公开信息已排除最后一家反超时，第三手才可以放心把分送给朋友。
+    if (publiclySafeThirdFeed || guaranteedPartnerControl || unbeatableTake) {
+      // 只有公开信息已排除反超时，才可以放心把分带上去 / 送给朋友。
       score += candidatePoints * 6;
     } else {
       score -= candidatePoints * 12 * pointCaution * tuning.pointExposureWeight;
@@ -1910,7 +2142,10 @@ function scoreFollow(view, cards, ctx) {
   //   「如果判断对家有甩牌条件，则要给他」—— 贡献之后这门就齐了，那就给；
   //   「如果在牌局中后段，看不出来他是很强势的牌，则不应该这么打」。
   const partnerProbe =
-    lead.seat === partnerSeatOf(you.seat) && isPieceRequestLead(lead.cards, ctx);
+    lead.seat === partnerSeatOf(you.seat) &&
+    isPieceRequestLead(lead.cards, ctx) &&
+    // 我方在这门已经求过一次了 —— 这一张小牌不是新的求件（Glen）
+    !teamAskedPieceBefore(view, ctx, lead.playSuit, you.team);
   if (partnerProbe && donatedPieces > 0) {
     // unseenPieces = 我看不见的件（在队友或对手手上）。我打出【自己】的件，
     // 对队友而言就是把一张「未现」变成「已现」，他离甩牌条件更近一步。
@@ -1949,8 +2184,16 @@ function scoreFollow(view, cards, ctx) {
   // 注：不为「对手正在求这门」再单独加档 —— 他能甩多长 maxOpponentSuitEstimate
   // 已经算过了，再乘一次是重复计数，会把等效门槛从 25 分推到 37 分，
   // 高出 Glen 说的「20 分甚至 30 分」一截。
-  const partnerAsked = partnerProbe ? { suit: lead.playSuit } : partnerRequest(view, ctx);
-  const exposureRisk = pieceExposureRisk(view, ctx, cards, partnerAsked?.suit ?? null, tuning);
+  // ⚠️ 这里改了口径：原来只要【队友最近领过这门】就整条豁免，不管他领的是
+  // 什么牌。可 Glen 的原话是「如果对家【有表示】，那是可以很没压力地出件的」，
+  // 表示 = 求件（领 5 以下的小牌），领一张 A 不是表示。
+  // 旧口径还有一个直接后果：他贡献完件、随手回一张小牌，也照样把豁免续上，
+  // 于是上面那条「只认第一次」被架空 —— 两处必须一起改才管用。
+  const request = partnerProbe
+    ? { suit: lead.playSuit, seeking: true }
+    : partnerRequest(view, ctx);
+  const partnerAskedSuit = request?.seeking ? request.suit : null;
+  const exposureRisk = pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning);
   if (exposureRisk > 0) {
     // ⚠️ 这里【不】再单独减一遍「这一墩的分」。Glen 的例外（「20 分甚至 30 分那种
     // 大利益也可以冒险」）已经由下面的接管加分表达了 —— 那一条本来就是

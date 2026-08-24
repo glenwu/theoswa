@@ -1869,3 +1869,385 @@ test('开局：庄家有大鬼但不够保底 → 仍走「带分吊主」那条
   assert.notEqual(lead.rank, 2, '不是级牌');
   assert.notEqual(lead.rank, 16, '更不是大鬼');
 });
+
+// Glen 实战反馈②：「我方甩一门牌后，BOT 把这门牌下完，然后贴其它门牌的时候
+// 不知道为什么放了小鬼在里边，也不是给逼出来。」
+//
+// 根因不在牌值表，在候选形状：followCandidates 给「凑张数」的位置也生成了
+// highCards（挑最大的几张）。可混合花色的一手【永远】参与不了比大小
+//（server/trick.js trickLeader 分支 A 只认满额跟花色 / 满额主牌毙），
+// 所以那几张挑大的一分也换不回来。评分器反而偏爱它：
+//   垫两张 ♦5 送出 10 分 → candidatePoints × 14 = −140
+//   白扔小鬼 + 小主       → keepValue × 0.25  = −61
+// 而护鬼那条规则要求 early（手牌 > 8 张），甩牌多发生在中后段，这里一分保护都没有。
+//
+// 手牌 7 张、非鬼牌 6 张、只需凑 2 张 —— 规则上完全逼不出这张鬼。
+// 改之前实测：400 局里有 25 次这样【有得选却仍然把鬼垫掉】，改之后 0 次
+//（还剩 8 次是手牌真不够，规则逼的）。见 scripts/audit/joker-discard-decisions.mjs。
+test('垫牌：赢不下的一墩里，绝不拿鬼去凑张数', () => {
+  const view = followView({
+    seat: 2,
+    hand: [
+      T('S', 9, 0), T('S', 7, 1),   // 这门只剩两张，对手甩四张
+      T('JOKER', 15, 2),            // 小鬼
+      T('H', 8, 3),                 // 一张小主
+      T('D', 10, 4), T('D', 5, 5), T('D', 5, 6),
+    ],
+    currentTrick: [{
+      seat: 1, playSuit: 'S',
+      cards: [T('S', 14, 90), T('S', 14, 91), T('S', 12, 92), T('S', 11, 93)],
+    }],
+  });
+  const cards = chooseFollowCards(view);
+  const shown = cards.map(c => `${c.suit}${c.rank}`).join(' ');
+  assert.equal(
+    cards.filter(c => c.rank === 15 || c.rank === 16).length, 0,
+    `这一墩怎么打都赢不下，鬼扔进去一分换不回来，却打了：${shown}`
+  );
+  assert.equal(cards.filter(c => c.suit === 'S').length, 2, '这门有几张就得跟几张');
+});
+
+// 反向保护：别把 highCards 一并从【能赢的位置】拿掉。
+// 满额跟花色是要比大小的，该出大的时候就得出大的。
+test('垫牌：能满额跟这门时，仍然会用大牌去争这一墩的分', () => {
+  const view = followView({
+    seat: 3, // 最后一家；桌上 20 分正被对手(2)的 ♠K 领着
+    hand: [T('S', 14, 0), T('S', 4, 1), T('D', 4, 2), T('D', 6, 3), T('C', 7, 4)],
+    currentTrick: [
+      { seat: 0, playSuit: 'S', cards: [T('S', 10, 90)] },
+      { seat: 1, playSuit: 'S', cards: [T('S', 3, 91)] },
+      { seat: 2, playSuit: 'S', cards: [T('S', 13, 92)] },
+    ],
+  });
+  assert.equal(chooseFollowCards(view)[0].rank, 14, '20 分在桌上被对手领着、我是最后一家，♠A 就该拿下');
+});
+
+// ---- Glen 实战反馈①：「件还是容易打出来」----
+//
+// 「一方 BOT 求了个件，对方打出来后又打了个 5 以下，其实这个时候已经不代表求件了，
+//   因为之前对家已经求过，我似乎看到他们互出件，然后给我方甩牌。」
+//
+// 裁定：求件是一次性的表态。我方在一门副牌上只有一次求件机会 ——
+// 第一次领小牌是在问「你有没有件」，队友答过之后，同门再领小牌只是普通打法。
+
+test('求件应答：这门我方已经求过一次 → 队友再领小牌不算求件，不再贡献', () => {
+  const view = contributionView({ unseen: 1 });
+  // 队友（座 0）之前已经在♠求过一次件，而且那一墩是我方赢下的
+  view.round.trickHistory = [{
+    leadSeat: 0, leadSuit: 'S', winnerSeat: 2,
+    plays: [
+      { seat: 0, playSuit: 'S', cards: [T('S', 3, 80)] },
+      { seat: 1, playSuit: 'S', cards: [T('S', 7, 81)] },
+      { seat: 2, playSuit: 'S', cards: [T('S', 14, 82)] },
+      { seat: 3, playSuit: 'S', cards: [T('S', 8, 83)] },
+    ],
+  }];
+  const cards = chooseFollowCards(view);
+  assert.notEqual(
+    cards[0].rank, 13,
+    `这门已经求过一次了，再贡献一支 ♠K 只是把「未现」变「已现」，却打了 ${cards[0].suit}${cards[0].rank}`
+  );
+});
+
+// partnerSideProtocolChoice 里的 asksForPiece 原来写成
+// 「cardPoints > 0 || 不是件」= 朋友单张领这门、只要不是副 A 就算求件，
+// 6/7/8/9/J/Q 全算 —— 而这条约定带 +700 加分，稳压亮件代价。
+// 求件的判据全项目只有一个：单张、本身不是件、5 以下或者 10。
+test('求件应答：队友领 ♠9 不是求件 → 第三家不该把 ♠A 交出去', () => {
+  const view = followView({
+    seat: 2, // 第三家，partnerSideProtocolChoice 只在这个位置生效
+    hand: [T('S', 14, 0), T('S', 8, 1), T('S', 3, 2),
+      ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10))],
+    currentTrick: [
+      { seat: 0, playSuit: 'S', cards: [T('S', 9, 90)] },   // 队友领 ♠9：不是求件
+      { seat: 1, playSuit: 'S', cards: [T('S', 7, 91)] },
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' }],
+      D: [], C: [],
+    },
+  });
+  const cards = chooseFollowCards(view);
+  assert.notEqual(
+    cards[0].rank, 14,
+    `一墩零分、队友领的又不是求件牌，♠A 交出去纯粹是替对手凑甩牌资格，却打了 ${cards[0].suit}${cards[0].rank}`
+  );
+});
+
+// 反向保护：真正的求件仍然要应。别把上面两条收得连正经约定都触发不了。
+test('求件应答：队友领 ♠4（真求件）→ 第三家照样把 ♠A 贡献出去', () => {
+  const view = followView({
+    seat: 2,
+    hand: [T('S', 14, 0), T('S', 8, 1), T('S', 3, 2),
+      ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10))],
+    currentTrick: [
+      { seat: 0, playSuit: 'S', cards: [T('S', 4, 90)] },   // 队友领 ♠4：明确求件
+      { seat: 1, playSuit: 'S', cards: [T('S', 7, 91)] },
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' }],
+      D: [], C: [],
+    },
+  });
+  assert.equal(chooseFollowCards(view)[0].rank, 14, '队友明确求件，件就该给');
+});
+
+// ---- Glen 实战反馈③：「鬼还是有乱出的情况」----
+//
+// 复核下来鬼的出牌整体已经很干净（前中段「有得选却白打」400 局里 1 次），
+// 剩下的是这一个形状：毙牌时候选只有两个极端 ——
+//   最便宜的那组（可后面还有两家能压过去，而且往往带着自家的分牌）
+//   和 highCards 那组（安全，可要一口气交两只鬼）
+// 中间那个正解「一支够大的 + 一支最便宜的」从来没被生成过，
+// 而这正是 Glen 上一轮给的判据：「看的只是最大那支，一支大鬼还有一支小牌即可」。
+// 根因在 followCandidates 的 economical：它在第一组【眼前赢得下】的地方就 return 了，
+// 而 trickLeader 只判半墩，不知道后面还有人没出。
+//
+// 对手甩 ♦A♦K，我方缺门要毙。手上 3 张鬼 + H2/H14/H11/H10/H3。
+function killLadderView(defenderTrickPoints) {
+  return followView({
+    seat: 2,
+    hand: [
+      T('JOKER', 16, 0), T('JOKER', 15, 1), T('JOKER', 15, 2),
+      T('H', 2, 3), T('H', 14, 4), T('H', 11, 5), T('H', 10, 6), T('H', 3, 7),
+    ],
+    currentTrick: [{ seat: 1, playSuit: 'D', cards: [T('D', 14, 90), T('D', 13, 91)] }],
+    defenderTrickPoints,
+  });
+}
+
+// 闲家已吃 75 分 + 这一墩 10 分 ≥ 80，「毙下去也不影响底」那条不再生效，
+// 于是旧代码只剩 [大鬼,小鬼] 和 [H3,H10] 两个候选，选了前者。
+test('毙牌：一支够大的配一支最便宜的就够了，不许一口气交两只鬼', () => {
+  const cards = chooseFollowCards(killLadderView(75));
+  const shown = cards.map(c => `${c.suit}${c.rank}`).join(' ');
+  assert.ok(
+    cards.filter(c => c.rank === 15 || c.rank === 16).length <= 1,
+    `判牌只比最大那一张，一支够大的配一支小主就行，却交了：${shown}`
+  );
+});
+
+// 同一手牌，闲家已吃 75 → 60（这一墩后仍不到 80）。
+// 这里考的是另一半：最便宜的那组 [H3,H10] 会把自家带 10 分的主牌垫进去，
+// 而后面还有两家 —— 有了阶梯之后就该挑「够大 + 最便宜」而不是「最小 + 带分」。
+test('毙牌：有阶梯可选时，不把自家带分的主牌塞进这一毙', () => {
+  const cards = chooseFollowCards(killLadderView(60));
+  const shown = cards.map(c => `${c.suit}${c.rank}`).join(' ');
+  assert.equal(
+    cards.reduce((sum, c) => sum + cardPointsOf(c), 0), 0,
+    `后面还有两家未出，主 10 塞进去等于把分挂在外面，却打了：${shown}`
+  );
+});
+
+// 「公开信息已经排除反超」的第三种情形：满额主牌、外面没有更大的主牌没现身。
+// 这一墩已经落袋，带上去的分一点风险都没有，不该按分牌暴露罚 ——
+// 否则电脑宁可多花一只鬼也不肯把自己的主 10 打出去。
+test('毙牌：外面没有更大的主牌了，带分的主牌就可以放心打出去', () => {
+  // 主 H、级 2。比主花色 A 更大的主牌一共 12 张：大鬼 2、小鬼 2、
+  // 主级牌 H2 两张、副级牌 S2/D2/C2 各两张 —— 全部让它们现身。
+  // 另一张 H14 仍未现，但同强度后出者不大，威胁不到我。
+  const spentTrick = (i, cards) => ({
+    leadSeat: 0, leadSuit: 'TRUMP', winnerSeat: 0,
+    plays: cards.map((card, k) => ({ seat: k, playSuit: 'TRUMP', cards: [card] })),
+  });
+  const view = followView({
+    seat: 2,
+    hand: [T('H', 14, 0), T('H', 10, 1), T('H', 3, 2), T('H', 4, 3),
+      T('C', 9, 4), T('C', 8, 5)],
+    currentTrick: [{ seat: 1, playSuit: 'D', cards: [T('D', 14, 90), T('D', 13, 91)] }],
+    trickHistory: [
+      spentTrick(0, [T('JOKER', 16, 20), T('JOKER', 16, 21), T('JOKER', 15, 22), T('JOKER', 15, 23)]),
+      spentTrick(1, [T('H', 2, 24), T('H', 2, 25), T('S', 2, 26), T('S', 2, 27)]),
+      spentTrick(2, [T('D', 2, 28), T('D', 2, 29), T('C', 2, 30), T('C', 2, 31)]),
+    ],
+  });
+  const choices = evaluateFollowChoices(view);
+  const withTen = choices.find(c =>
+    c.cards.some(x => x.suit === 'H' && x.rank === 14) &&
+    c.cards.some(x => x.suit === 'H' && x.rank === 10));
+  const without = choices.find(c =>
+    c.cards.some(x => x.suit === 'H' && x.rank === 14) &&
+    !c.cards.some(x => x.suit === 'H' && x.rank === 10));
+  assert.ok(withTen && without, '两种毙法都该在候选里');
+  assert.ok(
+    withTen.score > without.score - 60,
+    `H14 已经压不倒了，带上主 10 一点风险没有，不该被当成「分牌暴露」重罚：` +
+    `带 10 分 ${withTen.score.toFixed(0)}，不带 ${without.score.toFixed(0)}`
+  );
+});
+
+// ---- 第三家 10 分要不要打 A 封：Glen 的第 2 种情况 ----
+//
+// 「如果此门副牌不长，但也不短，大概 5 张，没有出过件的情况，最好也是不杀，
+//   风险一样，如果判断件有可能在自己对家，然后自己还有大牌，比如 Q 或是 J 多，
+//   可以逼别人的件出来的情况，特别是别人可能只剩一件，逼出来之后，
+//   别人的甩牌自己可能可以大，也可以杀。」
+//
+// 这一档以前是【故意没裁定】的（上面那条 5 分测试的注释里写着「10 分那档实测
+// 仍然会打 ♠A，但那是封分，两笔账，没裁定的事不写成断言」）。现在裁定了：
+// 这门一支件都没现过时，「封住最后一家」不构成亮出第一支件的理由。
+//
+// ⚠️ 这条挂在【整墩】上而不是候选上 —— 那 161 分的差距来自「垫小牌的候选被罚」，
+// 不是「打 ♠A 被奖」。挂在候选上一点用没有（第一版就是这么写的）。
+//
+// 对手(1)领 ♠4，队友(0)跟 ♠10 —— 桌上 10 分，我是第三家，最后一家还没出。
+function aceCoverView({ spades, partnerAsked }) {
+  return followView({
+    seat: 2, declarerSeat: 1,
+    hand: [...spades.map((r, i) => T('S', r, i)),
+      ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10))],
+    currentTrick: [
+      { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },
+      { seat: 0, cards: [T('S', 10, 91)] },
+    ],
+    trickHistory: partnerAsked ? [{
+      leadSeat: 0, leadSuit: 'S', winnerSeat: 1,
+      plays: [
+        { seat: 0, playSuit: 'S', cards: [T('S', 3, 80)] },   // 对家求过这门
+        { seat: 1, playSuit: 'S', cards: [T('S', 7, 81)] },
+        { seat: 2, playSuit: 'S', cards: [T('S', 5, 82)] },
+        { seat: 3, playSuit: 'S', cards: [T('S', 8, 83)] },
+      ],
+    }] : [],
+    piecesView: {
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' }],
+      D: [], C: [],
+    },
+  });
+}
+
+test('打A封：这门一支件都没现过 → 桌上 10 分也不杀', () => {
+  const card = chooseFollowCards(aceCoverView({ spades: [14, 9, 6, 3], partnerAsked: false }))[0];
+  assert.notEqual(card.rank, 14,
+    `亮出这门第一支件 = 把甩牌资格从零推起来，比这 10 分重，却打了 ${card.suit}${card.rank}`);
+});
+
+test('打A封：对家求过这门，但我逼不出件（♠A 之下只有 9/6/3）→ 还是不杀', () => {
+  const card = chooseFollowCards(aceCoverView({ spades: [14, 9, 6, 3], partnerAsked: true }))[0];
+  assert.notEqual(card.rank, 14, '光知道件在对家没用，还得逼得动才值得亮');
+});
+
+test('打A封：对家求过 + 件逼出来后这门顶端还在我手上 → 可以杀', () => {
+  const card = chooseFollowCards(aceCoverView({ spades: [14, 12, 11, 9], partnerAsked: true }))[0];
+  assert.equal(card.rank, 14,
+    '件在对家、逼出来之后 ♠Q 就是这门最大的，「别人的甩牌自己可能可以大」');
+});
+
+test('打A封：能逼件但读不出件在对家 → 两条要同时成立，不杀', () => {
+  const card = chooseFollowCards(aceCoverView({ spades: [14, 12, 11, 9], partnerAsked: false }))[0];
+  assert.notEqual(card.rank, 14, '谁都没在这门求过牌，件多半不在对家，逼出来是替对手凑资格');
+});
+
+// 缺门整手垫牌也一样：赢不下的位置不许挑最大的几张。
+// 上面那条钉的是「跟了几张花色 + 凑张数」，这条钉的是「这门一张没有，整手垫」。
+// 主牌只有 3 张、对手甩 4 张 —— 毙不了，怎么打都赢不下。
+// 手上便宜的牌全是分牌，垫出去要按 candidatePoints × 14 罚，
+// 于是「挑最大的几张」（小鬼 + 两张小主 + ♦10）反而只罚 keepValue × 0.25 —— 正是那个洞。
+test('垫牌：缺门整手垫出去时，也不许拿鬼去凑张数', () => {
+  const view = followView({
+    seat: 2,
+    hand: [T('JOKER', 15, 0), T('H', 4, 1), T('H', 3, 2),
+      T('D', 5, 3), T('D', 5, 4), T('D', 5, 5), T('D', 10, 6)],
+    currentTrick: [{
+      seat: 1, playSuit: 'S',
+      cards: [T('S', 14, 90), T('S', 14, 91), T('S', 13, 92), T('S', 12, 93)],
+    }],
+  });
+  const cards = chooseFollowCards(view);
+  assert.equal(
+    cards.filter(c => c.rank === 15 || c.rank === 16).length, 0,
+    `主牌不够毙、这一墩赢不下，鬼扔进去一分换不回来，却打了：${cards.map(c => `${c.suit}${c.rank}`).join(' ')}`
+  );
+});
+
+// 一次性求件的第二个出口：第三家的约定贡献（partnerSideProtocolChoice，+700 加分）。
+// 上面那条钉的是第二家的评分加成，这条走的是完全不同的代码路径。
+function thirdSeatProbeView(repeatAsk) {
+  return followView({
+    seat: 2, declarerSeat: 1,
+    hand: [T('S', 13, 0), T('S', 9, 1), T('S', 6, 2), T('S', 3, 3),
+      ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10))],
+    currentTrick: [
+      { seat: 0, playSuit: 'S', cards: [T('S', 4, 90)] },   // 队友求件
+      { seat: 1, cards: [T('S', 7, 91)] },
+    ],
+    trickHistory: repeatAsk ? [{
+      leadSeat: 0, leadSuit: 'S', winnerSeat: 2,
+      plays: [
+        { seat: 0, playSuit: 'S', cards: [T('S', 3, 80)] }, // 这门我方之前已经求过一次
+        { seat: 1, playSuit: 'S', cards: [T('S', 7, 81)] },
+        { seat: 2, playSuit: 'S', cards: [T('S', 14, 82)] },
+        { seat: 3, playSuit: 'S', cards: [T('S', 8, 83)] },
+      ],
+    }] : [],
+    piecesView: {
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+      D: [], C: [],
+    },
+  });
+}
+
+test('求件应答：第三家 —— 首次求件照样贡献 ♠K', () => {
+  assert.equal(chooseFollowCards(thirdSeatProbeView(false))[0].rank, 13);
+});
+
+test('求件应答：第三家 —— 这门我方已经求过一次，就不再贡献', () => {
+  assert.notEqual(chooseFollowCards(thirdSeatProbeView(true))[0].rank, 13,
+    '+700 的约定加分压得过一切亮件代价，正因如此它的触发条件必须严');
+});
+
+// 领牌那一侧：「回队友这门」的求件加成（+160）同样只认第一次。
+// ⚠️ fixture 要卡在 400 和 560 之间才测得出来：
+//   回门 320 + 求件 160 + 队友做庄 80 = 560（求件成立）/ 400（不成立）
+//   自己那门够格求件 seek-piece = 450
+// 所以梅花必须是【最长的门】—— 否则 develop-long-side-suit 的 360 会叠到方块上，
+// 810 稳压回门，两种情况都选方块，什么也钉不住（第一版就栽在 ♣2 是级牌、
+// 梅花实际只有 6 张、和方块打平这件事上）。
+function returnSuitLeadView(repeatAsk) {
+  const trick = (no, leadCard, mine, winner) => ({
+    leadSeat: 0, leadSuit: 'S', winnerSeat: winner, trickNo: no,
+    plays: [
+      { seat: 0, playSuit: 'S', cards: [leadCard] },
+      { seat: 1, cards: [T('S', 7, no * 10 + 1)] },
+      { seat: 2, cards: [mine] },
+      { seat: 3, cards: [T('S', 8, no * 10 + 3)] },
+    ],
+  });
+  const history = [];
+  if (repeatAsk) history.push(trick(1, T('S', 4, 80), T('S', 9, 82), 0));
+  history.push(trick(2, T('S', 3, 84), T('S', 11, 86), 2));
+  return leadView({
+    mySeat: 2, declarerSeat: 0, trickHistory: history,
+    hand: [
+      ...[9, 8, 7, 6, 5, 4, 3].map((r, i) => T('C', r, i)),      // 梅花 7 张，最长
+      ...[14, 13, 10, 9, 8, 7].map((r, i) => T('D', r, i + 10)), // 方块 6 张、两件在手
+      ...[6, 5].map((r, i) => T('S', r, i + 20)),                // 队友那门还有牌
+      ...[5, 4, 3].map((r, i) => T('H', r, i + 30)),
+    ],
+    piecesView: {
+      S: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
+      D: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+      C: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
+    },
+  });
+}
+
+test('领牌：队友第一次求件 → 拿到牌权就把这门回过去', () => {
+  assert.equal(chooseLeadCards(returnSuitLeadView(false))[0].suit, 'S');
+});
+
+test('领牌：队友这门已经求过一次 → 不再当求件，转去自己那门求件', () => {
+  assert.equal(chooseLeadCards(returnSuitLeadView(true))[0].suit, 'D',
+    '他贡献完件再领一张小牌，那是牌权到手随手往回打，不是新的求件');
+});
+
+test('打A封：打完这张这门只剩一张 → 压不住甩牌，不算「逼出来我可以大」', () => {
+  const card = chooseFollowCards(aceCoverView({ spades: [14, 12], partnerAsked: true }))[0];
+  assert.notEqual(card.rank, 14,
+    '顶端再大，只剩一张也只压得住单张 —— 别拿这个当亮件的理由');
+});

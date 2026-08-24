@@ -6,7 +6,9 @@ runMutants([
   [F, 'if (partnerProbe && donatedPieces > 0) {', 'if (false && donatedPieces > 0) {', '拿掉「队友求件时贡献件」'],
   [F, "if (unseenPieces <= 1) bonus += 320;", 'if (unseenPieces <= 1) bonus += 0;', '未现件只剩一件时不再额外加分'],
   [F, 'score += bonus * settings.inference * tuning.conventionPriorWeight;', 'score += bonus * tuning.conventionPriorWeight;', 'easy 电脑也会求件应答'],
-  [F, 'lead.seat === partnerSeatOf(you.seat) && isPieceRequestLead(lead.cards, ctx)', 'lead.seat !== partnerSeatOf(you.seat) && isPieceRequestLead(lead.cards, ctx)', '把对手求件当成队友求件'],
+  [F, '    lead.seat === partnerSeatOf(you.seat) &&\n    isPieceRequestLead(lead.cards, ctx) &&',
+      '    lead.seat !== partnerSeatOf(you.seat) &&\n    isPieceRequestLead(lead.cards, ctx) &&',
+      '把对手求件当成队友求件'],
   [F, 'cards.every(card => card.rank <= 5 || card.rank === 10)', 'cards.every(card => true)', '领任何牌都算求件信号'],
   // 旧的「对手求件时罚 320、有分打 0.45 折」已并进 scoreFollow 的「亮件的代价」，
   // 这里改钉新规则里对应的那一半：这门的件全现了就不该再罚。
