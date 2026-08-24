@@ -798,6 +798,12 @@ const PIECE_EXPOSURE_COST = 240;
 const PIECE_THREAT_BASELINE = 4;
 const PIECE_THREAT_MIN = 0.5;
 const PIECE_THREAT_MAX = 2;
+// 读牌对风险的缩放（Glen 的三档，且他强调「不能是 100%」，所以都不是 0）：
+//   对家求过这门 → 件多半在他那，亮出去多半是帮自己人凑齐
+//   谁都没求过   → 对手这门多半不强、件不多且很短
+//   对手求过     → 不缩放（保持原值），他正等着这门
+const PIECE_READ_PARTNER_ASKED = 0.35;
+const PIECE_READ_NOBODY_ASKED = 0.7;
 // 打完这一手之后这门只剩几张就算「快断了」。Glen：「如果自己这门已经快断了，
 // 比如打 A 后再捅多一支或两支就断了，可以毙别人，这个时候也可以吃。」
 const PIECE_NEAR_VOID_AFTER = 2;
@@ -1098,6 +1104,44 @@ function maxOpponentSuitEstimate(view, ctx, suit) {
   return worst;
 }
 
+// 这门的件大概在谁手上 —— 靠【谁在这门求过牌】来读（Glen）：
+//
+// 「首先看对家有没有求牌，如果有，一般情况下就在对家；其次看对手两个人有没有求牌，
+//   如果没求，那么多数情况下他们这门副牌肯定不强，件一般也不多，多的话也很短。
+//   通常会看『打这门牌的欲望』来判断该门牌的件在什么位置，
+//   但这也不能是 100%，因为有些人打法不一样，常理也会有例外。」
+//
+// ⚠️ 他自己点明了这不是 100%，所以只做【强先验】—— 缩放亮件的风险，
+// 不做一票豁免。「打这门牌的欲望」落成可观测行为：谁在这门领过求件牌
+//（5 以下的小牌或 10，判据复用 isPieceRequestLead）。
+function suitAskSignal(view, ctx, suit) {
+  const partner = partnerSeatOf(view.you.seat);
+  // ⚠️ 必须把【当前这一墩】也算进来 —— 眼前正在发生的求件才是最相关的信号。
+  // 只扫历史墩的话，对手这一墩刚领了张小牌来求这门，我却读成「谁都没求过」，
+  // 反而把风险调低了，正好读反。
+  const current = (view.round?.currentTrick ?? [])[0];
+  const leads = [
+    ...(view.round?.trickHistory ?? []).map(trick => ({
+      seat: trick.leadSeat, suit: trick.leadSuit, cards: trick.plays?.[0]?.cards ?? [],
+    })),
+    ...(current ? [{ seat: current.seat, suit: current.playSuit, cards: current.cards ?? [] }] : []),
+  ];
+  let partnerAsked = false;
+  let opponentAsked = false;
+  for (const lead of leads) {
+    if (lead.suit !== suit) continue;
+    if (!isPieceRequestLead(lead.cards, ctx)) continue;
+    if (lead.seat === partner) partnerAsked = true;
+    else if (lead.seat % 2 !== view.you.team) opponentAsked = true;
+  }
+  // ⚠️ 顺序按 Glen 的原话：「【首先】看对家有没有求牌，如果有，一般情况下就在对家；
+  // 【其次】看对手两个人有没有求牌」。两边都求过时以对家为准 ——
+  // 第一版把对手判在前面，结果队友那条信号永远没机会生效。
+  if (partnerAsked) return 'partner';   // 对家在要这门 —— 件多半在他那
+  if (opponentAsked) return 'opponent'; // 只有对手在要 —— 风险照旧，别亮
+  return null;                          // 谁都没求过
+}
+
 // 这一手里【亮出去几份件的风险】——领牌和跟牌共用同一份判据（Glen）。
 //
 // 「如果对家没表示，那么最好是不随便出，因为这个是冒险的行为。比如别人有三件，
@@ -1133,7 +1177,11 @@ function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
     const spentHere = cards.filter(item => suitOf(item, ctx) === suit).length;
     if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) return sum;
     const threat = maxOpponentSuitEstimate(view, ctx, suit) / PIECE_THREAT_BASELINE;
-    return sum + Math.min(PIECE_THREAT_MAX, Math.max(PIECE_THREAT_MIN, threat));
+    const signal = suitAskSignal(view, ctx, suit);
+    const read = signal === 'partner' ? PIECE_READ_PARTNER_ASKED
+      : signal === null ? PIECE_READ_NOBODY_ASKED
+      : 1;
+    return sum + Math.min(PIECE_THREAT_MAX, Math.max(PIECE_THREAT_MIN, threat)) * read;
   }, 0);
 }
 

@@ -41,6 +41,16 @@ export function runMutants(mutants, { command = 'npm', args = ['test'] } = {}) {
   process.on('SIGTERM', onSignal);
   process.on('uncaughtException', err => { restoreAll(); throw err; });
 
+  // ⚠️ 基线必须先是绿的：测试套件本来就红的话，每个变异体都会「被杀」，
+  // 输出「全灭 0 存活」看着完美，实际零信息量 —— 踩过一次，差点当成结论。
+  try {
+    execFileSync(command, args, { stdio: 'pipe' });
+  } catch {
+    restoreAll();
+    console.error('❌ 基线测试就是红的，变异测试没有意义 —— 先把测试修绿再跑。');
+    process.exit(1);
+  }
+
   let killed = 0, alive = 0, skipped = 0;
   try {
     for (const [file, oldStr, newStr, desc] of mutants) {

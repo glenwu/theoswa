@@ -4,6 +4,20 @@ import { runMutants } from './mutate.mjs';
 // 「吊主候选里不含鬼」「不挑主级牌」这两条已经移到 mutants4（和吊主的其它开关放一起）。
 const F = 'server/bot-policy.js';
 runMutants([
+  // ---- 读件的位置（Glen：看「打这门牌的欲望」，但不是 100%，所以只缩放不豁免）----
+  [F, '    const signal = suitAskSignal(view, ctx, suit);', "    const signal = 'opponent';",
+      '不读件的位置，一律按最坏算'],
+  [F, 'const PIECE_READ_PARTNER_ASKED = 0.35;', 'const PIECE_READ_PARTNER_ASKED = 1;',
+      '对家求过这门也照罚（读了等于没读）'],
+  [F, 'const PIECE_READ_NOBODY_ASKED = 0.7;', 'const PIECE_READ_NOBODY_ASKED = 1;',
+      '谁都没求过也照罚'],
+  [F, '    ...(current ? [{ seat: current.seat, suit: current.playSuit, cards: current.cards ?? [] }] : []),', '',
+      '只扫历史墩，看不见对手正在这一墩求件'],
+  [F, "  if (partnerAsked) return 'partner';   // 对家在要这门 —— 件多半在他那", '',
+      '对家求过也当成没人求'],
+  [F, "  if (partnerAsked) return 'partner';   // 对家在要这门 —— 件多半在他那\n  if (opponentAsked) return 'opponent'; // 只有对手在要 —— 风险照旧，别亮",
+      "  if (opponentAsked) return 'opponent';\n  if (partnerAsked) return 'partner';",
+      '优先级反过来（对手在前，对家那条永远轮不到）'],
   // ---- 亮件的代价（Glen：「对家没表示就别随便出，这是冒险的行为」）----
   [F, '  if (exposureRisk > 0) {', '  if (false) {', '亮件完全没有代价'],
   [F, 'const PIECE_EXPOSURE_COST = 240;', 'const PIECE_EXPOSURE_COST = 40;', '亮件的代价小到可以忽略'],
