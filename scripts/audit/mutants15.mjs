@@ -21,4 +21,12 @@ runMutants([
   [F, `    const scale = roundStrategy(view, ctx, bottomControlOf(view, ctx)) === 'points-first'
       ? tuning.pointsFirstPieceWeight
       : 1;`, '    const scale = 1;', '闲家吃分为主这条策略没接到出牌上'],
+
+  // ---- 策略接到领牌上 ----
+  [F, `      (160 + (strategy === 'run-side' || strategy === 'run-and-score'
+        ? STRATEGY_RUN_SIDE_BONUS : 0)) * tuning.leadStrategyPriorWeight,`,
+      '      160 * tuning.leadStrategyPriorWeight,', '「以跑副牌为主」没接到领牌上'],
+  [F, "        ? (trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520)",
+      '        ? (trumpSignalAnswered(view, ctx) ? 0 : 520)',
+      '已经改跑分为主的庄家还在吊主'],
 ]);

@@ -1029,6 +1029,53 @@ test('策略惯性：同一手牌，但我自己一直在吊主 → 继续吊主
     '差一张就改策略的话，就谈不上「一直跟随这个策略去打」');
 });
 
+// ---- 策略接到领牌上（Glen：「一直跟随这个策略支持去打」）----
+//
+// 需要一个【两种策略会给出不同答案】的局面，否则钉不住接线本身：
+//   · 对手连着领了两墩黑桃 → opponentThreatSuit = ♠，attack 提案 250 分
+//   · 我最长的副牌是方块   → develop 提案 160 分
+// 不加策略：attack(250) > develop(160) → 领黑桃。
+// 「以跑副牌为主」：develop 抬到 360 → 改领方块。
+// 「吃分为主」：attack 抬到 450 → 仍领黑桃（打别人不想自己打的牌）。
+//
+// ⚠️ 主牌那一头必须让两个 fixture 都【不会去吊主】，否则吊主提案(520)一出来
+// 两边都领主牌，副牌之间的差别就被盖掉了 —— 这是这一整轮里踩了三次的坑。
+const OPPONENT_LED_SPADES = [
+  { trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0, plays: [] },
+  { trickNo: 2, leadSeat: 3, leadSuit: 'S', winnerSeat: 3, points: 0, plays: [] },
+];
+
+// 双大鬼 + 9 张主 → control.guaranteed → 策略 run-side，且吊主提案本来就被关掉
+const RUN_SIDE_HAND = [
+  T('JOKER', 16, 0), T('JOKER', 16, 1),
+  ...[13, 12, 11, 10, 9, 8, 7].map((r, i) => T('H', r, i + 2)),
+  ...[9, 6].map((r, i) => T('S', r, i + 40)),                    // 黑桃 2 张
+  ...[10, 8, 7, 5, 4].map((r, i) => T('D', r, i + 50)),          // 方块 5 张 = 最长副牌
+];
+
+test('策略领牌：以跑副牌为主 → 领自己最长的副牌，而不是去打对手的门', () => {
+  const view = leadView({
+    hand: RUN_SIDE_HAND, declarerSeat: 0, mySeat: 0, trickHistory: OPPONENT_LED_SPADES,
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'run-side', '前提：策略确实是跑副牌');
+  assert.equal(chooseLeadCards(view)[0].suit, 'D', '跑副牌就该走自己最长的那门');
+});
+
+// 成对：同一批已出牌、同一个对手威胁门，只把手牌换成「保底无望」→ 策略变吃分为主。
+// 这时该反过来打对手的黑桃（Glen：「核心是打别人不想自己打的牌」）。
+test('策略领牌：吃分为主 → 反过来打对手一直在领的那门', () => {
+  const view = leadView({
+    hand: [
+      ...[7, 5, 3].map((r, i) => T('H', r, i)),                  // 3 张小主，顶牌没有、主也不长
+      ...[9, 6].map((r, i) => T('S', r, i + 40)),
+      ...[10, 8, 7, 5, 4].map((r, i) => T('D', r, i + 50)),
+    ],
+    declarerSeat: 0, mySeat: 0, trickHistory: OPPONENT_LED_SPADES,
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'points-first', '前提：策略确实是吃分为主');
+  assert.equal(chooseLeadCards(view)[0].suit, 'S', '打别人不想自己打的牌');
+});
+
 // ============ 甩尾手（长期计划打法）============
 //
 // Glen：「计划起手然后甩一手长的副牌达到保底或是撬底的目的。这样的打法一般

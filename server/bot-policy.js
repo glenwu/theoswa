@@ -806,6 +806,11 @@ const PIECE_NEAR_VOID_AFTER = 2;
 // 要压得过接管加分（最后一家时是 100 + 分×10 + 45），否则拦不住。
 const OVER_KILL_PENALTY = 1200;
 
+// 本局策略对领牌的加权。数值挑在「够翻得动兜底选项、但压不过约定打法」这个区间：
+// develop-long-side-suit 本身 160，加上之后 360 —— 高过 attack-opponent-long-suit(250)，
+// 仍低于 seek-piece(450) 和各种约定（620+），不会把 Glen 定过的那些打法盖掉。
+const STRATEGY_RUN_SIDE_BONUS = 200;
+
 function playedCardsOf(view) {
   return [
     ...(view.round?.trickHistory ?? []).flatMap(trick =>
@@ -1393,12 +1398,25 @@ export function chooseLeadCards(view) {
   // 吊主正是在削减对手手上的主牌，等他们凑不出足够的主，尾巴那一甩才毙不住。
   // Glen：「求到件了可以转吊主」。
   const planPending = plan !== null && !plan.ready;
+
+  // ---- 本局策略接到领牌上（Glen：「一直跟随这个策略支持去打」）----
+  //
+  // ⚠️ 吊主那一段【故意不动】：那里压着 Glen 七轮实战反馈调出来的判据
+  //（信号应答、保底成立、副牌够强、清顶、开局先放小牌……），策略层越过它们
+  // 重写一遍只会把那些判据推翻。这里只接目前【完全没有表达】的那一半：
+  //   run-side / run-and-score → 「以跑副牌为主」（Glen 对这两种策略的原话）
+  //   points-first             → 「核心是打别人不想自己打的牌，多找机会吃分」
+  const strategy = roundStrategy(view, ctx, control);
   if (!opening && drawPool.length > 0 && outstandingTrumps > 0 &&
       !control.guaranteed && (!strongSide || planPending)) {
     const drawBonus =
       planPending ? 560                                                // 为尾巴削对手的主
-      // 队友已经应了「不用吊主」→ 转去跑副牌保底，别再削对手的主
-      : role === 'declarer' ? (trumpSignalAnswered(view, ctx) ? 0 : 520)
+      // 队友已经应了「不用吊主」→ 转去跑副牌保底，别再削对手的主。
+      // 策略已经是「跑分为主」（保底不现实）→ 同样别再吊：Glen 明说这时候
+      // 「就可以改为跑分为主」，一个已经放弃保底的庄家再拿仅剩的主牌去吊，
+      // 既削不动对手，也换不回分 —— 这就是「一直跟随这个策略去打」的意思。
+      : role === 'declarer'
+        ? (trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520)
       : role === 'declarerPartner'
         // 收到庄家「带分吊主」的信号而自己确实有大鬼 → 转打副牌，
         // 这本身就是「不用吊主」的表达（Glen）。否则照常跟庄家路子。
@@ -1498,6 +1516,11 @@ export function chooseLeadCards(view) {
   if (threatSuit) {
     addProposal(
       [lowestLead(cardsOfSuit(hand, threatSuit, ctx), ctx)],
+      // ⚠️ 这里【故意没有】给「吃分为主」再加一份。试过 +200，变异测试显示它
+      // 改变不了任何决策：points-first 时 develop 的加分本来就不适用
+      //（那是 run-side 专属），attack(250) 已经稳压 develop(160)。
+      // 「打别人不想自己打的牌」这个意思，靠的是【压掉吊主之后 attack 自然胜出】，
+      // 不需要第二份加分。它唯一能改变的是和求件(450) 打平，没有依据这么做。
       250 * tuning.leadStrategyPriorWeight,
       'attack-opponent-long-suit'
     );
@@ -1514,7 +1537,9 @@ export function chooseLeadCards(view) {
     const lowNoPoint = lowestLead(long.filter(card => cardPoints(card) === 0), ctx);
     addProposal(
       [lowNoPoint ?? lowestLead(long, ctx)],
-      160 * tuning.leadStrategyPriorWeight,
+      // 「以跑副牌为主」的两种策略下，发展长副牌不再只是兜底选项
+      (160 + (strategy === 'run-side' || strategy === 'run-and-score'
+        ? STRATEGY_RUN_SIDE_BONUS : 0)) * tuning.leadStrategyPriorWeight,
       'develop-long-side-suit'
     );
   }
