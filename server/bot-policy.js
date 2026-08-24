@@ -352,6 +352,22 @@ function pieceBurialCost(hand, buried, ctx) {
   return cost;
 }
 
+// 手上【原本就有牌】的副牌门 —— 埋底搜索的不变量，按 hand 记忆化。
+// 同一次 improveKittyPlan 里 hand 始终是同一个数组对象，所以 WeakMap 正好。
+const HAND_SUIT_CACHE = new WeakMap();
+function handSuitPresence(hand, ctx) {
+  let byCtx = HAND_SUIT_CACHE.get(hand);
+  if (!byCtx) { byCtx = new Map(); HAND_SUIT_CACHE.set(hand, byCtx); }
+  const key = `${ctx.trumpSuit}-${ctx.rankCard}`;
+  const cached = byCtx.get(key);
+  if (cached) return cached;
+  const suits = SUITS.filter(
+    suit => suit !== ctx.trumpSuit && cardsOfSuit(hand, suit, ctx).length > 0
+  );
+  byCtx.set(key, suits);
+  return suits;
+}
+
 function kittyPlanScore(hand, buried, ctx) {
   const buriedIds = new Set(buried.map(card => card.id));
   const retained = hand.filter(card => !buriedIds.has(card.id));
@@ -368,13 +384,11 @@ function kittyPlanScore(hand, buried, ctx) {
   const buriedPoints = buried.reduce((sum, card) => sum + cardPoints(card), 0);
   // 只有主长与控制牌合成的保底把握超过中线，埋分才开始产生正收益。
   const hiddenPointValue = buriedPoints * Math.max(0, protection.confidence - 0.55) * 100;
-  const voidValue = SUITS
-    .filter(suit => suit !== ctx.trumpSuit)
-    .reduce((sum, suit) => {
-      const before = cardsOfSuit(hand, suit, ctx).length;
-      const after = cardsOfSuit(retained, suit, ctx).length;
-      return sum + (before > 0 && after === 0 ? 320 : 0);
-    }, 0);
+  // ⚠️ 「这门原本有几张」只跟 hand 有关，跟埋哪几张无关 —— 是搜索的不变量。
+  // improveKittyPlan 一局要评分两千多次，原来每次都把 33 张手牌按三门重数一遍，
+  // 两千多次算的都是同一个答案。按 hand 记忆化（同一次搜索里 hand 是同一个数组）。
+  const voidValue = handSuitPresence(hand, ctx)
+    .reduce((sum, suit) => sum + (cardsOfSuit(retained, suit, ctx).length === 0 ? 320 : 0), 0);
   const unlockCost = pieceBurialCost(hand, buried, ctx);
   return -burialCost - unlockCost + hiddenPointValue + voidValue + sideThrowStructureValue(retained, ctx);
 }
@@ -817,7 +831,18 @@ const OVER_KILL_PENALTY = 1200;
 // 仍低于 seek-piece(450) 和各种约定（620+），不会把 Glen 定过的那些打法盖掉。
 const STRATEGY_RUN_SIDE_BONUS = 200;
 
+// ⚠️ 按 view 记忆化：一次决策里跟牌打分对每个候选都会问一次，
+// 而它每次都要把整局历史 flatMap 一遍。view 每次决策都是新对象，所以用 WeakMap。
+const PLAYED_CACHE = new WeakMap();
 function playedCardsOf(view) {
+  const cached = PLAYED_CACHE.get(view);
+  if (cached) return cached;
+  const value = playedCardsUncached(view);
+  PLAYED_CACHE.set(view, value);
+  return value;
+}
+
+function playedCardsUncached(view) {
   return [
     ...(view.round?.trickHistory ?? []).flatMap(trick =>
       (trick.plays ?? []).flatMap(play => play.cards ?? [])
@@ -826,18 +851,35 @@ function playedCardsOf(view) {
   ];
 }
 
+// 主牌分档模板：strength → 这一档总共几张。只跟 ctx 有关，按 ctx 记忆化。
+const TRUMP_TIER_CACHE = new Map();
+function trumpTierTemplate(ctx) {
+  const key = `${ctx.trumpSuit}-${ctx.rankCard}`;
+  const cached = TRUMP_TIER_CACHE.get(key);
+  if (cached) return cached;
+  const counts = new Map();
+  for (const card of buildDeck()) {
+    if (suitOf(card, ctx) !== 'TRUMP') continue;
+    const strength = cardStrength(card, ctx);
+    counts.set(strength, (counts.get(strength) ?? 0) + 1);
+  }
+  const template = [...counts.entries()];
+  TRUMP_TIER_CACHE.set(key, template);
+  return template;
+}
+
 export function assessBottomControl(view, ctx) {
   const hand = view.you?.hand ?? [];
   const myTrumps = cardsOfSuit(hand, 'TRUMP', ctx);
 
-  // 把整副牌里的主牌按强度分档，统计每档 total / mine / played
+  // 把整副牌里的主牌按强度分档，统计每档 total / mine / played。
+  // ⚠️ 「每一档总共几张」只跟 ctx（主花色 + 级牌）有关，与手牌、出牌都无关，
+  // 所以按 ctx 缓存一份模板，每次只把 mine/played 填进去（至多 52 份）。
+  // 原来每次调用都 buildDeck() 造 108 张牌重数一遍，而这个函数在跟牌打分里
+  // 是按【每个候选】调用的。
   const tiers = new Map();
-  for (const card of buildDeck()) {
-    if (suitOf(card, ctx) !== 'TRUMP') continue;
-    const key = cardStrength(card, ctx);
-    const tier = tiers.get(key) ?? { total: 0, mine: 0, played: 0 };
-    tier.total += 1;
-    tiers.set(key, tier);
+  for (const [key, total] of trumpTierTemplate(ctx)) {
+    tiers.set(key, { total, mine: 0, played: 0 });
   }
   for (const card of myTrumps) {
     const tier = tiers.get(cardStrength(card, ctx));
@@ -915,12 +957,19 @@ function bottomControlAfter(view, ctx, cards) {
   );
 }
 
+// 两副牌里主牌恒 36 张、每门副牌恒 24 张 —— 与主花色、级牌是哪一档【无关】
+//（52 种组合验证过：2 大鬼 + 2 小鬼 + 2 主级牌 + 6 副级牌 + 24 张主花色普通牌 = 36；
+//  副牌门 = 13 个点数 × 2 − 升为主牌的那 2 张级牌 = 24）。
+// ⚠️ 原来这几处各自 buildDeck() 再 filter 一遍来数这个常数 ——
+// 5 局要造一百多万张临时牌，纯属浪费，而且把「这是个常数」这件事藏起来了。
+const TOTAL_TRUMPS = 36;
+const TOTAL_PER_SIDE_SUIT = 24;
+
 // 场上还有多少张主牌没露面（不含我手上的；底牌里的仍算未知，故偏高）
 function outstandingTrumpCount(view, ctx) {
-  const total = buildDeck().filter(card => suitOf(card, ctx) === 'TRUMP').length;
   const played = playedCardsOf(view).filter(card => suitOf(card, ctx) === 'TRUMP').length;
   const mine = cardsOfSuit(view.you?.hand ?? [], 'TRUMP', ctx).length;
-  return Math.max(0, total - played - mine);
+  return Math.max(0, TOTAL_TRUMPS - played - mine);
 }
 
 // 「求件」的领牌长什么样（Glen：「第一轮求件是需要打 5 以下，甚至 10 也可以」）。
@@ -973,7 +1022,7 @@ function trumpSignalAnswered(view, ctx) {
 // 【每墩重算，但维持原策略有很大惯性】（Glen 定的口径）——
 // 既不能因为局面微变就摆动，也不硬锁到底。
 // ⚠️ 惯性不靠新增状态实现：我【自己过去领了什么牌】本来就是公开记录，
-// 从中读出「我一直在执行哪个策略」给它加权就够了（declarerLeadStyle 已是这个思路）。
+// 从中读出「我一直在执行哪个策略」给它加权就够了（lastLeadStyle 就是干这个的）。
 // 电脑只吃 viewerState 的本人视角这条硬约束不能破。
 //
 // 庄家（默认保底优先）：
@@ -996,21 +1045,11 @@ function bottomHopeless(view, ctx, control) {
   );
 }
 
-// 我自己过去领的牌 —— 惯性的来源。返回我领过的最近一次是主牌还是副牌。
-function myLeadStyle(view) {
-  const mine = (view.round?.trickHistory ?? []).filter(
-    trick => trick.leadSeat === view.you?.seat
-  );
-  const last = mine[mine.length - 1];
-  if (!last) return null;
-  return last.leadSuit === 'TRUMP' ? 'trump' : 'side';
-}
-
 export function roundStrategy(view, ctx, control = bottomControlOf(view, ctx)) {
   const role = leadRole(view);
   const trumps = cardsOfSuit(view.you?.hand ?? [], 'TRUMP', ctx);
   const plan = tailThrowPlan(view, ctx, control);
-  const style = myLeadStyle(view);
+  const style = lastLeadStyle(view, view.you?.seat);
 
   if (role === 'defender') {
     // 闲家：主又长又大就撬底，否则吃分为主
@@ -1041,10 +1080,12 @@ function leadRole(view) {
 }
 
 // 庄家最近在走什么路子（队友做庄时要跟着他打）
-function declarerLeadStyle(view) {
-  const leads = (view.round?.trickHistory ?? []).filter(
-    trick => trick.leadSeat === view.declarerSeat
-  );
+// 某个座位最近一次领牌走的是主牌还是副牌 —— 「他在走什么路子」的唯一判据。
+// 两个用处：跟庄家的路子（declarerSeat），以及本局策略的惯性（自己的座位）。
+// ⚠️ 原来这是两个一模一样、只差看哪个座位的函数（declarerLeadStyle / myLeadStyle）。
+function lastLeadStyle(view, seat) {
+  if (seat === null || seat === undefined) return null;
+  const leads = (view.round?.trickHistory ?? []).filter(trick => trick.leadSeat === seat);
   const last = leads[leads.length - 1];
   if (!last) return null;
   return last.leadSuit === 'TRUMP' ? 'trump' : 'side';
@@ -1087,7 +1128,7 @@ function maxOpponentTrumpEstimate(view, ctx) {
 // 同一套算法（未现牌按各家手牌数摊分，底牌那份摊出去正好扣掉）。
 // 用来衡量「我亮这支件之后，他能甩多长」。
 function maxOpponentSuitEstimate(view, ctx, suit) {
-  const total = buildDeck().filter(card => suitOf(card, ctx) === suit).length;
+  const total = TOTAL_PER_SIDE_SUIT;
   const played = playedCardsOf(view).filter(card => suitOf(card, ctx) === suit).length;
   const mine = cardsOfSuit(view.you?.hand ?? [], suit, ctx).length;
   const outstanding = Math.max(0, total - played - mine);
@@ -1468,7 +1509,7 @@ export function chooseLeadCards(view) {
       : role === 'declarerPartner'
         // 收到庄家「带分吊主」的信号而自己确实有大鬼 → 转打副牌，
         // 这本身就是「不用吊主」的表达（Glen）。否则照常跟庄家路子。
-        ? (declarerLeadStyle(view) === 'trump' &&
+        ? (lastLeadStyle(view, view.declarerSeat) === 'trump' &&
            !(hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 480 : 0)
       : 0;                                                             // 闲家：随便
     if (drawBonus > 0) {

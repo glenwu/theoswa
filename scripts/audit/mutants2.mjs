@@ -13,7 +13,9 @@ runMutants([
   ['server/reveal.js', 'if (c.suit !== \'JOKER\' && fallbackSuit === null) fallbackSuit = c.suit;', 'if (c.suit !== \'JOKER\') fallbackSuit = c.suit;', '揭底定主取「最后一张」非王而非第一张'],
   ['server/scoring.js', 'return defenderTrickPoints + runAwayPoints + kittyPoints === 200;', 'return true;', '守恒校验形同虚设'],
   // ---- 保密：白名单前缀太粗，挂在白名单路径下的任何东西都放行 ----
-  ['server/viewer.js', 'trickHistory: round.trickHistory,', 'trickHistory: round.trickHistory,\n    __spy: { trickHistory: null },', '（对照组：不泄露，只加字段）'],
+  // ⚠️ 这一条【本来就该存活】—— 它是对照组：加的字段里没有任何牌面数据，
+  // 扫描器不该报错。存活 = 扫描器没有误伤，是正确结果，别去「修」它。
+  ['server/viewer.js', 'trickHistory: round.trickHistory,', 'trickHistory: round.trickHistory,\n    __spy: { trickHistory: null },', '（对照组：不泄露，只加字段 —— 存活才对）'],
   ['server/viewer.js',
    '    round: state.round\n      ? { ...clipRound(state.round, you.seat), kittyRevealed, allHandsRevealed }\n      : null,',
    '    round: state.round\n      ? { ...clipRound(state.round, you.seat), kittyRevealed, allHandsRevealed,\n          trickHistory: [...(state.round.trickHistory ?? []), { spy: state.players.map(p => p.hand) }] }\n      : null,',

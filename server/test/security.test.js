@@ -5,6 +5,7 @@ import { applyAction } from '../actions.js';
 import { flipCardForRevealFirst, drawOneCard } from '../round.js';
 import { viewerState } from '../viewer.js';
 import { collectLeakedCards, isCardLike } from '../security.js';
+import { mulberry32 } from '../rng.js';
 import { startRevealing } from '../flow.js';
 
 const seeded = () => 0.42;
@@ -125,4 +126,77 @@ test('换底期间：底牌已并进庄家手牌（33 张），其他人完全�
     }
     assert.equal(view.round.kittyCount, 0);
   }
+});
+
+// ---- 扫描器提速后的【等价性】测试 ----
+//
+// collectLeakedCards 是全项目的安全底线，为了性能改写它必须证明语义没变，
+// 不能只靠「现有几条测试还是绿的」。这里把【改之前的实现】原样留作基准，
+// 拿随机生成的 payload 逐个比对两者的输出。
+//
+// 改写做了两件事：进入白名单子树就整棵跳过；路径字符串只在真找到泄露时才拼。
+function referenceCollect(payload, allowedPrefixes) {
+  const leaks = [];
+  const walk = (node, path) => {
+    if (isCardLike(node)) {
+      const allowed = allowedPrefixes.some(p => path === p || path.startsWith(p + '.'));
+      if (!allowed) leaks.push({ path, card: node });
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, path);
+      return;
+    }
+    if (node && typeof node === 'object') {
+      for (const [k, v] of Object.entries(node)) {
+        walk(v, path ? `${path}.${k}` : String(k));
+      }
+    }
+  };
+  walk(payload, '');
+  return leaks;
+}
+
+test('扫描器提速：与改写前的实现在随机 payload 上逐条等价', () => {
+  const rng = mulberry32(20260824);
+  const pick = arr => arr[Math.floor(rng() * arr.length)];
+  const KEYS = ['you', 'hand', 'round', 'trickHistory', 'players', 'cards', 'log', 'deep', 'x'];
+  const PREFIX_SETS = [
+    [],
+    ['you.hand'],
+    ['you.hand', 'round.trickHistory'],
+    ['round'],
+    ['you.hand', 'round.currentTrick', 'round.flipShown'],
+    ['a.b.c'],
+  ];
+  const makeCard = i => ({ id: `c${i}`, suit: pick(['S', 'H', 'D', 'C']), rank: 3 + (i % 12) });
+  let n = 0;
+  const build = depth => {
+    if (depth <= 0 || rng() < 0.25) {
+      const r = rng();
+      if (r < 0.45) return makeCard(n++);
+      if (r < 0.6) return `牌名 ♠7 这种字符串不该被当成牌`;
+      if (r < 0.75) return 7;
+      return null;
+    }
+    if (rng() < 0.4) return Array.from({ length: 1 + Math.floor(rng() * 3) }, () => build(depth - 1));
+    const obj = {};
+    for (let i = 0; i < 1 + Math.floor(rng() * 4); i += 1) obj[pick(KEYS)] = build(depth - 1);
+    return obj;
+  };
+
+  let compared = 0;
+  for (let i = 0; i < 400; i += 1) {
+    const payload = build(4);
+    const prefixes = pick(PREFIX_SETS);
+    const mine = collectLeakedCards(payload, prefixes);
+    const ref = referenceCollect(payload, prefixes);
+    assert.deepEqual(
+      mine.map(l => `${l.path}|${l.card.id}`).sort(),
+      ref.map(l => `${l.path}|${l.card.id}`).sort(),
+      `第 ${i} 个 payload 上两个实现结果不同（白名单 ${JSON.stringify(prefixes)}）`
+    );
+    compared += ref.length;
+  }
+  assert.ok(compared > 200, `随机 payload 里得真的出现过泄露才有意义，实际只有 ${compared} 条`);
 });
