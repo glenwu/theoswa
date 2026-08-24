@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assessBottomControl, chooseFollowCards, chooseKittyCards, chooseLeadCards,
-  evaluateFollowChoices,
+  evaluateFollowChoices, roundStrategy,
 } from '../bot-policy.js';
 import { cardPoints as cardPointsOf } from '../cards.js';
 import { buildDeck, playSuitOf } from '../cards.js';
@@ -679,10 +679,10 @@ test('帮队友求件：队友改吊主 → 那条求件请求作废，不跟着
 
 function followView({
   hand, currentTrick, seat = 2, declarerSeat = 0, piecesView = { S: [], D: [], C: [] },
-  trickHistory = [], defenderTrickPoints = 0,
+  trickHistory = [], defenderTrickPoints = 0, botTuning,
 }) {
   return {
-    phase: 'PLAYING', declarerSeat,
+    phase: 'PLAYING', declarerSeat, botTuning,
     you: { seat, team: seat % 2, hand, crossRiver: {} },
     players: [0, 1, 2, 3].map(s2 => ({ seat: s2, team: s2 % 2, handCount: 12 })),
     round: {
@@ -808,6 +808,51 @@ test('亮件：这门还长、对手可能甩很长 → 5 分不值得亮 ♠A',
 // 「亮件的风险」和「封住最后一家」是两笔账，Glen 给的判据只讲了前者，
 // 后者要不要让路还没有裁定 —— 没裁定的事不写成断言。
 
+// ---- 策略接到出牌上：闲家吃分为主，同样局面吃的概率更大（Glen）----
+//
+// 「像刚才的第三家有 10 分吃不吃 A 的问题，如果是闲家，吃的概率应该得更大，
+//   因为自己的策略就以吃分为主。」
+//
+// ⚠️ 两条必须成对：【同一手牌、同一墩】，只把庄家换个座位。
+// 手上给了 3 张主 + 一门有威胁的副牌，否则庄家那边会因为「保底已经不现实」
+// 同样落到 points-first，两边就分不出来了（第一版就栽在这）。
+// ⚠️ 显式给 pointsFirstPieceWeight —— 默认值 0.85 折得太轻，翻不动决策，
+// 那样这两条就变成「碰巧一样/碰巧不一样」，钉不住结构。量级留给训练去搜。
+function strategyPieceView(declarerSeat) {
+  return followView({
+    seat: 2, declarerSeat,
+    hand: [
+      ...[14, 9, 6, 3].map((r, i) => T('S', r, i)),                   // 黑桃 4 张，握 ♠A
+      ...[14, 13, 10, 9, 8, 7, 5, 4].map((r, i) => T('D', r, i + 10)), // 方块 8 张（两件在手）
+      ...[7, 5, 3].map((r, i) => T('H', r, i + 30)),                   // 3 张小主
+    ],
+    currentTrick: [
+      { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },
+      { seat: 0, cards: [T('S', 5, 91)] },                             // 桌上 5 分
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
+      D: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+      C: [],
+    },
+    botTuning: { pointsFirstPieceWeight: 0.5 },
+  });
+}
+
+test('策略：我是闲家（吃分为主）→ 同样 5 分就把 ♠A 打出去吃回来', () => {
+  const view = strategyPieceView(1);
+  assert.equal(roundStrategy(view, S_CTX), 'points-first', '前提：策略确实是吃分为主');
+  assert.equal(chooseFollowCards(view)[0].rank, 14);
+});
+
+test('策略：同一手牌但我在庄家一方（跑牌兼跑分）→ 5 分不值得亮 ♠A', () => {
+  const view = strategyPieceView(0);
+  assert.equal(roundStrategy(view, S_CTX), 'run-and-score', '前提：策略不是吃分为主');
+  assert.notEqual(chooseFollowCards(view)[0].rank, 14);
+});
+
 // 例外：这门的件已经全现了 —— 我这张 ♠A 亮不亮，对手的甩牌资格都不会因此变化，
 // 那就没有「冒险」可言，该吃分就吃分。
 // ⚠️ 和上面那条 5 分的用【同一个 fixture】，只把这门的件全设成已现 ——
@@ -892,6 +937,96 @@ test('信号应答：庄家吊主【不带分】→ 没有这层含义，照常�
     }],
   }))[0];
   assert.equal(lead.suit, 'H', '不带分就只是普通吊主，队友该跟着吊');
+});
+
+// ============ 本局策略（Glen：「需要有一定的策略支持，然后一直跟随它去打」）============
+//
+// 庄家默认保底优先，保底不现实才改跑分；闲家默认吃分为主，主又长又大才撬底。
+// 「保底不现实」的判据是他给的三条【同时】成立：
+//   副牌基本无威胁 + 顶牌数不够 + 主牌也不够长。
+const S_CTX = { trumpSuit: 'H', rankCard: 2 };
+const TWO_BIG_JOKERS = [T('JOKER', 16, 0), T('JOKER', 16, 1)];
+// 黑桃两件在手、5 张 → hasStrongSideSuit 成立（副牌有威胁）
+const STRONG_SPADES = {
+  S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+      { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+  D: [], C: [],
+};
+
+test('策略：闲家主又长又大 → 撬底', () => {
+  const view = leadView({
+    hand: [...TWO_BIG_JOKERS, ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),
+      ...WEAK_SIDES],
+    declarerSeat: 1, mySeat: 0,   // 座位 0/1 不同队 → 我是闲家
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'grab-bottom');
+});
+
+test('策略：闲家主不强 → 吃分为主', () => {
+  const view = leadView({
+    hand: [...[7, 5, 3].map((r, i) => T('H', r, i)), ...WEAK_SIDES],
+    declarerSeat: 1, mySeat: 0,
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'points-first');
+});
+
+test('策略：庄家有保底牌 + 主长 → 跑副牌', () => {
+  const view = leadView({
+    hand: [...TWO_BIG_JOKERS, ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),
+      ...WEAK_SIDES],
+    declarerSeat: 0, mySeat: 0,
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'run-side');
+});
+
+// 同样握着顶档，只是主牌短 —— 和上一条成对，钉住「主长不长」这个分界
+test('策略：庄家有保底牌但主不长 → 跑牌兼跑分', () => {
+  const view = leadView({
+    hand: [...TWO_BIG_JOKERS, ...[5, 4].map((r, i) => T('H', r, i + 2)), ...WEAK_SIDES],
+    declarerSeat: 0, mySeat: 0,
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'run-and-score');
+});
+
+test('策略：庄家没有保底牌但主还长 → 吊主（自己主长别人就短）', () => {
+  const view = leadView({
+    hand: [...NINE_TRUMPS, ...WEAK_SIDES], declarerSeat: 0, mySeat: 0,
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'draw-trumps');
+});
+
+// Glen 给的三条同时成立：副牌无威胁 + 顶牌不够 + 主牌不够长
+test('策略：庄家保底已经不现实 → 改跑分为主', () => {
+  const view = leadView({
+    hand: [...[7, 5, 3].map((r, i) => T('H', r, i)), ...WEAK_SIDES],
+    declarerSeat: 0, mySeat: 0,
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'points-first');
+});
+
+// ---- 惯性（Glen：「每墩重算，但加很大的惯性」）----
+// 同一手牌（8 张主，差一张够不上吊主门槛，副牌有威胁所以不算保底无望）：
+// 没吊过主 → 跑牌兼跑分；【我自己一直在吊主】→ 继续吊，不因为少一张就改弦更张。
+const INERTIA_HAND = [
+  ...[14, 13, 12, 11, 10, 9, 8, 7].map((r, i) => T('H', r, i)),  // 8 张主，无顶档
+  ...[9, 7, 5, 4, 3].map((r, i) => T('S', r, i + 40)),           // 黑桃 5 张（两件在手）
+];
+
+test('策略惯性：同一手牌，没吊过主 → 跑牌兼跑分', () => {
+  const view = leadView({
+    hand: INERTIA_HAND, declarerSeat: 0, mySeat: 0, piecesView: STRONG_SPADES,
+    trickHistory: [{ trickNo: 1, leadSeat: 1, leadSuit: 'D', winnerSeat: 1, points: 0, plays: [] }],
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'run-and-score');
+});
+
+test('策略惯性：同一手牌，但我自己一直在吊主 → 继续吊主', () => {
+  const view = leadView({
+    hand: INERTIA_HAND, declarerSeat: 0, mySeat: 0, piecesView: STRONG_SPADES,
+    trickHistory: [{ trickNo: 1, leadSeat: 0, leadSuit: 'TRUMP', winnerSeat: 0, points: 0, plays: [] }],
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'draw-trumps',
+    '差一张就改策略的话，就谈不上「一直跟随这个策略去打」');
 });
 
 // ============ 甩尾手（长期计划打法）============

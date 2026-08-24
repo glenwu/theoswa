@@ -29,6 +29,10 @@ export const DEFAULT_BOT_TUNING = Object.freeze({
   earlyThrowMinLength: 4,
   pieceProbeMinLength: 5,
   opponentThreatThreshold: 2,
+  // 策略是「吃分为主」时，亮件的代价打几折。Glen：「如果是闲家，吃的概率应该得更大，
+  // 因为自己的策略就以吃分为主」，同时又说这块「没有一定对错，是概率性的问题」——
+  // 所以这里只定结构，量级交给 train-bots 去搜。
+  pointsFirstPieceWeight: 0.85,
 });
 
 export const BOT_TUNING_BOUNDS = Object.freeze({
@@ -45,6 +49,7 @@ export const BOT_TUNING_BOUNDS = Object.freeze({
   earlyThrowMinLength: [3, 7],
   pieceProbeMinLength: [3, 8],
   opponentThreatThreshold: [1, 5],
+  pointsFirstPieceWeight: [0.4, 1],
 });
 
 const INTEGER_TUNING_KEYS = new Set([
@@ -789,6 +794,7 @@ const BOTTOM_MIN_TRUMPS = 9;
 //     因为真正的风险是「他因为我这张 A 能甩很长、得很多分」
 //   · 上下夹住，免得极端牌型把它放大成一票否决
 const PIECE_EXPOSURE_COST = 240;
+
 const PIECE_THREAT_BASELINE = 4;
 const PIECE_THREAT_MIN = 0.5;
 const PIECE_THREAT_MAX = 2;
@@ -947,6 +953,71 @@ function trumpSignalAnswered(view, ctx) {
   return history.slice(1).some(
     trick => trick.leadSeat === partner && trick.leadSuit !== 'TRUMP'
   );
+}
+
+// ---- 本局策略（Glen 口述的「策略支持」）----
+//
+// 「BOT 在玩的时候，也需要有一定的策略支持，然后一直跟随这个策略支持去打。」
+//
+// 【每墩重算，但维持原策略有很大惯性】（Glen 定的口径）——
+// 既不能因为局面微变就摆动，也不硬锁到底。
+// ⚠️ 惯性不靠新增状态实现：我【自己过去领了什么牌】本来就是公开记录，
+// 从中读出「我一直在执行哪个策略」给它加权就够了（declarerLeadStyle 已是这个思路）。
+// 电脑只吃 viewerState 的本人视角这条硬约束不能破。
+//
+// 庄家（默认保底优先）：
+//   'run-side'      有保底牌 + 主长     → 以跑副牌为主
+//   'run-and-score' 有保底牌 + 主不长   → 跑牌兼跑分
+//   'tail-throw'    有够长的副牌能甩    → 算好主牌数量，甩尾手让对方毙不了
+//   'draw-trumps'   没保底牌但主还长    → 尽量吊主（自己主长别人就短）
+//   'points-first'  保底已经不现实      → 改为跑分为主
+// 闲家（默认吃分为主）：
+//   'grab-bottom'   主又长又大          → 撬底
+//   'points-first'  其余                → 吃分为主，核心是「打别人不想自己打的牌」
+//
+// 「保底已经不现实」的判据是 Glen 给的三条【同时】成立：
+//   副牌基本无威胁（件都给对方抓死、没机会甩）+ 顶牌数不够 + 主牌也不够长。
+function bottomHopeless(view, ctx, control) {
+  return (
+    !hasStrongSideSuit(view, ctx) &&
+    !control.holdsTopTrump &&
+    control.trumpCount < BOTTOM_MIN_TRUMPS
+  );
+}
+
+// 我自己过去领的牌 —— 惯性的来源。返回我领过的最近一次是主牌还是副牌。
+function myLeadStyle(view) {
+  const mine = (view.round?.trickHistory ?? []).filter(
+    trick => trick.leadSeat === view.you?.seat
+  );
+  const last = mine[mine.length - 1];
+  if (!last) return null;
+  return last.leadSuit === 'TRUMP' ? 'trump' : 'side';
+}
+
+export function roundStrategy(view, ctx, control = bottomControlOf(view, ctx)) {
+  const role = leadRole(view);
+  const trumps = cardsOfSuit(view.you?.hand ?? [], 'TRUMP', ctx);
+  const plan = tailThrowPlan(view, ctx, control);
+  const style = myLeadStyle(view);
+
+  if (role === 'defender') {
+    // 闲家：主又长又大就撬底，否则吃分为主
+    if (control.holdsTopTrump && trumps.length >= BOTTOM_MIN_TRUMPS) return 'grab-bottom';
+    return 'points-first';
+  }
+
+  // 庄家一方
+  if (bottomHopeless(view, ctx, control)) return 'points-first';
+  if (plan) return 'tail-throw';
+  if (control.holdsTopTrump) {
+    return trumps.length >= BOTTOM_MIN_TRUMPS ? 'run-side' : 'run-and-score';
+  }
+  // 没有保底牌：主还长就吊主。惯性 —— 我一直在吊主的话，门槛放宽一张，
+  // 免得主牌被吊掉一张就改弦更张（Glen 要的「一直跟随这个策略」）。
+  const drawFloor = style === 'trump' ? BOTTOM_MIN_TRUMPS - 1 : BOTTOM_MIN_TRUMPS;
+  if (trumps.length >= drawFloor) return 'draw-trumps';
+  return 'run-and-score';
 }
 
 // 角色：吊不吊主完全取决于这个（Glen：「没有通用思路，都要看角色和牌势」）
@@ -1729,7 +1800,12 @@ function scoreFollow(view, cards, ctx) {
     // 100 + totalPoints * 10。再减一次是同一个激励算两遍，而且怎么都构造不出
     // 能钉住它的测试（变异成 payoff = 0，所有测试照样绿）。
     // 只留固定代价，等效门槛自然落在 246 ÷ 10 ≈ 25 分，正好是他说的那个数。
-    score -= exposureRisk * PIECE_EXPOSURE_COST * pieceCaution * tuning.pieceProtectionWeight;
+    // 本局策略是吃分为主时，同样的局面更该把分吃回来（Glen）
+    const scale = roundStrategy(view, ctx, bottomControlOf(view, ctx)) === 'points-first'
+      ? tuning.pointsFirstPieceWeight
+      : 1;
+    score -= exposureRisk * PIECE_EXPOSURE_COST * scale *
+      pieceCaution * tuning.pieceProtectionWeight;
   }
 
   if (beforeTeamWinning) {
