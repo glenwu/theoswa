@@ -1145,6 +1145,41 @@ function maxOpponentSuitEstimate(view, ctx, suit) {
   return worst;
 }
 
+// 这门【还有多少分没现身】—— 对手把这门甩出来能刮走多少分。
+//
+// Glen 对「这门还长、外边一件没出，该不该亮件」给的例外：
+// 「但也有例外，比如说打 10 或打 K，如果判断现在即使对方甩了也得不了多少分，
+//   那么就可以杀。」
+//
+// ⚠️ 不写死「打10 / 打K」，写成【这门还剩多少分】—— 打 10 或打 K 时该门的
+// 10 / K 升为主牌，这门天生就少 20 分（50 → 30，实测过），正是他举的例子；
+// 而到了中后段分被吃掉一部分，道理完全一样。一个量把两种情形都覆盖了。
+const SIDE_SUIT_MAX_POINTS = 50;   // 一门副牌满打满算的分（两副牌：5/10/K 各两张）
+// 分全没了也不是零风险 —— 他甩一手长的照样把牌权和墩数拿走。
+const SUIT_POINTS_FLOOR = 0.4;
+
+const SIDE_POINTS_CACHE = new Map();
+function sideSuitTotalPoints(ctx) {
+  const key = `${ctx.trumpSuit}-${ctx.rankCard}`;
+  const cached = SIDE_POINTS_CACHE.get(key);
+  if (cached !== undefined) return cached;
+  const suit = SUITS.find(item => item !== ctx.trumpSuit);
+  const total = buildDeck()
+    .filter(card => suitOf(card, ctx) === suit)
+    .reduce((sum, card) => sum + cardPoints(card), 0);
+  SIDE_POINTS_CACHE.set(key, total);
+  return total;
+}
+
+function suitPointsAtLarge(view, ctx, suit) {
+  const seen = playedCardsOf(view)
+    .filter(card => suitOf(card, ctx) === suit)
+    .reduce((sum, card) => sum + cardPoints(card), 0);
+  const mine = cardsOfSuit(view.you?.hand ?? [], suit, ctx)
+    .reduce((sum, card) => sum + cardPoints(card), 0);
+  return Math.max(0, sideSuitTotalPoints(ctx) - seen - mine);
+}
+
 // 这门的件大概在谁手上 —— 靠【谁在这门求过牌】来读（Glen）：
 //
 // 「首先看对家有没有求牌，如果有，一般情况下就在对家；其次看对手两个人有没有求牌，
@@ -1222,7 +1257,15 @@ function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
     const read = signal === 'partner' ? PIECE_READ_PARTNER_ASKED
       : signal === null ? PIECE_READ_NOBODY_ASKED
       : 1;
-    return sum + Math.min(PIECE_THREAT_MAX, Math.max(PIECE_THREAT_MIN, threat)) * read;
+    // 他甩出来能刮多少分 —— 「即使对方甩了也得不了多少分，那么就可以杀」。
+    // ⚠️ 分母是【满分 50】这个常数，不能用 sideSuitTotalPoints(ctx)，
+    // 那样打 10 时 30/30 = 1，正好把要表达的效果除没了。
+    const stake = Math.max(
+      SUIT_POINTS_FLOOR,
+      suitPointsAtLarge(view, ctx, suit) / SIDE_SUIT_MAX_POINTS
+    );
+    return sum +
+      Math.min(PIECE_THREAT_MAX, Math.max(PIECE_THREAT_MIN, threat)) * read * stake;
   }, 0);
 }
 

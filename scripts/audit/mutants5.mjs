@@ -4,6 +4,14 @@ import { runMutants } from './mutate.mjs';
 // 「吊主候选里不含鬼」「不挑主级牌」这两条已经移到 mutants4（和吊主的其它开关放一起）。
 const F = 'server/bot-policy.js';
 runMutants([
+  // ---- 「这门还剩多少分」：即使对方甩了也得不了多少分，就不必死护件（Glen）----
+  [F, '    const stake = Math.max(\n      SUIT_POINTS_FLOOR,\n      suitPointsAtLarge(view, ctx, suit) / SIDE_SUIT_MAX_POINTS\n    );',
+      '    const stake = 1;', '不看这门还剩多少分'],
+  [F, 'const SUIT_POINTS_FLOOR = 0.4;', 'const SUIT_POINTS_FLOOR = 1;',
+      '分全走光也照原价罚（下限抬到 1，等于这一维失效）'],
+  [F, 'suitPointsAtLarge(view, ctx, suit) / SIDE_SUIT_MAX_POINTS',
+      'suitPointsAtLarge(view, ctx, suit) / sideSuitTotalPoints(ctx)',
+      '分母用本局该门满分（打10 时 30/30=1，正好把效果除没）'],
   // ---- 读件的位置（Glen：看「打这门牌的欲望」，但不是 100%，所以只缩放不豁免）----
   [F, '    const signal = suitAskSignal(view, ctx, suit);', "    const signal = 'opponent';",
       '不读件的位置，一律按最坏算'],

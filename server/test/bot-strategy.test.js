@@ -679,14 +679,14 @@ test('帮队友求件：队友改吊主 → 那条求件请求作废，不跟着
 
 function followView({
   hand, currentTrick, seat = 2, declarerSeat = 0, piecesView = { S: [], D: [], C: [] },
-  trickHistory = [], defenderTrickPoints = 0, botTuning,
+  trickHistory = [], defenderTrickPoints = 0, botTuning, rankCard = 2,
 }) {
   return {
     phase: 'PLAYING', declarerSeat, botTuning,
     you: { seat, team: seat % 2, hand, crossRiver: {} },
     players: [0, 1, 2, 3].map(s2 => ({ seat: s2, team: s2 % 2, handCount: 12 })),
     round: {
-      trumpSuit: 'H', rankCard: 2, kittyCount: 8,
+      trumpSuit: 'H', rankCard, kittyCount: 8,
       currentTrick, trickHistory, piecesView, defenderTrickPoints,
     },
     botDifficulty: 'expert',
@@ -900,6 +900,68 @@ test('读件：谁都没在这门求过 → 对手这门多半不强，风险略
 
 // 对照：对手正在求这门（他这一墩领的就是 ♠4）→ 风险照旧，不亮。
 // 这条已经在上面「5 分不值得亮 ♠A」里钉住了，这里只标明它属于同一组三档。
+
+// ---- 例外：这门的分快没了，甩了也刮不到什么（Glen）----
+//
+// 「但也有例外，比如说打 10 或打 K，如果判断现在即使对方甩了也得不了多少分，
+//   那么就可以杀。」
+//
+// 代码里没写死「打10 / 打K」，写的是【这门还剩多少分】—— 打 10 / 打 K 时该门的
+// 10 / K 升为主牌，这门天生就从 50 分掉到 30 分（实测过），正是他举的例子；
+// 中后段分被吃掉一部分，道理完全一样，一个量覆盖两种情形。
+//
+// ⚠️ 两边【打掉同样张数】的黑桃，只差是不是分牌 ——
+// 否则张数一变，maxOpponentSuitEstimate（按张数算的威胁）也跟着变，
+// 就分不清是哪个维度在起作用了。
+const spadesPlayed = ranks => ([{
+  trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0,
+  plays: [{ seat: 1, cards: ranks.map((r, i) => T('S', r, 700 + i)) }],
+}]);
+
+// ⚠️ 只打【两张】。第一版两边各打 5 张，结果不管是不是分牌都会亮 ♠A ——
+// 打掉 5 张本身就把「对手这门可能多长」降下去了，风险已经不够，
+// 分值那一维根本没参与决策。张数少到风险仍然在线，才测得出分值的作用。
+test('亮件：这门的分还满着 → 他甩出来能刮不少分，不亮 ♠A', () => {
+  const view = opponentProbeView([4, 5]);
+  view.round.trickHistory = spadesPlayed([9, 8]);      // 两张，都是无分牌
+  assert.notEqual(chooseFollowCards(view)[0].rank, 14);
+});
+
+test('亮件：这门的分被拿走了 → 甩了也刮不到分，可以亮 ♠A', () => {
+  const view = opponentProbeView([4, 5]);
+  view.round.trickHistory = spadesPlayed([13, 13]);    // 同样两张，但是 20 分
+  assert.equal(chooseFollowCards(view)[0].rank, 14,
+    '分都走了还死护着件，那是白护');
+});
+
+// 打 10 / 打 K 时该门的 10 / K 升为主牌，这门【天生】就从 50 分掉到 30 分 ——
+// Glen 举的正是这两个例子。所以「还剩多少分」的分母必须是【固定的满分 50】，
+// 不能用本局该门的满分：那样打 10 时算出来 30/30 = 1，效果被自己除没了。
+// ⚠️ 这条是专门为那个错误写的 —— 其余测试都是打 2（该门满分正好 50），
+// 两种分母算出来一模一样，谁也分不出来。
+// ⚠️ 用打 K 而不是打 10 —— 两者效果一样（该门都从 50 分掉到 30 分），
+// 但打 10 时我手里那张 ♦10 也会变成主牌，把别的评分项一起搅动，测不干净。
+test('亮件：打 K 时这门天生就少 20 分 → 同样局面下更愿意亮 ♠A', () => {
+  const view = followView({
+    rankCard: 13,                                     // ♠K 升为主牌，黑桃只剩 30 分
+    seat: 2, declarerSeat: 1,
+    hand: [
+      ...[14, 9, 6, 3].map((r, i) => T('S', r, i)),   // 不带 ♠K，免得它变成主牌
+      ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10)),
+    ],
+    currentTrick: [
+      { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },
+      { seat: 0, cards: [T('S', 5, 91)] },
+    ],
+    piecesView: {
+      // 打 K 时 K 是主牌，这门的件只剩 A 两张
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' }],
+      D: [], C: [],
+    },
+  });
+  assert.equal(chooseFollowCards(view)[0].rank, 14,
+    '这门本来就没多少分，他甩了也刮不到，不必死护着 ♠A');
+});
 
 // 例外一：桌上分够大。Glen：「如果眼前有非常大的利益，比如 20 分甚至 30 分……
 // 也可以冒风险去打件吃分。」
