@@ -768,30 +768,70 @@ test('求件应答：对手求件 → 护住不给', () => {
 //
 // 座位 2；对手(1)领 ♠4 求件；队友(0)跟一张；座位 3 还在后面。
 // 唯一变量就是队友那张牌带不带分。
-function opponentProbeView(partnerCardRank) {
+// spades = 我这门黑桃有哪几张；table = 桌上另外两家已经打出的黑桃；
+// allSeen = 这门的件是不是已经全现（全现了亮不亮都一样，不该再罚）
+function opponentProbeView(table, spades = [14, 9, 6, 3], allSeen = false) {
   return followView({
     seat: 2, declarerSeat: 1,
-    hand: [T('S', 14, 0), T('S', 9, 1), T('S', 6, 2), T('S', 3, 3),
+    hand: [...spades.map((r, i) => T('S', r, i)),
       ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10))],
     currentTrick: [
-      { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },
-      { seat: 0, cards: [T('S', partnerCardRank, 91)] },
+      { seat: 1, playSuit: 'S', cards: [T('S', table[0], 90)] },
+      { seat: 0, cards: [T('S', table[1], 91)] },
     ],
     piecesView: {
-      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: allSeen ? 'seen' : 'unseen' },
           { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
       D: [], C: [],
     },
   });
 }
 
-test('求件应答：对手求件、桌上无分 → 护住 ♠A 不打', () => {
-  assert.notEqual(chooseFollowCards(opponentProbeView(3))[0].rank, 14);
+test('亮件：对手求件、桌上无分 → 护住 ♠A 不打', () => {
+  assert.notEqual(chooseFollowCards(opponentProbeView([4, 3]))[0].rank, 14);
 });
 
-test('求件应答：对手求件但桌上有分、我能赢 → 用 ♠A 把分吃回来', () => {
-  assert.equal(chooseFollowCards(opponentProbeView(5))[0].rank, 14, '5 分也值得吃');
-  assert.equal(chooseFollowCards(opponentProbeView(10))[0].rank, 14, '10 分更该吃');
+// ⚠️ 这条原来断言「5 分也值得吃、10 分更该吃」，是我按 Glen 早先那句
+//「有分而且我这一下能赢，就该用件把分吃回来」写的。他后来给了更准的判据，
+// 把这条推翻了：「如果对方可能因为自己的 A 可以甩很长、得很多分，
+//   有这个可能性的话，最好是不打；如果自己这门已经快断了……这个时候也可以吃，
+//   需要看当时的情况。」
+// 这个 fixture 正好是「不该打」的那一侧：我黑桃 4 张（打完 ♠A 还剩 3 张，不算快断），
+// 而对手在这门可能还握着 5 张左右 —— 亮了 ♠A 就是把甩牌资格递过去。
+test('亮件：这门还长、对手可能甩很长 → 5 分不值得亮 ♠A', () => {
+  assert.notEqual(chooseFollowCards(opponentProbeView([4, 5]))[0].rank, 14, '5 分不值');
+});
+
+// ⚠️ 只钉 5 分，【故意不钉 10 分】。10 分那档实测仍然会打 ♠A，但那不是
+// 「冒险亮件吃分」，是【封分】：桌上 10 分、最后一家还没出，我垫小牌的话
+// 他可能用更大的黑桃把这 10 分抢走（scoreFollow 的 lastSeatPointRisk 正是这一项）。
+// 「亮件的风险」和「封住最后一家」是两笔账，Glen 给的判据只讲了前者，
+// 后者要不要让路还没有裁定 —— 没裁定的事不写成断言。
+
+// 例外：这门的件已经全现了 —— 我这张 ♠A 亮不亮，对手的甩牌资格都不会因此变化，
+// 那就没有「冒险」可言，该吃分就吃分。
+// ⚠️ 和上面那条 5 分的用【同一个 fixture】，只把这门的件全设成已现 ——
+// 两条对照才钉得住「全现就不罚」这条豁免本身。
+test('亮件：这门的件已经全现 → 没有风险可言，5 分也照吃', () => {
+  assert.equal(chooseFollowCards(opponentProbeView([4, 5], [14, 9, 6, 3], true))[0].rank, 14,
+    '件都现完了还护着 ♠A，那是白护');
+});
+
+// 例外一：桌上分够大。Glen：「如果眼前有非常大的利益，比如 20 分甚至 30 分……
+// 也可以冒风险去打件吃分。」
+test('亮件：桌上分够大 → 值得冒险亮 ♠A 把分吃回来', () => {
+  // 对手领 ♠K(10)、队友垫 ♠10(10)，加上后面还可能来的分 —— 这一墩已经很重
+  assert.equal(chooseFollowCards(opponentProbeView([13, 10]))[0].rank, 14,
+    '20 分以上就该吃回来，不能把 A 带进棺材');
+});
+
+// 例外二：自己这门快断了。Glen：「如果自己这门已经快断了，比如打 A 后再捅多一支
+// 或两支就断了，可以毙别人，这个时候也可以吃。」
+// 同样 5 分，只把黑桃从 4 张减到 3 张（打完 ♠A 只剩 2 张）→ 可以打。
+// 这两条必须成对看：单看任何一条都钉不住「快断门」这个分界。
+test('亮件：同样 5 分，但我这门打完就快断了 → 可以亮 ♠A', () => {
+  assert.equal(chooseFollowCards(opponentProbeView([4, 5], [14, 9, 6]))[0].rank, 14,
+    '打完 ♠A 只剩两张，很快断门就能毙别人，这时候吃分不亏');
 });
 
 // ---- 庄家首轮吊主带分 ----

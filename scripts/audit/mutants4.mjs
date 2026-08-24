@@ -59,6 +59,7 @@ runMutants([
   [F, 'holdsTopTrump && myTrumps.length >= BOTTOM_MIN_TRUMPS', 'holdsTopTrump', '保底判定不看主牌长度'],
   [F, 'const BOTTOM_MIN_TRUMPS = 9;', 'const BOTTOM_MIN_TRUMPS = 3;', '保底的主牌长度门槛降到 3'],
   [F, 'cost += buriedHere.filter(card => card.rank === 14).length * 300;', '', '埋副 A 不再受罚'],
-  [F, 'if (mine >= 1 && unseen >= 1 &&', 'if (unseen >= 2 &&', '求件回到不看自己有没有件'],
+  [F, 'if (unseen >= 1 && strongPieceSuit(view, ctx, suit, tuning)) {', 'if (unseen >= 2) {',
+      '求件回到不看自己有没有件、也不看这门强不强'],
   [F, 'if (!stillHasSuit) continue;', '', '断门也照罚「件被埋光」（会让该断的门不敢断）'],
 ]);

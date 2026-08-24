@@ -781,6 +781,21 @@ function safeSideThrow(view, ctx, tuning = strategyTuning(view)) {
 // 撑不到最后一轮。100 张牌四家分，平均每家 9 张主，低于这个数不算保底牌。
 const BOTTOM_MIN_TRUMPS = 9;
 
+// 亮一支件的代价。Glen 说这个「需要看当时的情况」，所以它不是一个固定门槛：
+//   · 基准 240。「多大的分才值得冒这个险」不在这里算 —— 接管加分
+//     （100 + totalPoints * 10）本来就表达了这件事，等效门槛落在 25 分上下，
+//     正好对上他说的「20 分甚至 30 分那种大利益才值得冒险」
+//   · 再按【对手在这门可能还剩多长】缩放（PIECE_THREAT_BASELINE 张算一份），
+//     因为真正的风险是「他因为我这张 A 能甩很长、得很多分」
+//   · 上下夹住，免得极端牌型把它放大成一票否决
+const PIECE_EXPOSURE_COST = 240;
+const PIECE_THREAT_BASELINE = 4;
+const PIECE_THREAT_MIN = 0.5;
+const PIECE_THREAT_MAX = 2;
+// 打完这一手之后这门只剩几张就算「快断了」。Glen：「如果自己这门已经快断了，
+// 比如打 A 后再捅多一支或两支就断了，可以毙别人，这个时候也可以吃。」
+const PIECE_NEAR_VOID_AFTER = 2;
+
 // 「砍下去就保不了底、而且分还没到移庄线」时，放走这一墩的分量。
 // 要压得过接管加分（最后一家时是 100 + 分×10 + 45），否则拦不住。
 const OVER_KILL_PENALTY = 1200;
@@ -984,6 +999,66 @@ function maxOpponentTrumpEstimate(view, ctx) {
     worst = Math.max(worst, (outstanding * (player.handCount ?? 0)) / hidden);
   }
   return worst;
+}
+
+// 某一门副牌，【单独一家对手】最多可能握着多少张 —— 和 maxOpponentTrumpEstimate
+// 同一套算法（未现牌按各家手牌数摊分，底牌那份摊出去正好扣掉）。
+// 用来衡量「我亮这支件之后，他能甩多长」。
+function maxOpponentSuitEstimate(view, ctx, suit) {
+  const total = buildDeck().filter(card => suitOf(card, ctx) === suit).length;
+  const played = playedCardsOf(view).filter(card => suitOf(card, ctx) === suit).length;
+  const mine = cardsOfSuit(view.you?.hand ?? [], suit, ctx).length;
+  const outstanding = Math.max(0, total - played - mine);
+  const others = (view.players ?? []).filter(player => player.seat !== view.you.seat);
+  const hidden =
+    others.reduce((sum, player) => sum + (player.handCount ?? 0), 0) +
+    (view.round?.kittyCount ?? 0);
+  if (hidden <= 0) return outstanding;
+  let worst = 0;
+  for (const player of others) {
+    if (player.seat % 2 === view.you.team) continue; // 队友甩这门不是威胁
+    worst = Math.max(worst, (outstanding * (player.handCount ?? 0)) / hidden);
+  }
+  return worst;
+}
+
+// 这一手里【亮出去几份件的风险】——领牌和跟牌共用同一份判据（Glen）。
+//
+// 「如果对家没表示，那么最好是不随便出，因为这个是冒险的行为。比如别人有三件，
+//   你不知道，贸然出了后，给对方甩了 10 几支，对我方的威胁就非常大了。」
+//
+// 亮一支件 = 把这门的一支从「未现」永久变成「已现」。canThrowByStatus 只要求
+// 每支件都 !== 'unseen'，所以每亮一支就是替【攥着其余件的人】往甩牌资格上推一格 ——
+// 而三家里有两家是对手。
+//
+// 四种情况不算风险：
+//   · 这门的件已经全现了 —— 亮不亮都一样
+//   · 这门够格当求件方（strongPieceSuit）—— 我就是要凑齐条件的那个人
+//   · 队友表示过这门 —— 「如果对家，那是可以很没压力地出件的」
+//   · 我这门打完就快断了 —— 「打 A 后再捅多一支或两支就断了，可以毙别人，
+//     这个时候也可以吃」。断门之后我能用主牌毙，反而是优势。
+// 风险的大小看【对手在这门可能还剩多长】：他能甩得越长，亮件越亏。
+function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
+  const hand = view.you?.hand ?? [];
+  return cards.reduce((sum, card) => {
+    if (!isSidePiece(card, ctx)) return sum;
+    const suit = suitOf(card, ctx);
+    const stillHidden = (view.round?.piecesView?.[suit] ?? [])
+      .filter(item => item.status === 'unseen').length;
+    if (stillHidden === 0) return sum;
+    // 三件在手、只差一支 —— Glen 点名的那条求件打法（AAK 打 K、AKK 打 A）。
+    // 亮出去的这一支正是【替我自己】把甩牌条件凑齐的那一步，不算冒险。
+    // 和 pieceSeekingLead 里那条精确分支用的是同一个判据。
+    const held = (view.round?.piecesView?.[suit] ?? [])
+      .filter(item => item.status === 'mine').length;
+    if (held >= 3 && stillHidden === 1) return sum;
+    if (strongPieceSuit(view, ctx, suit, tuning)) return sum;
+    if (partnerAskedSuit === suit) return sum;
+    const spentHere = cards.filter(item => suitOf(item, ctx) === suit).length;
+    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) return sum;
+    const threat = maxOpponentSuitEstimate(view, ctx, suit) / PIECE_THREAT_BASELINE;
+    return sum + Math.min(PIECE_THREAT_MAX, Math.max(PIECE_THREAT_MIN, threat));
+  }, 0);
 }
 
 function tailThrowPlan(view, ctx, control) {
@@ -1382,6 +1457,13 @@ export function chooseLeadCards(view) {
     .map(proposal => {
       const pointValue = proposal.cards.reduce((sum, card) => sum + cardPoints(card), 0);
       const preserveCost = proposal.cards.reduce((sum, card) => sum + keepValue(card, ctx), 0);
+      // 注：这里【故意没有】亮件的代价（pieceExposureRisk），试过又撤了：
+      //   · 构造不出能钉住它的测试 —— 「光秃秃领一张件」本来就排不到
+      //     develop-long-side-suit 前面（那条挑的是长门最小的无分牌）
+      //   · 实测也毫无影响：领牌里「有替代选项却还是打件」的决策 249 → 252
+      // 查下来早盘那些领牌亮件【全部来自被豁免的约定打法】（求件 / 续打贡献件 /
+      // 回队友那门），不是失误。亮件的代价只写在跟牌那边（scoreFollow），那里才有
+      // 真正的取舍。别再往这里加一遍。
       const genericScore =
         -preserveCost * 0.25 * tuning.preserveWeight -
         (early ? pointValue * 8 * tuning.pointExposureWeight : 0) +
@@ -1582,14 +1664,11 @@ function scoreFollow(view, cards, ctx) {
   const unseenPieces = (round.piecesView?.[lead.playSuit] ?? [])
     .filter(item => item.status === 'unseen').length;
 
-  if (opponentProbe && unseenPieces > 0 && donatedPieces > 0) {
-    let penalty = donatedPieces * 320 * pieceCaution * tuning.pieceProtectionWeight;
-    // Glen：「如果判断他并没有剩很多，又没分，自己可能留这个大牌还有其它用，那就不打」
-    // —— 反过来说，这墩【有分】而且我这一下能赢，就该用件把分吃回来，不能死护着。
-    // 护件是为了不让对手凑齐甩牌资格，不是为了把 A 带进棺材。
-    if (totalPoints > 0 && afterTeamWinning) penalty *= 0.45;
-    score -= penalty;
-  }
+  // ⚠️ 这里原来还有一条「对手求件时另罚 320、有分则打 0.45 折」的规则。
+  // 已经并进下面那条统一的「亮件代价」——两条叠加会把等效门槛推到 37 分，
+  // 比 Glen 说的「20 分甚至 30 分」高出一截；而且旧的那条只认「有没有分」，
+  // 认不出他真正在意的两件事（对手这门可能多长、我自己是不是快断门了）。
+  // 对手正在求件这个事实没有丢：它在下面被当作【威胁确认】，把代价调高一档。
 
   // ---- 队友求件时【贡献件】（积极的一半，以前完全没有）----
   //
@@ -1618,6 +1697,39 @@ function scoreFollow(view, cards, ctx) {
     // 乘 settings.inference：求件应答是「读牌 + 约定」类能力，
     // easy 电脑（inference = 0）本就不该会这一手，它只会老老实实跟小牌。
     score += bonus * settings.inference * tuning.conventionPriorWeight;
+  }
+
+  // ---- 亮件是冒险，默认不做（Glen）----
+  //
+  // 「如果对家没表示，那么最好是不随便出，因为这个是冒险的行为。
+  //   比如别人有三件，你不知道，贸然出了后，给对方甩了 10 几支，
+  //   对我方的威胁就非常大了。」
+  //
+  // 亮一支件 = 把这门的一支从「未现」永久变成「已现」。canThrowByStatus 只要求
+  // 每支件都 !== 'unseen'，所以每亮一支就是替【攥着其余件的人】往甩牌资格上推一格 ——
+  // 而三家里有两家是对手。上面那条 -320 只在【对手主动求件】时才算，
+  // 对手正常领这门、或者我自己顺手打出去，一分保护都没有。
+  // 实测：手牌 >12 张的早盘就有 965 次亮件，全是零分墩。
+  //
+  // 四种情况不罚：
+  //   · 这门的件已经全现了 —— 亮不亮都一样
+  //   · 这门够格当求件方（strongPieceSuit）—— 我就是要凑齐条件的那个人
+  //   · 队友表示过这门 —— Glen：「如果对家，那是可以很没压力地出件的」
+  //   · 【我这门打完就快断了】—— Glen：「打 A 后再捅多一支或两支就断了，
+  //     可以毙别人，这个时候也可以吃」。断门之后我能用主牌毙，反而是优势。
+  // 罚多少看【对手在这门可能还剩多长】，再拿这一墩的分去抵。
+  // 注：不为「对手正在求这门」再单独加档 —— 他能甩多长 maxOpponentSuitEstimate
+  // 已经算过了，再乘一次是重复计数，会把等效门槛从 25 分推到 37 分，
+  // 高出 Glen 说的「20 分甚至 30 分」一截。
+  const partnerAsked = partnerProbe ? { suit: lead.playSuit } : partnerRequest(view, ctx);
+  const exposureRisk = pieceExposureRisk(view, ctx, cards, partnerAsked?.suit ?? null, tuning);
+  if (exposureRisk > 0) {
+    // ⚠️ 这里【不】再单独减一遍「这一墩的分」。Glen 的例外（「20 分甚至 30 分那种
+    // 大利益也可以冒险」）已经由下面的接管加分表达了 —— 那一条本来就是
+    // 100 + totalPoints * 10。再减一次是同一个激励算两遍，而且怎么都构造不出
+    // 能钉住它的测试（变异成 payoff = 0，所有测试照样绿）。
+    // 只留固定代价，等效门槛自然落在 246 ÷ 10 ≈ 25 分，正好是他说的那个数。
+    score -= exposureRisk * PIECE_EXPOSURE_COST * pieceCaution * tuning.pieceProtectionWeight;
   }
 
   if (beforeTeamWinning) {
