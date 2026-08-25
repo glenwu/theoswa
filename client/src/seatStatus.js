@@ -26,3 +26,17 @@ export function seatStatusText(game, player) {
       return null;
   }
 }
+
+// 牌桌上的座位只显示【还没好】的那一半。
+//
+// 左栏玩家列表用 seatStatusText，确认态（已准备✓）也显示 —— 那是一览表，
+// 看的是「四个人各自什么状态」。牌桌不一样：四个座位是所有人打牌时一直盯着的
+// 地方，位置金贵，「已准备✓」放上去只是噪音，真正要一眼看到的是【还在等谁】。
+// ⚠️ seatStatusText 加了新阶段时，如果新文案表示「已完成」，记得进 DONE。
+const DONE = new Set(['已确认✓', '已准备✓', '已看完✓', '已过河']);
+
+export function seatPendingText(game, player) {
+  const text = seatStatusText(game, player);
+  if (!text || DONE.has(text)) return null;
+  return text;
+}

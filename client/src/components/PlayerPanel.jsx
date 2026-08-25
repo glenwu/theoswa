@@ -3,6 +3,7 @@ import { levelLabel, rankLabel, suitSymbol, suitRed, PLAYER_EMOJI, TEAM_COLORS }
 import { useNow, secondsLeft, displayNow } from '../useNow.js';
 import { playedCounts, totalCounts } from '../playedCounts.js';
 import { seatStatusText } from '../seatStatus.js';
+import { THEMES, applyTheme, loadTheme } from '../theme.js';
 import { canThrowByStatus, missingPieceLabels } from '../../../server/pieces.js';
 import { beep } from '../beep.js';
 import Modal from './Modal.jsx';
@@ -48,6 +49,7 @@ export default function PlayerPanel({ game, send }) {
       <div className="flex flex-wrap justify-center gap-2 border-t border-white/10 p-2">
         <button className="btn-icon" title="规则说明" onClick={() => setModal('rules')}>📖</button>
         <button className="btn-icon" title="本局历史" onClick={() => setModal('history')}>🕘</button>
+        <button className="btn-icon" title="配色方案" onClick={() => setModal('theme')}>🎨</button>
         <button
           className="btn-icon"
           title={game.resetProposal ? '新开一局提案进行中' : '提议新开一局'}
@@ -76,6 +78,7 @@ export default function PlayerPanel({ game, send }) {
 
       {modal === 'rules' && <RulesModal onClose={() => setModal(null)} />}
       {modal === 'history' && <HistoryModal game={game} onClose={() => setModal(null)} />}
+      {modal === 'theme' && <ThemeModal onClose={() => setModal(null)} />}
       {showPropose && !game.resetProposal && (
         <ProposeResetModal game={game} send={send} onClose={() => setShowPropose(false)} />
       )}
@@ -231,6 +234,52 @@ function VsBadge({ game }) {
 // 状态胶囊：名字下面永远告诉你「这个人到底点没点」。
 // 文案判定抽成纯函数放在 seatStatus.js，便于单测 —— 这一块最容易在加了新阶段
 // 之后忘了同步，而漏掉的表现就是「四个人干等着，谁也不知道还差谁」。
+// 配色方案选择（Glen）。纯本地偏好：存 localStorage，不进牌局状态 ——
+// 四个人各挑各的，不该因为谁换了配色就发一条服务端消息。
+function ThemeModal({ onClose }) {
+  const [current, setCurrent] = useState(loadTheme);
+  return (
+    <Modal title="配色方案" onClose={onClose}>
+      <div className="mb-3 text-xs font-bold text-white/50">
+        只换牌桌氛围色，金色的按钮和标记四套一样 —— 那是认路用的。
+        选择只存在这台设备上，不影响别人。
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {THEMES.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setCurrent(applyTheme(t.id))}
+            className={`flex items-center gap-2.5 rounded-2xl border-2 p-2.5 text-left transition ${
+              current === t.id
+                ? 'border-amber-300 bg-amber-400/10'
+                : 'border-white/10 bg-white/5 hover:border-white/25'
+            }`}
+          >
+            <span className="flex shrink-0 flex-col gap-0.5">
+              {t.swatch.map(c => (
+                <span
+                  key={c}
+                  className="block h-2.5 w-7 rounded-full"
+                  style={{ background: c }}
+                />
+              ))}
+            </span>
+            <span className="min-w-0">
+              <span className="block font-black text-white">
+                {t.name}
+                {current === t.id && <span className="ml-1 text-amber-300">✓</span>}
+              </span>
+              <span className="block truncate text-[11px] font-bold text-white/45">
+                {t.desc}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
 function statusPill(game, player) {
   const text = seatStatusText(game, player);
   if (!text) return null;
@@ -386,14 +435,16 @@ function PlayerCard({ player, isYou, game, send }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 font-black text-white">
             {/* 自己显著标注：加粗 + （我）后缀 */}
+            {/* 「电脑」在名字【前面】（Glen）：和牌桌上的座位保持一致，
+                一眼扫过去先看到身份，不用读完名字再找后缀。 */}
+            {player.isBot && (
+              <span className="pill bg-cyan-400/20 text-cyan-200">🤖 电脑</span>
+            )}
             <span className={`truncate ${isYou ? 'text-lg text-amber-200' : ''}`}>
               {player.nickname}
             </span>
             {player.isDeclarer && <span title="庄家">👑</span>}
             {player.isFlipper && <span title="翻牌人">🃏</span>}
-            {player.isBot && (
-              <span className="pill bg-cyan-400/20 text-cyan-200">🤖 电脑</span>
-            )}
             {isYou && <span className="text-sm text-amber-300">（我）</span>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-1">

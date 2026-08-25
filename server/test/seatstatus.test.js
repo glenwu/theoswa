@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { seatStatusText } from '../../client/src/seatStatus.js';
+import { seatStatusText, seatPendingText } from '../../client/src/seatStatus.js';
 import { PHASES } from '../constants.js';
 
 const P = extra => ({ seat: 1, team: 1, ready: false, seatLocked: false, isDeclarer: false, ...extra });
@@ -53,4 +53,36 @@ test('每个阶段都走得通，不会因为缺字段抛错', () => {
     assert.doesNotThrow(() => seatStatusText(G(phase, null), P()), phase);
   }
   assert.equal(seatStatusText(undefined, P()), null);
+});
+
+// ---- 牌桌上的座位：只显示「还没好」的那一半（Glen）----
+test('seatPendingText：还没准备的显示「未准备」', () => {
+  const game = { phase: 'READY_CHECK' };
+  assert.equal(seatPendingText(game, { seat: 0, ready: false }), '未准备');
+});
+
+test('seatPendingText：已经准备好的不占牌桌位置', () => {
+  const game = { phase: 'READY_CHECK' };
+  assert.equal(seatPendingText(game, { seat: 0, ready: true }), null);
+});
+
+test('seatPendingText：确认态一律不上牌桌，等人的阶段才显示', () => {
+  const done = [
+    [{ phase: 'SEATING' }, { seat: 0, seatLocked: true }],
+    [{ phase: 'ROUND_END', round: { roundEndConfirms: [0] } }, { seat: 0 }],
+    [{ phase: 'CROSS_RIVER', round: { crossRiver: { doneTeams: [0] } } }, { seat: 0, team: 0 }],
+  ];
+  for (const [game, player] of done) {
+    assert.equal(seatPendingText(game, player), null, `${game.phase} 不该出现在牌桌上`);
+  }
+  // 反面：同样这些阶段，还没点的那一家要显示
+  assert.equal(seatPendingText({ phase: 'SEATING' }, { seat: 0, seatLocked: false }), '未确认');
+  assert.equal(
+    seatPendingText({ phase: 'ROUND_END', round: { roundEndConfirms: [] } }, { seat: 0 }),
+    '看小结中'
+  );
+});
+
+test('seatPendingText：没有「等谁」语义的阶段不显示', () => {
+  assert.equal(seatPendingText({ phase: 'PLAYING' }, { seat: 0 }), null);
 });

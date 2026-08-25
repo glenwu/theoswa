@@ -12,6 +12,68 @@
   --color-gold-600: #d97706;
 }
 
+/* ============ 配色方案（见 theme.js）============
+ * 换肤只动这一组【氛围色】：body 渐变、牌桌聚光、牌背、felt 令牌。
+ * 值写成 "r g b" 三元组，好用 rgb(var(--x) / 0.4) 直接带透明度。
+ * 金色强调色四套一致 —— 那是识别色，跟着换每套都像另一个应用。
+ *
+ * ⚠️ felt 令牌也在这里重定义：Tailwind v4 的 bg-felt-800/95 这类工具类
+ * 编译成 color-mix(in oklab, var(--color-felt-800) …)，所以跟着变量走。
+ * 不带透明度的纯色工具类会被内联成字面量，加新工具类时留意这一点。
+ */
+:root {
+  --felt-deep: 23 17 48;    /* 最外圈、最暗 */
+  --felt-mid: 36 27 69;
+  --felt-rise: 46 36 88;    /* 中央、最亮 */
+  --felt-glow: 96 74 168;   /* 背景聚光 */
+  --spot-glow: 122 96 210;  /* 牌桌聚光 */
+  --back-from: 76 58 143;   /* 牌背渐变 */
+  --back-to: 46 36 88;
+  --back-edge: 212 175 55;  /* 牌背描金 —— 四套通用 */
+}
+
+[data-theme='green'] {
+  --felt-deep: 8 32 24;
+  --felt-mid: 12 46 34;
+  --felt-rise: 17 62 45;
+  --felt-glow: 34 120 84;
+  --spot-glow: 46 140 98;
+  --back-from: 21 82 58;
+  --back-to: 12 46 34;
+  --color-felt-900: #082018;
+  --color-felt-800: #0c2e22;
+  --color-felt-700: #113e2d;
+  --color-felt-600: #17523c;
+}
+
+[data-theme='navy'] {
+  --felt-deep: 8 22 46;
+  --felt-mid: 12 34 66;
+  --felt-rise: 16 47 90;
+  --felt-glow: 42 96 170;
+  --spot-glow: 58 120 200;
+  --back-from: 28 76 140;
+  --back-to: 12 34 66;
+  --color-felt-900: #08162e;
+  --color-felt-800: #0c2242;
+  --color-felt-700: #102f5a;
+  --color-felt-600: #163f76;
+}
+
+[data-theme='crimson'] {
+  --felt-deep: 40 10 20;
+  --felt-mid: 58 15 28;
+  --felt-rise: 78 20 38;
+  --felt-glow: 150 50 70;
+  --spot-glow: 175 65 85;
+  --back-from: 110 30 50;
+  --back-to: 58 15 28;
+  --color-felt-900: #280a14;
+  --color-felt-800: #3a0f1c;
+  --color-felt-700: #4e1426;
+  --color-felt-600: #661a32;
+}
+
 html,
 body,
 #root {
@@ -22,10 +84,19 @@ body {
   font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC",
     system-ui, -apple-system, sans-serif;
   color: #fff;
-  /* 深紫渐变背景，中央略亮形成聚光 */
+  /* 渐变背景，中央略亮形成聚光。颜色全走变量 —— 换肤靠重定义变量，不改这里 */
   background:
-    radial-gradient(1100px 640px at 50% 34%, rgba(96, 74, 168, 0.5) 0%, rgba(46, 36, 88, 0) 70%),
-    radial-gradient(120% 120% at 50% 0%, #2e2458 0%, #241b45 45%, #171130 100%);
+    radial-gradient(
+      1100px 640px at 50% 34%,
+      rgb(var(--felt-glow) / 0.5) 0%,
+      rgb(var(--felt-glow) / 0) 70%
+    ),
+    radial-gradient(
+      120% 120% at 50% 0%,
+      rgb(var(--felt-rise)) 0%,
+      rgb(var(--felt-mid)) 45%,
+      rgb(var(--felt-deep)) 100%
+    );
   background-attachment: fixed;
 }
 
@@ -60,18 +131,22 @@ body {
   /* 牌背：紫色 + 淡色水印 + 描金边框 */
   .card-back {
     background:
-      radial-gradient(circle at 50% 50%, rgba(212, 175, 55, 0.18) 0%, rgba(212, 175, 55, 0) 70%),
-      linear-gradient(135deg, #4c3a8f 0%, #2e2458 100%);
-    border: 1.5px solid #d4af37;
-    box-shadow: inset 0 0 0 1px rgba(212, 175, 55, 0.35);
+      radial-gradient(
+        circle at 50% 50%,
+        rgb(var(--back-edge) / 0.18) 0%,
+        rgb(var(--back-edge) / 0) 70%
+      ),
+      linear-gradient(135deg, rgb(var(--back-from)) 0%, rgb(var(--back-to)) 100%);
+    border: 1.5px solid rgb(var(--back-edge));
+    box-shadow: inset 0 0 0 1px rgb(var(--back-edge) / 0.35);
   }
   /* 牌桌聚光 */
   .table-spot {
     background: radial-gradient(
       900px 500px at 50% 42%,
-      rgba(122, 96, 210, 0.35) 0%,
-      rgba(46, 36, 88, 0.25) 55%,
-      rgba(23, 17, 48, 0.4) 100%
+      rgb(var(--spot-glow) / 0.35) 0%,
+      rgb(var(--felt-rise) / 0.25) 55%,
+      rgb(var(--felt-deep) / 0.4) 100%
     );
   }
 }

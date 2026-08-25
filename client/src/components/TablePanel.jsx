@@ -14,6 +14,7 @@ import Modal from './Modal.jsx';
 import { useNow, secondsLeft, displayNow } from '../useNow.js';
 import { shortcutAction } from '../shortcut.js';
 import { checkSelection } from '../playCheck.js';
+import { seatPendingText } from '../seatStatus.js';
 import { trickLeader } from '../../../server/trick.js';
 import { playSuitOf } from '../../../server/cards.js';
 import { tiaoZhuActive } from '../tiaozhu.js';
@@ -866,6 +867,9 @@ function PlayZone({ player, game, side = 'top', isYou }) {
     !!round?.trumpEvent && round.trumpEvent.declarerSeat === player.seat;
   const trumpDeclaredLabel = isDeclarer ? suitSymbol(round.trumpEvent.card.suit) : '';
 
+  // 「还在等谁」——只取还没好的那一半，确认态不上牌桌（见 seatStatus.js）
+  const pendingText = seatPendingText(game, player);
+
   return (
     <div
       data-playzone={player.seat}
@@ -910,6 +914,15 @@ function PlayZone({ player, game, side = 'top', isYou }) {
         </div>
       )}
       <div className="flex items-center gap-1 text-xs font-black text-white/80">
+        {/* 「电脑」放在名字【前面】（Glen）：牌桌上一眼扫过去先看到的是这两个字，
+            立刻知道这一家是电脑在打，不用去读完名字再找后缀。
+            左栏玩家列表里也有同样的标记，但手机竖屏时那栏藏在 👥 浮层里 ——
+            标记只放那儿等于看不见，和「托管中」当初的理由一样。 */}
+        {player.isBot && (
+          <span className="rounded bg-cyan-400/25 px-1 text-[10px] leading-tight text-cyan-200">
+            电脑
+          </span>
+        )}
         {PLAYER_EMOJI[player.id]} {player.nickname}
         {isYou ? '(我)' : ''}
         {isDeclarer && (
@@ -932,6 +945,14 @@ function PlayZone({ player, game, side = 'top', isYou }) {
           title={`${player.nickname} 已开启电脑托管，由 AI 代打`}
         >
           🤖 托管中
+        </div>
+      )}
+      {/* 「未准备」等等也要在牌桌上（Glen）：等人点的阶段（准备/起揭停留/小结/换底/
+          过河）四个人干等着，不该只有点开左栏浮层才知道还差谁。
+          只显示【还没好】的那一半，确认态不占位。 */}
+      {pendingText && (
+        <div className="rounded-full bg-amber-400/85 px-1.5 text-[10px] font-black leading-[1.35] text-amber-950">
+          {pendingText}
         </div>
       )}
       {/* 出牌区自适应：没牌时只剩方位名一条细线；有牌按张数展开（容量 10 张，超出再压缩） */}
