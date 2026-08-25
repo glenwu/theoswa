@@ -2207,7 +2207,7 @@ test('求件应答：第三家 —— 这门我方已经求过一次，就不再
 // 所以梅花必须是【最长的门】—— 否则 develop-long-side-suit 的 360 会叠到方块上，
 // 810 稳压回门，两种情况都选方块，什么也钉不住（第一版就栽在 ♣2 是级牌、
 // 梅花实际只有 6 张、和方块打平这件事上）。
-function returnSuitLeadView(repeatAsk) {
+function returnSuitLeadView(repeatAsk, spadePiecesSeen = false) {
   const trick = (no, leadCard, mine, winner) => ({
     leadSeat: 0, leadSuit: 'S', winnerSeat: winner, trickNo: no,
     plays: [
@@ -2229,7 +2229,9 @@ function returnSuitLeadView(repeatAsk) {
       ...[5, 4, 3].map((r, i) => T('H', r, i + 30)),
     ],
     piecesView: {
-      S: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
+      S: [14, 14, 13, 13].map(rank => ({
+        rank, status: spadePiecesSeen ? 'seen' : 'unseen',
+      })),
       D: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
           { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
       C: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
@@ -2241,13 +2243,81 @@ test('领牌：队友第一次求件 → 拿到牌权就把这门回过去', () 
   assert.equal(chooseLeadCards(returnSuitLeadView(false))[0].suit, 'S');
 });
 
-test('领牌：队友这门已经求过一次 → 不再当求件，转去自己那门求件', () => {
-  assert.equal(chooseLeadCards(returnSuitLeadView(true))[0].suit, 'D',
-    '他贡献完件再领一张小牌，那是牌权到手随手往回打，不是新的求件');
+// ⚠️ 这条断言【改过】，原来写的是「队友这门已经求过一次 → 不再当求件，
+// 转去自己那门求件（期望 D）」。那是把「求件一次性」错套到了领牌这一侧。
+// Glen 的裁定：求件这个意图跨墩有效，只要这门还有件没现身，就该接着帮他打
+// ——「即使自己没件，也需要帮队友把别人的件逼出来，因为这个时候你并不知道
+//    你的队友有多少支、对手有多少支，只能跟着打。」
+// 一次性那条【只管贡献这一侧】（下面第三家/第二家那两条仍然钉着它）：
+// 领牌是「帮他把件逼出来」，贡献是「把我的件交给他」，两回事。
+test('领牌：队友求过件、这门的件还没逼完 → 接着帮他打这门（求了几次都一样）', () => {
+  assert.equal(chooseLeadCards(returnSuitLeadView(true))[0].suit, 'S');
+});
+
+test('领牌：这门的件已经全现 → 逼件这件事了结，转去自己那门求件', () => {
+  assert.equal(chooseLeadCards(returnSuitLeadView(true, true))[0].suit, 'D',
+    '件都出来了就没什么可逼的了，接下来该甩或者去做自己的事');
 });
 
 test('打A封：打完这张这门只剩一张 → 压不住甩牌，不算「逼出来我可以大」', () => {
   const card = chooseFollowCards(aceCoverView({ spades: [14, 12], partnerAsked: true }))[0];
   assert.notEqual(card.rank, 14,
     '顶端再大，只剩一张也只压得住单张 —— 别拿这个当亮件的理由');
+});
+
+// Glen 第 2 条的正主：求件这个意图【跨墩有效】，而且【自己没件也要帮着逼】。
+//   「假如我这门只有一支 ♠A，队友求件我交出去了，现在我手上一支件都没有、
+//     但还有 ♠9 ♠7 ♠4 这些小牌 —— 这时候正该继续领这门（领 ♠4）
+//     把对手的件逼出来。」
+// 中间隔了两墩、队友最近领的是别的门，旧代码就把这次求件忘干净了：
+// partnerRequest 只看队友【最近一次】领了什么。
+function forgottenAskView() {
+  return leadView({
+    mySeat: 2, declarerSeat: 0,
+    hand: [
+      ...[9, 7, 4].map((r, i) => T('S', r, i)),        // 件已经交给队友，只剩小牌
+      ...[8, 7, 6, 5, 4, 3].map((r, i) => T('C', r, i + 10)),
+      ...[9, 8].map((r, i) => T('D', r, i + 20)),
+      ...[5, 4, 3].map((r, i) => T('H', r, i + 30)),
+    ],
+    trickHistory: [
+      { // 第 1 墩：队友求件
+        leadSeat: 0, leadSuit: 'S', winnerSeat: 1, trickNo: 1,
+        plays: [{ seat: 0, playSuit: 'S', cards: [T('S', 4, 80)] },
+                { seat: 1, cards: [T('S', 11, 81)] },
+                { seat: 2, cards: [T('S', 14, 82)] },   // 我把唯一那支件交了出去
+                { seat: 3, cards: [T('S', 8, 83)] }],
+      },
+      { // 第 2 墩：对手领梅花
+        leadSeat: 1, leadSuit: 'C', winnerSeat: 0, trickNo: 2,
+        plays: [{ seat: 1, playSuit: 'C', cards: [T('C', 12, 84)] },
+                { seat: 2, cards: [T('C', 3, 85)] },
+                { seat: 3, cards: [T('C', 9, 86)] },
+                { seat: 0, cards: [T('C', 14, 87)] }],
+      },
+      { // 第 3 墩：队友领方块（不是求件），我拿到牌权
+        leadSeat: 0, leadSuit: 'D', winnerSeat: 2, trickNo: 3,
+        plays: [{ seat: 0, playSuit: 'D', cards: [T('D', 9, 88)] },
+                { seat: 1, cards: [T('D', 6, 89)] },
+                { seat: 2, cards: [T('D', 13, 90)] },
+                { seat: 3, cards: [T('D', 7, 91)] }],
+      },
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' }],
+      D: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
+      C: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
+    },
+  });
+}
+
+test('帮队友求：隔了两墩、他最近领的是别的门 → 那次求件仍然算数', () => {
+  assert.equal(chooseLeadCards(forgottenAskView())[0].suit, 'S',
+    '旧代码只看队友最近一次领了什么，第 1 墩那次求件早被忘光了');
+});
+
+test('帮队友求：自己一支件都没有了，照样领这门的小牌去逼', () => {
+  const card = chooseLeadCards(forgottenAskView())[0];
+  assert.equal(card.rank, 4, `该领 ♠4，实际领了 ${card.suit}${card.rank}`);
 });

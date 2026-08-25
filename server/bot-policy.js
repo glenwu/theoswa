@@ -636,8 +636,7 @@ function partnerSideProtocolChoice(view, choices, ctx) {
   // 外加「领副 K 求 A」这个更具体的请求。
   // 再叠上一次性规则：我方在这门已经求过，就不存在新的求件。
   const asksForPiece =
-    (isPieceRequestLead(lead.cards, ctx) ||
-      (isSidePiece(leadCard, ctx) && cardPoints(leadCard) > 0)) &&
+    isPieceAskLead(lead.cards, ctx) &&
     !teamAskedPieceBefore(view, ctx, lead.playSuit, view.you.seat % 2);
   const pieceContributions = asksForPiece
     ? sameSuitChoices.filter(choice => isSidePiece(choice.cards[0], ctx))
@@ -707,6 +706,34 @@ function partnerSideProtocolChoice(view, choices, ctx) {
 function partnerRequest(view, ctx) {
   const partnerSeat = partnerSeatOf(view.you.seat);
   const history = view.round?.trickHistory ?? [];
+  const holdsCards = suit => cardsOfSuit(view.you.hand ?? [], suit, ctx).length > 0;
+
+  // ============ ① 还没逼完的求件：这个意图【跨墩有效】 ============
+  // Glen：「即使自己没件，也需要帮队友把别人的件逼出来，因为这个时候
+  //        你并不知道你的队友有多少支、对手有多少支，只能跟着打。」
+  // 所以判断的不是「我还剩不剩件」，是【这门还有没有件没现身】。
+  //
+  // ⚠️ 原来只看队友【最近一次】领了什么：他第 3 墩求件、第 6 墩领了别的门，
+  // 等我第 7 墩拿到牌权，那次求件已经被忘得干干净净 —— 领什么全交给通用提案抢。
+  //
+  // 停止条件是「一支未现的件都没有了」：件已经逼完，接下来该甩而不是接着领。
+  // 件在底牌里的话永远等不到它现身，所以还要求我这门手上有牌 —— 打完就自然停。
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const trick = history[i];
+    if (trick.leadSeat !== partnerSeat || trick.leadSuit === 'TRUMP') continue;
+    if (!isPieceAskLead(trick.plays?.[0]?.cards ?? [], ctx)) continue;
+    const suit = trick.leadSuit;
+    const items = view.round?.piecesView?.[suit] ?? [];
+    if (!items.some(item => item.status === 'unseen')) break; // 逼完了
+    if (!holdsCards(suit)) break;                             // 这门我打空了
+    return {
+      suit,
+      seeking: true,
+      partnerIsDeclarer: partnerSeat === view.declarerSeat,
+    };
+  }
+
+  // ============ ② 没有未了的求件：回队友最近领的那门 ============
   let lastIndex = -1;
   for (let i = 0; i < history.length; i += 1) {
     if (history[i].leadSeat === partnerSeat) lastIndex = i;
@@ -740,8 +767,7 @@ function pieceContributionContinuationLead(view, ctx) {
     !mine
   ) return null;
 
-  const leadCard = lead.cards[0];
-  const askedForPiece = cardPoints(leadCard) > 0 || !isSidePiece(leadCard, ctx);
+  const askedForPiece = isPieceAskLead(lead.cards, ctx);
   const contributedPiece = mine.cards.some(card =>
     suitOf(card, ctx) === last.leadSuit && isSidePiece(card, ctx)
   );
@@ -1056,6 +1082,23 @@ function teamAskedPieceBefore(view, ctx, suit, team, beforeIndex = Infinity) {
     if (isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) return true;
   }
   return false;
+}
+
+// 「队友这一领是不是在求件」—— 全项目唯一的判据，别再各写一份。
+// 两种形态：
+//   ① 单张小牌：≤5，或者 10（10 也是求的意思，但白送 10 分，
+//      只在手上没有 ≤5 的牌时才用 —— 代价大，所以是次选）
+//   ② 领副 K：K 本身就是件，这是强烈求 A
+// ⚠️ 曾经有三处各写一套，最松的那套是
+//    `cardPoints > 0 || !isSidePiece` —— 队友领任何非件小牌都算求件，
+//    6/7/8/9/J/Q 全算。求件带 +700 的约定加分，判据一松就到处乱给件。
+function isPieceAskLead(cards, ctx) {
+  if (!Array.isArray(cards) || cards.length !== 1) return false;
+  const card = cards[0];
+  return (
+    isPieceRequestLead(cards, ctx) ||
+    (isSidePiece(card, ctx) && cardPoints(card) > 0)
+  );
 }
 
 function isPieceRequestLead(cards, ctx) {
