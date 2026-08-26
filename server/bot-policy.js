@@ -168,6 +168,82 @@ function lowestLead(cards, ctx) {
   return lowCards(cards, 1, ctx)[0] ?? null;
 }
 
+// 「这门有没有甩牌欲望」—— 求件信号该不该发，就看这一个量（Glen 第 1 条）。
+//
+// 他给的两条是【件多】或者【很长】：
+//   · 件多 → strongPieceSuit，两件以上配 6 支、单件配 8 支，都是他的原话
+//   · 很长 → 一件都没有就只能靠长度撑。可是「多长算长」他没给数，也不该写死；
+//     他自己指了路：「其实你可以从已经打出去的牌去推断，这个是 bot 的优势，
+//     可以很快的计划某一门可能剩多少张，而做出相对应的策略。」
+//     所以判据是【比谁都长】：我这门比任何单独一家对手可能持有的都多
+//    （maxOpponentSuitEstimate 就是按已打出的牌 + 各家手牌数摊出来的），
+//     那甩出去就压得住、就有威胁。这个量随着牌打出去自己会收紧，不用调参。
+function suitThrowAmbition(view, ctx, suit, tuning = strategyTuning(view)) {
+  if (strongPieceSuit(view, ctx, suit, tuning)) return true;
+  const mine = cardsOfSuit(view.you?.hand ?? [], suit, ctx).length;
+  return mine >= 2 && mine > maxOpponentSuitEstimate(view, ctx, suit);
+}
+
+// 领牌时挑那一张，但【不要顺手发出求件信号】。
+//
+// 电脑并不是故意乱求的：develop-long-side-suit / attack-opponent-long-suit /
+// 兜底这几条压根没有求件的意思，可它们一律挑「最小的无分牌」，一出手就是求件
+// 信号（isPieceRequestLead：单张、非件、≤5 或 10）。真人读的是【信号】不是动机，
+// 队友信了就把件交出来 —— 而这门的件多半在对手那边，等于白白替对手把甩牌资格
+// 凑齐（canThrowByStatus 只要求每支件都别再「未现」）。
+//
+// 所以：本来要打的那张牌会不会被读成求件？会、而且这门没有甩牌欲望 → 换一张。
+// 换成 6~9：天生无分，又在求件区（≤5 和 10）之上，正好是「就是想领这门」。
+// 不取 J/Q —— 那两档是能赢墩的牌，为了避个信号提前扔掉，代价比信号本身还大；
+// 手上一张 6~9 都没有就维持原判：宁可发个错信号，也不为了避信号去打件、送 10 分。
+//
+// ⚠️ 只在【本来那张真的会喊】时才换。不加这一步的话，最小那张明明是 ♠7、
+// 也会被 6~9 这个筛子重挑一遍，白白改掉一堆和求件无关的领牌。
+const QUIET_LEAD_MIN = 6;
+const QUIET_LEAD_MAX = 9;
+
+function quietLead(view, ctx, cards, tuning = strategyTuning(view)) {
+  const shouts = card => {
+    const suit = suitOf(card, ctx);
+    return (
+      suit !== 'TRUMP' &&                                  // 领主牌不是求件信号
+      isPieceRequestLead([card], ctx) &&
+      !suitThrowAmbition(view, ctx, suit, tuning)
+    );
+  };
+  const natural = lowestLead(cards, ctx);
+  if (!natural || !shouts(natural)) return natural;
+  const quiet = cards.filter(
+    card => card.rank >= QUIET_LEAD_MIN && card.rank <= QUIET_LEAD_MAX
+  );
+  return quiet.length ? lowestLead(quiet, ctx) : natural;
+}
+
+// 「这门我方已经在求件、而且还没逼完」—— 这时候接着领小牌不是乱求，
+// 正是 Glen 第 2 条要的【帮队友把别人的件逼出来】，一分都不该罚。
+// 判据和 partnerRequest ① 那段一致：我方有人在这门求过 + 还有件没现身。
+function helpingTeamAsk(view, ctx, suit) {
+  return (
+    teamAskedPieceBefore(view, ctx, suit, view.you.seat % 2) &&
+    (view.round?.piecesView?.[suit] ?? []).some(item => item.status === 'unseen')
+  );
+}
+
+// 「这一手打出去会被读成求件，可我并没有这个意思」。
+//
+// quietLead 换牌只在这门手上还有 6~9 时才成立。实测（100 局插桩）：没有甩牌
+// 欲望却还是喊出求件的 135 次里，116 次这门手上【一张 6~9 都没有】—— 大多是
+// 只剩一两张的门。那种局面换不了牌，只能换门。
+function straySignal(view, ctx, cards, tuning) {
+  if (cards.length !== 1) return false;                  // 甩牌不是求件信号
+  const card = cards[0];
+  const suit = suitOf(card, ctx);
+  if (suit === 'TRUMP') return false;                    // 领主牌不是求件信号
+  if (!isPieceRequestLead([card], ctx)) return false;    // 本来就不会被读成求件
+  if (suitThrowAmbition(view, ctx, suit, tuning)) return false;  // 真心在求，该喊
+  return !helpingTeamAsk(view, ctx, suit);                      // 帮队友逼件，该喊
+}
+
 function uniqueCardSets(sets) {
   const seen = new Set();
   const out = [];
@@ -1851,8 +1927,11 @@ export function chooseLeadCards(view) {
     // 但不该盖过自己手上已经能甩的那门 —— 那是实打实的分。
     const bonus =
       320 + (request.seeking ? 160 : 0) + (request.partnerIsDeclarer ? 80 : 0);
+    // seeking = 队友明确在求件，我接着领小牌【就是】在帮他逼件，那是有意发的信号；
+    // 只是「把牌权还给他这门」时就不该发，走 quietLead。
+    const back = cardsOfSuit(hand, request.suit, ctx);
     addProposal(
-      [lowestLead(cardsOfSuit(hand, request.suit, ctx), ctx)],
+      [request.seeking ? lowestLead(back, ctx) : quietLead(view, ctx, back, tuning)],
       bonus * tuning.leadStrategyPriorWeight,
       'return-partner-suit'
     );
@@ -1862,7 +1941,8 @@ export function chooseLeadCards(view) {
   const threatSuit = opponentThreatSuit(view, ctx, tuning);
   if (threatSuit) {
     addProposal(
-      [lowestLead(cardsOfSuit(hand, threatSuit, ctx), ctx)],
+      // 压缩对手的甩牌张数，不是在求件 —— 别顺手把信号发出去
+      [quietLead(view, ctx, cardsOfSuit(hand, threatSuit, ctx), tuning)],
       // ⚠️ 这里【故意没有】给「吃分为主」再加一份。试过 +200，变异测试显示它
       // 改变不了任何决策：points-first 时 develop 的加分本来就不适用
       //（那是 run-side 专属），attack(250) 已经稳压 develop(160)。
@@ -1881,9 +1961,11 @@ export function chooseLeadCards(view) {
     .sort((a, b) => b.length - a.length);
   if (sideGroups.length > 0) {
     const long = sideGroups[0];
-    const lowNoPoint = lowestLead(long.filter(card => cardPoints(card) === 0), ctx);
+    const noPoint = long.filter(card => cardPoints(card) === 0);
     addProposal(
-      [lowNoPoint ?? lowestLead(long, ctx)],
+      // 发展长副牌同样不是求件。注意这门【够长的话】quietLead 自己会放行 ——
+      // 「很长」本来就是 Glen 认可的甩牌欲望，那时的求件信号是真心的。
+      [quietLead(view, ctx, noPoint.length ? noPoint : long, tuning)],
       // 「以跑副牌为主」的两种策略下，发展长副牌不再只是兜底选项
       (160 + (strategy === 'run-side' || strategy === 'run-and-score'
         ? STRATEGY_RUN_SIDE_BONUS : 0)) * tuning.leadStrategyPriorWeight,
@@ -1892,8 +1974,31 @@ export function chooseLeadCards(view) {
   }
 
   // 全剩主牌时仍优先留大牌保底/扣底。
-  const fallback = lowestLead(nonTrumps.length ? nonTrumps : trumps, ctx);
+  // 兜底也别乱喊：真的没别的可打了才领这张，更没有求件的意思。
+  // 只剩主牌时 quietLead 自动退化成 lowestLead（主牌不是求件信号）。
+  const fallback = quietLead(view, ctx, nonTrumps.length ? nonTrumps : trumps, tuning);
   if (fallback) addProposal([fallback], 20, 'low-card-fallback');
+
+  // 【不想求件，就别打出会被读成求件的那张牌】—— Glen 实战反馈第 1 条。
+  // 判据在 straySignal 上面，豁免两种「真心在求」的情形。
+  //
+  // ⚠️ 和下面的甩牌让位一样，用【删提案】而不是【罚分】，理由也一样：
+  // addProposal 对同一个 key 是累加的，同一张小牌上
+  //   return-partner-suit(320 +队友做庄 80) + develop-long-side-suit(160
+  //   +跑副牌 200) + low-card-fallback(20) 能叠到 780。
+  // 试过罚 340 —— 正好卡在 develop 那 360 上，靠 1 分之差决定领哪门，太脆；
+  // 要罚得动就得罚到 800 上下，那已经等于硬规则，还会顺手压垮别的打法。
+  //
+  // 兜底同上：全手上下每张牌都会被读成求件时维持原判 —— 总得领一张出去，
+  // 那种局面下这个信号是躲不掉的，真人也躲不掉。
+  {
+    const stray = [...proposals].filter(([, proposal]) =>
+      straySignal(view, ctx, proposal.cards, tuning)
+    );
+    if (stray.length < proposals.size) {
+      for (const [key] of stray) proposals.delete(key);
+    }
+  }
 
   // 【这门甩得出去，就别再一张一张领它】—— Glen 实战反馈第 4 条：
   //   「有时候 bot 求完件，我给它之后，它却不想甩，变成一张张打，浪费了机会。」

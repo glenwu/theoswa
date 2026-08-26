@@ -243,9 +243,16 @@ test('求件：两件但这门只有 4 支 → 太短，不去求件', () => {
 
 const T = (suit, rank, i) => ({ id: `${suit}${rank}_${i}`, suit, rank });
 
+// ⚠️ piecesView 的默认值是【四支全未现】，不是空数组。真实 view 里每门副牌
+// 一定列着 4 项（打 A / 打 K 时那一档升主，只剩 2 项），空数组是「这门没有件」，
+// 两个意思差得远：canThrowByStatus 对空数组返回 false，而
+// 「还有没有件没现身」对空数组也是 false —— 一个是「甩不了」，一个是「不用再逼了」。
+// 以前默认给空数组，凡是不关心件的 fixture 都在悄悄告诉电脑「这门件已经逼完」。
+const ALL_UNSEEN = () => [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' }));
+
 function leadView({
   hand, declarerSeat = 0, mySeat = 0, trickHistory = [],
-  piecesView = { S: [], D: [], C: [] }, botTuning,
+  piecesView = { S: ALL_UNSEEN(), D: ALL_UNSEEN(), C: ALL_UNSEEN() }, botTuning,
 }) {
   return {
     botTuning,
@@ -652,10 +659,22 @@ test('帮队友求件：队友后来改打方块 → 不再回黑桃（信号会
   assert.equal(lead.suit, 'D', '队友改打方块了，说明他有别的安排，黑桃那条请求作废');
 });
 
-// 用【闲家】视角测：队友做庄时「跟着庄家吊主」的逻辑会自己领主牌，
-// 那样即使 partnerRequest 错误地返回 TRUMP 也看不出差别（两条都领主）。
-// 闲家没有跟庄的义务，才能把「队友改吊主 → 这条请求作废」单独钉住。
-test('帮队友求件：队友改吊主 → 那条求件请求作废，不跟着去领主牌', () => {
+// ⚠️ 这条断言【改过】，原来写的是「队友改吊主 → 黑桃那条请求作废 → 回到
+// 自己最长的方块（期望 D）」。它一直是绿的，但是【假绿】：leadView 以前把
+// piecesView 默认成空数组，partnerRequest ① 的停止条件「这门还有件没现身」
+// 对空数组恒为假，于是那段跨墩记忆在这个 fixture 里根本没跑起来。
+// 把默认改成「四支全未现」（真实 view 的样子）之后，它照 c6543a2 的语义
+// 回黑桃 —— 那才是线上一直在跑的行为。
+//
+// ⚠️⚠️ 这里有一处 Glen 前后两句话的张力，还没跟他确认过：
+//   (A)「如果对家吃大，然后打其它牌，证明他有其它安排了，这时候就不再帮他求件了」
+//   (B)「即使自己没件，也需要帮队友把别人的件逼出来，因为这个时候你并不知道
+//       你的队友有多少支、对手有多少支，只能跟着打」
+// c6543a2 按 (B) 实现，停止条件是「件逼完了 / 这门我打空了」。改吊主算不算
+// (A) 说的「有其它安排」，得他裁一句。在他裁定之前，测试钉住线上的行为。
+//
+// 仍然钉得住的那半条：队友领主【不是】求件，不能被当成「回他这门」去领主牌。
+test('帮队友求件：队友改吊主 → 不跟着去领主牌（黑桃那条请求按 c6543a2 仍然有效）', () => {
   // 方块给到 6 张、黑桃只留 3 张：这样「自己发展最长副牌」的答案明确是方块，
   // 领到黑桃或主牌都只能是被过期的请求带偏（bothSuits 是 4-4 平手，测不出来）。
   const hand = [
@@ -671,7 +690,7 @@ test('帮队友求件：队友改吊主 → 那条求件请求作废，不跟着
     ],
   }))[0];
   assert.notEqual(lead.suit, 'H', '队友领主牌不是在求件，不该被当成「回他这门」而去领主');
-  assert.equal(lead.suit, 'D', '黑桃那条请求已作废，该回到发展自己最长的副牌');
+  assert.equal(lead.suit, 'S', '黑桃那门还有件没现身，按 c6543a2 该接着帮他逼');
 });
 
 // ============ 求件应答 · 庄家带分吊主 ============
@@ -1281,6 +1300,117 @@ test('甩尾手：计划挂起时宁可垫低主也不拆长门（垫一张就�
     `不该拆黑桃（尾巴的一部分），实际垫了 ${played.map(c => c.suit + c.rank).join(',')}`
   );
   assert.equal(played[0].suit, 'D', '该垫的是那门中性副牌');
+});
+
+// ============ Glen 实战反馈第 1 条：别乱求件 ============
+//
+// 「发现 bot 会乱求牌。一般真人玩家第一轮如果不是那门有甩牌的欲望
+//  （可以是件多也可以是很长，希望通过甩牌得分或造成威胁），
+//   就不会打 5 或 5 以下的牌去求对方的件。」
+//
+// 电脑不是故意的：develop-long-side-suit / attack / 兜底这几条压根没有求件的
+// 意思，可它们一律挑「最小的无分牌」，出手就是求件信号。两道闸门：
+//   · quietLead —— 这门还有 6~9 就换一张中性牌（免费，什么都不损失）
+//   · strayAskPenalty —— 只剩小牌换不了，就在打分上罚，让别的门赢过它
+// 豁免两种「真心在求」：这门有甩牌欲望，或者我方在这门的求件还没逼完。
+
+// 没有件、也不够长的一门（4 张 ♠，摊到单个对手头上约 5.4 张 → 我不占优）
+function strayAskView({ spades, diamonds = [], trickHistory = [], piecesView }) {
+  return leadView({
+    piecesView,
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),                                    // 双大鬼
+      ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),   // 凑满 9 张主 → 有保底，不吊主
+      ...spades.map((r, i) => T('S', r, i + 40)),
+      ...diamonds.map((r, i) => T('D', r, i + 60)),
+    ],
+    declarerSeat: 0, mySeat: 0, trickHistory,
+  });
+}
+
+test('别乱求：这门没甩牌欲望 → 换一张 6~9 的中性牌领，不发求件信号', () => {
+  const lead = chooseLeadCards(strayAskView({ spades: [9, 7, 5, 3] }))[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 7, `这门只有 4 张又一件没有，不该打 ♠3 去求件（实际 ♠${lead.rank}）`);
+});
+
+test('别乱求：这门够长（甩牌欲望成立）→ 照旧打最小的求件，这一喊是真心的', () => {
+  // 8 张 ♠：摊到单个对手头上约 4.4 张，我比谁都长 → 甩出去压得住
+  const lead = chooseLeadCards(strayAskView({ spades: [11, 9, 8, 7, 6, 5, 4, 3] }))[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 3, `长门求件是 Glen 认可的打法，该打 ♠3（实际 ♠${lead.rank}）`);
+});
+
+test('别乱求：只剩小牌换不了 → 改领别的门，别硬着头皮喊', () => {
+  const lead = chooseLeadCards(strayAskView({ spades: [5, 4, 3], diamonds: [8, 7] }))[0];
+  assert.equal(lead.suit, 'D', `♠ 那门一张 6~9 都没有，该改领方块（实际 ${lead.suit}${lead.rank}）`);
+  assert.equal(lead.rank, 7);
+});
+
+test('别乱求：我方在这门的求件还没逼完 → 接着领小牌逼件，不算乱求', () => {
+  const lead = chooseLeadCards(strayAskView({
+    spades: [5, 4, 3], diamonds: [8, 7],
+    // 我自己第 1 墩就在 ♠ 求过件，♠ 还有一支 K 没现身 → 这一领是把它逼出来
+    trickHistory: [{
+      trickNo: 1, leadSeat: 0, leadSuit: 'S', winnerSeat: 0, points: 0,
+      plays: [{ seat: 0, playSuit: 'S', cards: [T('S', 4, 90)] }],
+    }],
+    piecesView: {
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'seen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'unseen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+  }))[0];
+  assert.equal(lead.suit, 'S', `件还没逼完就该接着领 ♠（实际 ${lead.suit}${lead.rank}）`);
+  assert.equal(lead.rank, 3);
+});
+
+// 甩牌欲望的两档是【或】的关系，件多那一档不能被长度那一档吞掉。
+// 这里两件配 5 张：长度那一档过不了（摊到单个对手头上约 5.2 张，我不占优），
+// 只有 strongPieceSuit 认账 —— 正是 Glen 说的「有两件以上不少于 6 支」那一档
+//（默认 tuning 的 pieceProbeMinLength 是 5）。
+test('别乱求：件多但不算长 → 仍然算有甩牌欲望，该求就求', () => {
+  const lead = chooseLeadCards(strayAskView({
+    spades: [14, 13, 9, 7, 3],
+    piecesView: {
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+  }))[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 3, `♠AK 配 5 张就该求件（实际 ♠${lead.rank}）`);
+});
+
+// 边界钉子：「很长」的判据是【严格】比任何单独一家对手可能持有的都多。
+// 一样长不算占优 —— 甩出去他跟得完，压不住。这个 fixture 把数配成整数相等：
+//   对手三家各 8 张 + 底牌 0 张 = 24 张暗牌，这门未现 24-6=18 张，
+//   摊到一家头上正好 18×8/24 = 6，和我手上的 6 张打平。
+test('别乱求：这门和对手一样长（不算占优）→ 还是不喊', () => {
+  const view = strayAskView({ spades: [11, 9, 8, 7, 4, 3] });
+  for (const p of view.players) p.handCount = 8;
+  view.round.kittyCount = 0;
+  const lead = chooseLeadCards(view)[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 7, `打平不算占优，该换中性牌（实际 ♠${lead.rank}）`);
+});
+
+// 甩牌不是求件信号 —— 一手小牌的甩牌不能被「别乱喊」那道闸门误删。
+test('别乱求：一手小牌的甩牌不是求件信号，照甩', () => {
+  const cards = chooseLeadCards(leadView({
+    hand: [
+      T('S', 4, 40), T('S', 3, 41),                       // 两张小黑桃，件全在外面已现
+      ...[9, 8, 7, 6, 5, 4].map((r, i) => T('H', r, i)),  // 6 张弱主
+    ],
+    declarerSeat: 1, mySeat: 0,
+    piecesView: {
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'seen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+  }));
+  assert.equal(cards.length, 2, `该把两张黑桃一起甩出去（实际 ${cards.map(c => c.suit + c.rank).join(',')}）`);
+  assert.ok(cards.every(c => c.suit === 'S'));
 });
 
 // ============ Glen 实战反馈第 4 条：求完件要甩 ============
@@ -2435,4 +2565,19 @@ test('帮队友求：隔了两墩、他最近领的是别的门 → 那次求件
 test('帮队友求：自己一支件都没有了，照样领这门的小牌去逼', () => {
   const card = chooseLeadCards(forgottenAskView())[0];
   assert.equal(card.rank, 4, `该领 ♠4，实际领了 ${card.suit}${card.rank}`);
+});
+
+// 停止条件的另一半：这门我【一张都不剩】了。件可能躺在底牌里永远等不到现身，
+// 光靠「还有件没现身」停不下来，所以还要看手上有没有牌 —— 打空了就自然了结，
+// 回退到「回队友最近领的那门」。
+//
+// ⚠️ 去掉 partnerRequest ① 里那句 `if (!holdsCards(suit)) break;`，它会返回一门
+// 我一张都没有的花色，lowestLead 拿到空数组返回 null，addProposal 当场抛异常。
+// 这条测试就是钉那句 break（原来只有整场对局那条端到端测试偶然踩到它，
+// 换个出牌轨迹就踩不到了 —— 不能靠那种巧合）。
+test('帮队友求：这门我已经打空了 → 那次求件了结，回他最近领的那门', () => {
+  const view = forgottenAskView();
+  view.you.hand = view.you.hand.filter(card => card.suit !== 'S'); // 黑桃全打完了
+  const card = chooseLeadCards(view)[0];
+  assert.equal(card.suit, 'D', `黑桃已经打空，该回队友第 3 墩领的方块（实际 ${card.suit}${card.rank}）`);
 });

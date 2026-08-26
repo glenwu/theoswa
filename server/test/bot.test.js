@@ -37,6 +37,22 @@ function playView({
   return {
     phase: 'PLAYING',
     declarerSeat,
+    // ⚠️ 真实 view 一定带 players（viewer.js 给每家发 handCount）。这里以前缺了，
+    // 于是所有「按各家手牌数摊分未现牌」的估算（maxOpponentSuitEstimate /
+    // maxOpponentTrumpEstimate）都掉进 hidden<=0 的兜底分支，退化成「假设全在
+    // 一家手上」。那是给风险估算准备的保守兜底，用来判断【机会】就全反了。
+    players: [0, 1, 2, 3].map(s => ({ seat: s, team: s % 2, handCount: hand.length })),
+    round: {
+      roundNumber: 1,
+      trumpSuit: 'H',
+      rankCard: 2,
+      kittyCount: 8,
+      currentTrick,
+      trickHistory,
+      piecesView,
+      lastTrick: null,
+      turnSeat: seat,
+    },
     you: {
       id: 'BOT',
       nickname: '电脑',
@@ -44,16 +60,6 @@ function playView({
       team: seat % 2,
       hand,
       crossRiver: {},
-    },
-    round: {
-      roundNumber: 1,
-      trumpSuit: 'H',
-      rankCard: 2,
-      currentTrick,
-      trickHistory,
-      piecesView,
-      lastTrick: null,
-      turnSeat: seat,
     },
   };
 }
