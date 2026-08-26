@@ -2161,15 +2161,78 @@ test('跟主牌墩：手里只剩鬼这一张主牌时照样得跟（规则要�
   assert.equal(cards[0].rank, 15, '有主必须跟主，这时候没得选');
 });
 
-// 反向保护：尾盘（early = 手牌 > 8 不再成立）该出手就得出手，
-// 不能因为这条早盘惩罚把鬼一直烂在手里。
-test('跟主牌墩：尾盘不再受早盘惩罚约束', () => {
-  const late = evaluateFollowChoices(trumpLeadFollowView({ points: 0, sideCards: 2 }))
-    .find(c => c.cards[0].rank === 15).score;
-  const early = evaluateFollowChoices(trumpLeadFollowView({ points: 0, sideCards: 6 }))
-    .find(c => c.cards[0].rank === 15).score;
-  assert.ok(late > early + 100,
-    `尾盘出鬼不该再挨早盘那一刀：尾盘 ${late.toFixed(0)} vs 早盘 ${early.toFixed(0)}`);
+// ⚠️ 这条测试【整个换掉了】。原来写的是「尾盘不再受早盘惩罚约束」——
+// 断言手牌降到 8 张以下之后出鬼的评分要比早盘高出 100 以上。那是照着代码里
+// `early = hand.length > 8` 这个开关写的，方向反了。Glen 第三次纠正：
+//   「留鬼保底/撬底是潮汕升级的基本打法，不能见牌或见分就砍……有保底/撬底的
+//     鬼组合（如大小鬼）还是见牌就砍，需要再严格地出这个规则。」
+// 保底/撬底比的就是最后一墩，越往后这张鬼越金贵，代价不该在后半盘凭空消失。
+//
+// 原来那条测试真正想守的东西（别把鬼烂在手里）没有丢，换成下面这一对来守：
+// 门槛是【这一墩值不值】，不是【第几墩】。
+test('留鬼：后半盘这一墩一分没有 → 不砍，跟一张小主', () => {
+  for (const sideCards of [2, 6]) {   // 手牌 6 张（后半盘）和 10 张（早中盘）都一样
+    const cards = chooseFollowCards(trumpLeadFollowView({ points: 0, sideCards }));
+    assert.notEqual(cards[0].rank, 15,
+      `手牌 ${4 + sideCards} 张、桌上 0 分，不该拿小鬼去砍（实际 ♥${cards[0].rank}）`);
+  }
+});
+
+test('留鬼：同样是后半盘，这一墩 20 分 → 该砍就砍', () => {
+  for (const sideCards of [2, 6]) {
+    const cards = chooseFollowCards(trumpLeadFollowView({ points: 20, sideCards }));
+    assert.equal(cards[0].rank, 15,
+      `20 分够大了，该拿小鬼收下来（手牌 ${4 + sideCards} 张，实际 ♥${cards[0].rank}）`);
+  }
+});
+
+// ---- 「这一下把底丢了」不只发生在副牌墩（Glen 第三次强调留鬼）----
+//
+// 「留鬼保底/撬底是潮汕升级的基本打法，不能见牌或见分就砍……有保底/撬底的
+//   鬼组合（如大小鬼）还是见牌就砍，需要再严格地出这个规则。」
+//
+// 原来这条保护写着 isKill（副牌墩 + 我缺门 + 整手主牌毙）。可 isKill 要求
+// lead.playSuit !== 'TRUMP'，【首家领主牌时它恒为 false】—— 别人吊主、我拿鬼
+// 去压，一分代价都没有，而那正是后半盘最常见的场面。丢掉的是同一件资产，
+// 跟这一墩是副牌还是主牌无关。
+//
+// 局面：另一张大鬼和另一张小鬼都已经打掉了，我手上这张大鬼是场上唯一顶牌。
+// 对手领剩下那张小鬼，桌上 20 分，只有我的大鬼压得过。
+function lastTopTrumpView(defenderTrickPoints) {
+  return followView({
+    seat: 1, declarerSeat: 0, defenderTrickPoints,   // 我是闲家
+    hand: [
+      T('H', 16, 0),                                 // 场上仅剩的顶牌
+      ...[9, 7, 6].map((r, i) => T('H', r, i + 2)),
+      ...[9, 7].map((r, i) => T('S', r, i + 20)),
+    ],
+    trickHistory: [{
+      trickNo: 1, leadSeat: 0, leadSuit: 'TRUMP', winnerSeat: 0, points: 0,
+      plays: [{ seat: 0, playSuit: 'TRUMP', cards: [T('H', 16, 70)] },   // 另一张大鬼
+              { seat: 1, cards: [T('H', 3, 71)] },
+              { seat: 2, cards: [T('H', 15, 72)] },                      // 另一张小鬼
+              { seat: 3, cards: [T('H', 5, 73)] }],
+    }],
+    currentTrick: [
+      { seat: 0, playSuit: 'TRUMP', cards: [T('H', 15, 80)] },  // 对手领剩下那张小鬼
+      { seat: 3, cards: [T('H', 13, 81)] },                     // 10 分
+      { seat: 2, cards: [T('H', 10, 82)] },                     // 10 分
+    ],
+  });
+}
+
+test('留鬼：领的是主牌也一样 —— 20 分不到移庄线，不拿最后一张顶牌去换', () => {
+  const cards = chooseFollowCards(lastTopTrumpView(0));
+  assert.notEqual(cards[0].rank, 16,
+    `20 分够不上 80 的移庄线，这张大鬼该留着撬底（实际打了 ♥${cards[0].rank}）`);
+});
+
+// 对照：同一手牌，闲家已经有 60 分 —— 这 20 分收下就到 80，那就无所谓底了，该砍。
+// ⚠️ 两条必须成对看，不然「永远不出鬼」也能让上面那条绿。
+test('留鬼：同一手牌，收下这 20 分正好到移庄线 → 该砍就砍', () => {
+  const cards = chooseFollowCards(lastTopTrumpView(60));
+  assert.equal(cards[0].rank, 16,
+    `60 + 20 = 80 过线了，这时候就该拿下（实际打了 ♥${cards[0].rank}）`);
 });
 
 // ---- 开局第一墩：先放小牌，把表态机会让给队友（Glen 第三次实战反馈）----
@@ -2219,7 +2282,9 @@ test('开局：庄家有大鬼但不够保底 → 仍走「带分吊主」那条
 // 所以那几张挑大的一分也换不回来。评分器反而偏爱它：
 //   垫两张 ♦5 送出 10 分 → candidatePoints × 14 = −140
 //   白扔小鬼 + 小主       → keepValue × 0.25  = −61
-// 而护鬼那条规则要求 early（手牌 > 8 张），甩牌多发生在中后段，这里一分保护都没有。
+// （写这条时护鬼那条规则还要求 early「手牌 > 8 张」，甩牌多发生在中后段，
+//   所以这里一分保护都没有。后来 Glen 第三次强调留鬼，那个开关去掉了，
+//   这个局面现在被护了两遍 —— 候选形状这一层仍然要留着，它管的是别的牌。）
 //
 // 手牌 7 张、非鬼牌 6 张、只需凑 2 张 —— 规则上完全逼不出这张鬼。
 // 改之前实测：400 局里有 25 次这样【有得选却仍然把鬼垫掉】，改之后 0 次

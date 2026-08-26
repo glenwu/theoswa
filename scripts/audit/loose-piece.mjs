@@ -28,6 +28,7 @@ for (let i = 0; i < N_ROUNDS; i++) {
   const { trumpSuit, rankCard } = round;
   const ps = c => playSuitOf(c, trumpSuit, rankCard);
   const isPiece = c => ps(c) !== 'TRUMP' && (c.rank === 14 || c.rank === 13) && c.rank !== rankCard;
+  const pieceTotal = [14, 13].filter(r => r !== rankCard).length * 2;
 
   const handOf = (seat, ti) => {
     const out = [];
@@ -84,6 +85,26 @@ for (let i = 0; i < N_ROUNDS; i++) {
         const oppThrow = (lead.cards?.length ?? 1) > 1 && t.leadSuit !== 'TRUMP' &&
           (lead.seat % 2) !== (play.seat % 2);
         if (oppThrow) add('★ 对手正在甩牌，我把件垫了进去');
+        // Glen 再次强调的那条：对手【还在求这门】的时候把件交出去。
+        // 「还在求」跨墩有效：他先前在这门求过、而且这门还有件没现身。
+        for (const piece of pieces) {
+          const suit = ps(piece);
+          let asked = false;
+          for (let k = 0; k <= ti && !asked; k++) {
+            const hl = hist[k].plays?.[0];
+            if (!hl || (hl.seat % 2) === (play.seat % 2)) continue;
+            const a = hl.cards ?? [];
+            if (a.length === 1 && ps(a[0]) === suit && !isPiece(a[0]) &&
+                (a[0].rank <= 5 || a[0].rank === 10)) asked = true;
+          }
+          if (!asked) continue;
+          let seenBefore = 0;
+          for (let k = 0; k < ti; k++)
+            for (const p2 of hist[k].plays ?? [])
+              for (const x of p2.cards ?? []) if (ps(x) === suit && isPiece(x)) seenBefore += 1;
+          if (seenBefore >= pieceTotal) continue;   // 件已经全现，不存在「还在求」
+          add(`★ 对手还在求这门，我把件交了出去（这墩 ${pts >= 20 ? '≥20' : pts} 分）`);
+        }
         if (!followed) {
           // 垫掉件的时候，手上【别的】非件牌都是些什么？
           const rest = hand.filter(c => !mine.includes(c) && !isPiece(c));

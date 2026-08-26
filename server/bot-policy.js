@@ -2291,8 +2291,22 @@ function scoreFollow(view, cards, ctx) {
   //   · isKill 的空毙惩罚要求 lead.playSuit !== 'TRUMP'，而【首家领主牌时
   //     isKill 恒为 false】—— 庄家开局吊主、后面几家拿鬼去压，代价为零。
   // 实测 40 局里，前两墩打鬼 11 次，全部是跟主牌墩。
+  //
+  // ⚠️ 这条代价原来挂在 early（手牌 > 8 张）上，等于【后半盘完全不管】。方向反了：
+  // 保底/撬底比的就是最后一墩，越往后这张鬼越金贵。Glen 第三次提这件事：
+  //   「留鬼保底/撬底是潮汕升级的基本打法，不能见牌或见分就砍……有保底/撬底的
+  //     鬼组合（如大小鬼）还是见牌就砍，需要再严格地出这个规则。」
+  // 实测 200 局（scripts/audit/joker-hoard.mjs）：躲得掉却还是砍掉的鬼 359 张，
+  // 其中 333 张（93%）在手牌 ≤8 张那半盘 —— 正是这条代价失效的地方。
+  // 插桩再往里看一层：那些局面里【保底判定本身拦不住】—— 一半是「打完还保得住」
+  // （交一张还剩一张），四分之一是「打之前就已经保不住」。拦不住是对的，
+  // 因为丢的不是底，是【为了一墩零分的牌把保底/撬底的本钱花掉了】，
+  // 那笔账只有这条「够不够分」的代价算得清。
+  //
+  // 尾盘该兑现的时候不会被卡死：手上只剩鬼时评分器根本没有别的候选；
+  // 而最后两墩另有一条 remaining.length <= lead.cards.length 的加分顶着。
   const jokersSpent = cards.filter(card => card.rank === 15 || card.rank === 16);
-  if (early && jokersSpent.length > 0) {
+  if (jokersSpent.length > 0) {
     const cost = jokersSpent.reduce((sum, card) => sum + keepValue(card, ctx), 0);
     // 2.2 这个系数是扫出来的，不是拍的：只用 cost 本身时抢牌权的加分仍然压得过它，
     // 桌上 5 分就肯把小鬼扔出去；1.6 还剩 2 次；2.2 归零；3.0 没有更好 —— 拐点在 2.2。
@@ -2522,14 +2536,24 @@ function scoreFollow(view, cards, ctx) {
   // 差别只在理由叫「保底」还是「撬底」，算式一模一样。
   //
   // 两个条件【同时】成立才放走这一墩：
-  //   1. 这一毙之后就握不住顶端了 —— 双大鬼一起交出去，外面那张小鬼就成了场上最大的
+  //   1. 这一下之后就握不住顶端了 —— 双大鬼一起交出去，外面那张小鬼就成了场上最大的
   //   2. 这一墩的分【到不了移庄线】—— 到得了就无所谓底了，该砍就砍
   //
   // ⚠️ 必须排在 economical 候选之后才有意义：能用「一鬼 + 一张小主」毙下来时
   // 顶端根本没丢，条件 1 就不成立 —— 先挑最省的打法，省不下来了才谈放不放。
+  //
+  // ⚠️ 这里原来还有第三个条件 isKill（副牌墩、我缺门、整手主牌毙）。去掉了，
+  // 因为它把最常见的那个场面漏在外面：isKill 要求 lead.playSuit !== 'TRUMP'，
+  // 而【首家领主牌时 isKill 恒为 false】—— 别人吊主、我拿鬼去压，一分代价没有。
+  // Glen 第三次提这件事：「有保底/撬底的鬼组合（如大小鬼）还是见牌就砍，
+  // 需要再严格地出这个规则。」实测 200 局：躲得掉却还是砍掉的鬼 359 张，
+  // 其中 333 张（93%）在手牌 ≤8 张的后半盘，最大的一格是「这一墩一分没有」209 张。
+  //
+  // 丢掉的是【同一件资产】，跟这一墩是副牌还是主牌无关：assessBottomControl 数的
+  // 是「我这一档及以上的张数 vs 别人能压我的张数」，大小鬼在手正是让这个比较
+  // 成立的组合，交掉一张就翻过去了。
   const afterDefenderPoints = (round.defenderTrickPoints ?? 0) + totalPoints;
   if (
-    isKill &&
     afterDefenderPoints < DEFENDER_TARGET_POINTS &&
     bottomControlOf(view, ctx).holdsTopTrump &&
     !bottomControlAfter(view, ctx, cards).holdsTopTrump
