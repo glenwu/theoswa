@@ -29,8 +29,8 @@ runMutants([
   // ---- 亮件的代价（Glen：「对家没表示就别随便出，这是冒险的行为」）----
   [F, '  if (exposureRisk > 0) {', '  if (false) {', '亮件完全没有代价'],
   [F, 'const PIECE_EXPOSURE_COST = 240;', 'const PIECE_EXPOSURE_COST = 40;', '亮件的代价小到可以忽略'],
-  [F, '    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) return sum;',
-      '', '不认「这门快断了就可以打」这条豁免'],
+  // 「这门快断了就可以打」那条豁免搬去 mutants20 了（c4c9602 给它加了
+  // takesTrick 这一卡，四个变异连同这条一起在那边扫）。这里不重复。
   [F, 'const PIECE_NEAR_VOID_AFTER = 2;', 'const PIECE_NEAR_VOID_AFTER = 0;',
       '「快断门」的门槛收到 0（等于这条豁免失效）'],
   // ---- 求件方资格：两件 ≥6 支 / 单件 ≥8 支（Glen 口述的两档门槛）----
