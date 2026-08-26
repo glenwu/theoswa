@@ -1283,6 +1283,121 @@ test('甩尾手：计划挂起时宁可垫低主也不拆长门（垫一张就�
   assert.equal(played[0].suit, 'D', '该垫的是那门中性副牌');
 });
 
+// ============ Glen 实战反馈第 4 条：求完件要甩 ============
+//
+// 「有时候 bot 求完件，我给它之后，它却不想甩，变成一张张打，浪费了机会。」
+//
+// 根因量出来是【同一张牌上的加分累加】，不是甩牌那条判据出了问题：
+// 「领这门最小的牌」那张卡片会同时拿到
+//   return-partner-suit 320（+求件 160 +队友做庄 80）
+//   + develop-long-side-suit 160 + low-card-fallback 20 = 740，
+// 稳压 safe-side-throw 的 620。所以 chooseLeadCards 里用的是【让位】：
+// 这门甩得出去时，同门的单张提案整个删掉。
+//
+// ⚠️ 这个 fixture 是照着那 740 分搭的，别随手改动这几处：
+//   · 队友（座 2）做庄，第 1 墩领 ♠4 —— 凑齐 seeking(160) + 队友做庄(80)
+//   · 黑桃是我最长的副牌 —— 才拿得到 develop 的 160
+//   · 黑桃 4 张且一分不带 —— 4 张才过得了 safeSideThrow 的早盘门槛，
+//     带分的话早盘 pointValue×8 的罚分会把甩牌自己压下去，换成另一个根因
+function askAnsweredView(spadePieces) {
+  return leadView({
+    hand: [
+      ...[14, 9, 7, 3].map((r, i) => T('S', r, i + 40)),   // 黑桃 4 张，无分
+      ...[8, 6].map((r, i) => T('D', r, i + 50)),          // 一门更短的副牌
+      ...[9, 8, 7, 6, 5, 4].map((r, i) => T('H', r, i)),   // 6 张弱主
+    ],
+    declarerSeat: 2, mySeat: 0,
+    piecesView: { S: spadePieces, D: [], C: [] },
+    trickHistory: [{
+      trickNo: 1, leadSeat: 2, leadSuit: 'S', winnerSeat: 0, points: 0,
+      plays: [{ seat: 2, playSuit: 'S', cards: [T('S', 4, 90)] }],
+    }],
+  });
+}
+
+// ♠A 在我手上，另外三件都已现身 → canThrowByStatus 成立
+const SPADE_PIECES_DONE = [
+  { rank: 14, status: 'mine' }, { rank: 14, status: 'seen' },
+  { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' },
+];
+
+test('求完件要甩：件都现完了就整门甩出去，不许再一张一张领这门', () => {
+  const cards = chooseLeadCards(askAnsweredView(SPADE_PIECES_DONE));
+  assert.equal(cards.length, 4, `件已逼完就该整门甩，实际只打了 ${cards.map(c => c.suit + c.rank).join(',')}`);
+  assert.ok(cards.every(c => c.suit === 'S'), '甩的是黑桃');
+});
+
+// 反向保护：让位只挂在「这门此刻甩得出去」上。件还没逼完的时候，
+// 一张一张领这门正是 Glen 第 2 条要的【帮队友把件逼出来】，不能一起删掉。
+test('求完件要甩：还有件没现身 → 照旧领小牌帮队友逼件，不受让位影响', () => {
+  const cards = chooseLeadCards(askAnsweredView([
+    { rank: 14, status: 'mine' }, { rank: 14, status: 'seen' },
+    { rank: 13, status: 'seen' }, { rank: 13, status: 'unseen' },  // 还差一支 ♠K
+  ]));
+  assert.equal(cards.length, 1, '件没逼完就还不能甩');
+  assert.equal(cards[0].suit, 'S', '该接着领黑桃把最后那支 K 逼出来');
+  assert.equal(cards[0].rank, 3, '领这门最小的那张');
+});
+
+// 第二条反向保护：让位只针对【甩牌那一门】。别的门的单张提案不能受牵连，
+// 否则「手上碰巧有一门能甩」就变成「这一墩只准甩牌」，把帮队友逼件、吊主
+// 这些更要紧的事全挤掉了。变异测试专门盯着这一条（mutants18）。
+test('求完件要甩：让位只挂在甩牌那一门，别的门照领不误', () => {
+  const view = leadView({
+    hand: [
+      T('S', 13, 40), T('S', 10, 41),                      // 黑桃 2 张，能甩但带 20 分
+      ...[9, 6, 3].map((r, i) => T('D', r, i + 50)),       // 方块 3 张 —— 队友在求的就是这门
+      ...[9, 8, 7, 6, 5].map((r, i) => T('H', r, i)),      // 5 张弱主
+    ],
+    declarerSeat: 2, mySeat: 0,
+    piecesView: {
+      // 黑桃：双 A 已现、♠K 在我手上、另一支 K 已现 → 甩得出去
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'seen' },
+          { rank: 13, status: 'mine' }, { rank: 13, status: 'seen' }],
+      // 方块：还有一支 ♦A 没现身 → 队友第 1 墩那次求件还没逼完
+      D: [{ rank: 14, status: 'unseen' }, { rank: 14, status: 'seen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
+      C: [],
+    },
+    trickHistory: [{
+      trickNo: 1, leadSeat: 2, leadSuit: 'D', winnerSeat: 0, points: 0,
+      plays: [{ seat: 2, playSuit: 'D', cards: [T('D', 4, 90)] }],
+    }],
+  });
+  const cards = chooseLeadCards(view);
+  assert.equal(cards[0].suit, 'D', `该去帮队友逼那支 ♦A，实际打了 ${cards.map(c => c.suit + c.rank).join(',')}`);
+  assert.equal(cards.length, 1, '帮队友逼件是领单张');
+});
+
+// 第三条：计划性压住不甩的那一门也让位。
+// 甩尾手的计划是「先吊主削掉对手的毙牌能力，再整门甩出去」——
+// 这期间一张一张漏这门，等于自己把尾巴拆了。跟牌那边早有护尾罚分
+//（见上面「宁可垫低主也不拆长门」那条），领牌这边要一致。
+//
+// ⚠️ 这一档是从 Glen 的原则推的，不是他直接裁定的，回头要跟他确认。
+test('求完件要甩：计划留着尾巴甩的那一门，也不许一张一张漏出去', () => {
+  const view = leadView({
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),                        // 双大鬼 → holdsTopTrump
+      ...[6, 5].map((r, i) => T('H', r, i + 2)),           // 主牌只有 4 张 → 计划还没到火候
+      ...[11, 9, 7, 6, 4].map((r, i) => T('S', r, i + 40)), // 尾巴：5 张可甩的黑桃
+    ],
+    declarerSeat: 2, mySeat: 0, piecesView: SPADES_THROWABLE,
+    // 队友（座 2，同时是庄家）第 1 墩领 ♠3 求件 —— 回门那条能拿到满额 560 分，
+    // 加上 develop(160) + 兜底(20) = 740，压得过一切；没有让位就会去领 ♠4。
+    trickHistory: [{
+      trickNo: 1, leadSeat: 2, leadSuit: 'S', winnerSeat: 0, points: 0,
+      plays: [{ seat: 2, playSuit: 'S', cards: [T('S', 3, 90)] }],
+    }],
+  });
+  const cards = chooseLeadCards(view);
+  assert.notEqual(
+    `${cards.length}${cards[0].suit}`, '1S',
+    `对手主牌还够毙，这门要留到尾巴上整门甩，不能拆着领（实际打了 ${cards.map(c => c.suit + c.rank).join(',')}）`
+  );
+  assert.equal(cards[0].suit, 'H', '这时候该去吊主，把对手的主削下来');
+});
+
 // ---- 计划成立的两个前置条件 ----
 //
 // 观察点都放在【吊主的开关】上：计划挂起（planPending）会让电脑

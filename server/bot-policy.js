@@ -1822,6 +1822,9 @@ export function chooseLeadCards(view) {
   // 计划成立而时机未到（对手还有足够的主来毙）→ 压住不甩，先吊主削他们的主牌。
   // 时机一到 → 加分抬高，压过其它一切领牌意图，整门甩出去。
   const throwCards = safeSideThrow(view, ctx, tuning);
+  // 这一门【整门是一件武器】—— 要么现在甩，要么留到尾巴上甩，
+  // 反正不该一张一张漏出去。所以计划性压住不甩时它照样记在这里（见下面那段）。
+  const throwSuit = throwCards ? suitOf(throwCards[0], ctx) : null;
   if (throwCards) {
     const isPlanSuit = plan !== null && suitOf(throwCards[0], ctx) === plan.suit;
     if (!(isPlanSuit && !plan.ready)) {
@@ -1891,6 +1894,41 @@ export function chooseLeadCards(view) {
   // 全剩主牌时仍优先留大牌保底/扣底。
   const fallback = lowestLead(nonTrumps.length ? nonTrumps : trumps, ctx);
   if (fallback) addProposal([fallback], 20, 'low-card-fallback');
+
+  // 【这门甩得出去，就别再一张一张领它】—— Glen 实战反馈第 4 条：
+  //   「有时候 bot 求完件，我给它之后，它却不想甩，变成一张张打，浪费了机会。」
+  //
+  // 求件的全部目的就是把这门的件逼干净、好把这门整个甩出去。件都现完了还在
+  // 同一门里一张一张领，等于把逼件的成果原地退回去：多给对手两墩认牌型的机会，
+  // 等他断了这门就来毙。领【别的门】仍然自由 —— 我另有更要紧的安排是另一回事，
+  // 那不算浪费；这里挡掉的只有「就是这门、却只领一张」。
+  //
+  // ⚠️ 实现成【让位】而不是【给甩牌加分】，这一点是量出来的：领同一门最小牌的
+  // 那张卡片经常同时拿到 return-partner-suit(320~560) + develop-long-side-suit
+  // (160~360) + low-card-fallback(20)，而 addProposal 对同一个 key 是【累加】的，
+  // 轻松堆到 900 以上。60 局里 56 次「甩得出去却没甩」，22 次就是这三条叠出来的。
+  // 要靠加分压住就得把甩牌抬到 1000 上下，那会连 cash-certain-control 一起盖掉。
+  //
+  // 计划性压住不甩的那一门（tailThrowPlan 挂起，等吊完主再甩）同样让位：
+  // 那门本来就是留着整门甩的武器，一张一张漏出去正好把它拆了 —— 跟牌那边
+  // 早就有「宁可垫低主也不拆长门」的护尾罚分，领牌这边不该反过来自己拆。
+  // 实测这一档把「甩得出去却一张一张领」从 26% 再压到 11%（求过件的那一栏）。
+  // ⚠️ 这一档是从 Glen 的原则推出来的，不是他直接裁定的，回头要跟他确认。
+  if (throwSuit) {
+    const victims = [...proposals].filter(([, proposal]) =>
+      proposal.cards.length === 1 && suitOf(proposal.cards[0], ctx) === throwSuit
+    );
+    // 兜底：全删光了就没牌可领了（chooseLeadCards 会返回空数组）。
+    // ⚠️ 现在【推得出】这一行永远为真，但它留着：
+    //   · 提了甩牌案时，那个多张提案自己不在 victims 里，必然剩一个；
+    //   · 计划性压住不甩时 plan 一定存在 → control.holdsTopTrump → 我手上
+    //     至少有一张主，主牌的单张提案花色是 TRUMP，也不在 victims 里。
+    // 第二条撑在 holdsTopTrump 的内部实现上，隔着两个函数。真塌了的代价是
+    // 电脑领牌返回空数组（真人正在打的局里直接卡死），而代价只是一次比较。
+    if (victims.length < proposals.size) {
+      for (const [key] of victims) proposals.delete(key);
+    }
+  }
 
   const early = hand.length > 8;
   return [...proposals.values()]
