@@ -1522,7 +1522,7 @@ function coverNeedsFirstPieceUncached(view, ctx) {
 //   · 我这门打完就快断了 —— 「打 A 后再捅多一支或两支就断了，可以毙别人，
 //     这个时候也可以吃」。断门之后我能用主牌毙，反而是优势。
 // 风险的大小看【对手在这门可能还剩多长】：他能甩得越长，亮件越亏。
-function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
+function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning, takesTrick) {
   const hand = view.you?.hand ?? [];
   return cards.reduce((sum, card) => {
     if (!isSidePiece(card, ctx)) return sum;
@@ -1538,8 +1538,21 @@ function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
     if (held >= 3 && stillHidden === 1) return sum;
     if (strongPieceSuit(view, ctx, suit, tuning)) return sum;
     if (partnerAskedSuit === suit) return sum;
+    // 「这门快断了」这条豁免【只在这一手真的把墩拿下来时】才成立。
+    //
+    // Glen 的原话是：「如果自己这门已经快断了，比如打 A 后再捅多一支或两支就断了，
+    // 可以毙别人，这个时候也可以吃。」—— 落点是那个【吃】字：拿这一支件把这墩
+    // 吃下来，代价换回了牌权和分，断门之后还能用主牌毙，所以划算。
+    //
+    // 原来这条不看结果，垫牌位置、队友已经赢下的位置照样豁免。那两种位置这支件
+    // 什么都没换回来，纯粹是把「未现」变成「已现」，替攥着这门的人凑甩牌资格。
+    // 实测 200 局：躲得掉却还是打出去的件里，82 支是垫牌位置随手垫的、
+    // 44 支是队友已经赢了还把 A 亮出去（A 是 0 分，连送分都算不上）。
     const spentHere = cards.filter(item => suitOf(item, ctx) === suit).length;
-    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) return sum;
+    if (
+      takesTrick &&
+      cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER
+    ) return sum;
     const signal = suitAskSignal(view, ctx, suit);
     const threat = maxOpponentSuitEstimate(view, ctx, suit) / PIECE_THREAT_BASELINE;
     const read = signal === 'partner' ? PIECE_READ_PARTNER_ASKED
@@ -2379,7 +2392,11 @@ function scoreFollow(view, cards, ctx) {
     ? { suit: lead.playSuit, seeking: true }
     : partnerRequest(view, ctx);
   const partnerAskedSuit = request?.seeking ? request.suit : null;
-  const exposureRisk = pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning);
+  // takesTrick = 这一手打完【由我领着这一墩】。快断门那条豁免要拿它来卡，
+  // 不能只看 afterTeamWinning —— 队友已经赢下时我这支件也是白亮。
+  const exposureRisk = pieceExposureRisk(
+    view, ctx, cards, partnerAskedSuit, tuning, after?.seat === you.seat
+  );
   if (exposureRisk > 0) {
     // ⚠️ 这里【不】再单独减一遍「这一墩的分」。Glen 的例外（「20 分甚至 30 分那种
     // 大利益也可以冒险」）已经由下面的接管加分表达了 —— 那一条本来就是
