@@ -77,9 +77,13 @@ for (let i = 0; i < N_ROUNDS; i++) {
           ? `队友赢下这墩，我把 A 亮了出去（0 分，纯亏）`
           : `队友赢下这墩，我把 K 的 10 分送过去（这是对的）`);
       } else {
+        const followed0 = true;
         const followed = ps(pieces[0]) === t.leadSuit;
         const winCards = (t.plays ?? []).find(p => p.seat === t.winnerSeat)?.cards ?? [];
         const trumped = winCards.length > 0 && ps(winCards[0]) === 'TRUMP' && t.leadSuit !== 'TRUMP';
+        const oppThrow = (lead.cards?.length ?? 1) > 1 && t.leadSuit !== 'TRUMP' &&
+          (lead.seat % 2) !== (play.seat % 2);
+        if (oppThrow) add('★ 对手正在甩牌，我把件垫了进去');
         if (!followed) {
           // 垫掉件的时候，手上【别的】非件牌都是些什么？
           const rest = hand.filter(c => !mine.includes(c) && !isPiece(c));

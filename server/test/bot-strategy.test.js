@@ -922,6 +922,60 @@ test('件不能乱出：队友已经稳赢这一墩 → 把 ♠K 的 10 分送�
 });
 
 
+// ---- 垫件 vs 垫小主：默认垫件，两个例外（Glen）----
+//
+// 「副 A 和低主这个也要看是留 A 更有价值，因为副 A 有时候可以成为起手牌，
+//   而小的主牌一般比较难；还有一种情况是此次是对手甩的牌，有可能出了 A 后，
+//   他可以顺手再甩一次长的，这个也很危险，也是需要计算当前出的牌去判断可能性。
+//   当然除了这两种情况，A 的价值并不比小的主牌要高，本身它就比主牌要小。」
+//
+// 默认（垫 A 不垫主）本来就成立：keepValue 里副 A 是 59、最低的主花色是 78。
+// 这里做的是第二个例外 —— 对手正在甩牌时把件留住。
+//
+// ⚠️ 光靠罚分做不到：副 A 的 cardStrength 是 14、任何主牌都是 900+，
+// lowCards 一旦挑到件就说明手上只剩主牌了，那时它是【唯一】候选，罚多少都一样。
+// 所以 followCandidates 的垫牌位置多给了一手「宁可动主牌也不动件」。
+function fillIntoThrowView(throwerSeat) {
+  return followView({
+    seat: 0, declarerSeat: 1,
+    hand: [
+      T('C', 3, 30),                                    // 梅花只有一张，必须打出去
+      T('S', 14, 40), T('S', 7, 41),                    // ♠A 是这门仅剩两张之一
+      ...[9, 8, 7, 6].map((r, i) => T('H', r, i)),      // 4 张主
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'mine' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'unseen' }],
+      D: ALL_UNSEEN(), C: [14, 14, 13, 13].map(rank => ({ rank, status: 'seen' })),
+    },
+    currentTrick: [
+      { seat: throwerSeat, playSuit: 'C', cards: [T('C', 12, 90), T('C', 9, 91), T('C', 8, 92)] },
+    ],
+  });
+}
+
+test('垫件：对手正在甩牌 → 宁可垫一张小主，也不把 ♠A 送进去', () => {
+  const played = fillIntoThrowView(1);   // 座位 1 是对手
+  const cards = chooseFollowCards(played);
+  assert.equal(cards.length, 3);
+  assert.ok(
+    cards.every(c => c.rank !== 14 || c.suit !== 'S'),
+    `他正在甩牌，垫 ♠A 等于给他下一手铺路（实际打了 ${cards.map(c => c.suit + c.rank).join(',')}）`
+  );
+});
+
+// 对照：同一手牌，改成【队友】在甩。这时没有那个危险，回到 Glen 的默认 ——
+// 「A 的价值并不比小的主牌要高」，该垫的是 ♠A，主牌留着。
+// ⚠️ 两条必须成对看，不然「永远不垫件」也能让上面那条绿。
+test('垫件：队友在甩牌 → 按常规垫掉 ♠A，主牌留着', () => {
+  const cards = chooseFollowCards(fillIntoThrowView(2));   // 座位 2 是队友
+  assert.equal(cards.length, 3);
+  assert.ok(
+    cards.some(c => c.suit === 'S' && c.rank === 14),
+    `没有危险时该垫 ♠A 留主牌（实际打了 ${cards.map(c => c.suit + c.rank).join(',')}）`
+  );
+});
+
 // ---- 读件的位置（Glen）：靠「谁在这门求过牌」判断件大概在谁手上 ----
 //
 // 「首先看对家有没有求牌，如果有，一般情况下就在对家；其次看对手两个人有没有求牌，

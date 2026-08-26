@@ -10,8 +10,8 @@ runMutants([
       '凑张数又回到「全大/全小/全分」三种形状（挑大的那组就是白扔）'],
   [F, '    sets.push(...discards(hand, count));', '    sets.push(...selections(hand, count));',
       '缺门整手垫牌时也挑最大的几张'],
-  [F, '      lowCards(cards, n, ctx),\n      pointCards(cards, n, ctx), // 队友已经赢下这一墩时把分送过去',
-      '      lowCards(cards, n, ctx),\n      highCards(cards, n, ctx),\n      pointCards(cards, n, ctx), // 队友已经赢下这一墩时把分送过去',
+  [F, '      cheapest,\n      pointCards(cards, n, ctx), // 队友已经赢下这一墩时把分送过去',
+      '      cheapest,\n      highCards(cards, n, ctx),\n      pointCards(cards, n, ctx), // 队友已经赢下这一墩时把分送过去',
       '垫牌形状里又加回 highCards'],
 
   // ---- ①求件是一次性的表态 ----
@@ -25,7 +25,7 @@ runMutants([
   [F, '    isPieceAskLead(lead.cards, ctx) &&\n    !teamAskedPieceBefore(view, ctx, lead.playSuit, view.you.seat % 2);',
       '    cardPoints(leadCard) > 0 || !isSidePiece(leadCard, ctx);',
       '回到旧口径：队友单张领这门、只要不是副 A 就算求件'],
-  [F, "      !teamAskedPieceBefore(view, ctx, last.leadSuit, view.you.seat % 2, lastIndex),",
+  [F, "      !teamAskedPieceBefore(view, ctx, suit, view.you.seat % 2, lastIndex),",
       '      true,', '「回队友这门」的求件加成不看我方求过没有'],
 
   // ---- ③毙牌阶梯 + 「外面没有更大的主牌了」----

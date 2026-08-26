@@ -1527,8 +1527,22 @@ function coverNeedsFirstPieceUncached(view, ctx) {
 //   · 我这门打完就快断了 —— 「打 A 后再捅多一支或两支就断了，可以毙别人，
 //     这个时候也可以吃」。断门之后我能用主牌毙，反而是优势。
 // 风险的大小看【对手在这门可能还剩多长】：他能甩得越长，亮件越亏。
+// 「这一墩是对手在甩牌」—— Glen 给的第二个例外，他点名说这个很危险：
+//   「还有一种情况是此次是对手甩的牌，有可能出了 A 后，他可以顺手再甩一次长的，
+//     这个也很危险，也是需要计算当前出的牌去判断可能性。」
+// 甩牌这个动作本身就是在宣告「我这门长、而且我算准了你们跟不了」。
+// 这时候把一支件垫进去，正是给他下一手甩牌铺路。
+// 注：不分「甩的是副牌还是主牌」。主牌甩牌同样是在明示手上有长门，道理一样；
+// 而且真要分，也构造不出能钉住那个分支的局面 —— 主牌甩牌时我手上但凡有主就
+// 必须跟主，轮不到垫牌，没主可跟时手里又几乎不可能让一支副 A 排进最便宜的那几张。
+function opponentThrowInProgress(view) {
+  const lead = view.round?.currentTrick?.[0];
+  return !!lead && (lead.cards?.length ?? 1) > 1 && lead.seat % 2 !== view.you.team;
+}
+
 function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
   const hand = view.you?.hand ?? [];
+  const throwing = opponentThrowInProgress(view);
   return cards.reduce((sum, card) => {
     if (!isSidePiece(card, ctx)) return sum;
     const suit = suitOf(card, ctx);
@@ -1554,8 +1568,14 @@ function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
     //     fixture —— 垫牌位置的候选只有 lowCards / pointCards 两种，一支件只有
     //     在「便宜到没有对手」时才被选中，那时它是唯一候选，罚多少都改不了结果。
     // 要再收紧，得先动候选生成那一头。
+    //
+    // 唯一的例外是【对手正在甩牌】：那一墩我是在给他凑张数，除非整手主牌毙掉
+    // 否则根本吃不下来，「可以吃」这个前提压根不存在，这条豁免自然不成立。
     const spentHere = cards.filter(item => suitOf(item, ctx) === suit).length;
-    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) return sum;
+    if (
+      !throwing &&
+      cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER
+    ) return sum;
     const signal = suitAskSignal(view, ctx, suit);
     const threat = maxOpponentSuitEstimate(view, ctx, suit) / PIECE_THREAT_BASELINE;
     const read = signal === 'partner' ? PIECE_READ_PARTNER_ASKED
@@ -2109,9 +2129,24 @@ function followCandidates(view, ctx) {
   const discards = (cards, n) => {
     if (n < 0 || cards.length < n) return [];
     if (n === 0) return [[]];
+    // 「不动件」的那一手 —— 只有这一个候选时评分器无从选择。
+    //
+    // 副牌 A 的 cardStrength 是 14，低于任何主牌（900+），所以 lowCards 一旦
+    // 挑到它，就说明手上除了件就只剩主牌（或更贵的副牌）了，那时它是【唯一】
+    // 候选，亮件的代价罚多少都改不了结果。多给一手「宁可动主牌也不动件」，
+    // 评分器才谈得上取舍。
+    //
+    // 常态下这一手会输 —— Glen：「A 的价值并不比小的主牌要高，本身它就比主牌
+    // 要小」，keepValue 里副 A 是 59、最低的主花色是 78，正好是这个顺序。
+    // 它是给两个例外准备的，见 pieceExposureRisk 上面那段。
+    const cheapest = lowCards(cards, n, ctx);
+    const sparing = cheapest.some(card => isSidePiece(card, ctx))
+      ? lowCards(cards.filter(card => !isSidePiece(card, ctx)), n, ctx)
+      : null;
     return uniqueCardSets([
-      lowCards(cards, n, ctx),
+      cheapest,
       pointCards(cards, n, ctx), // 队友已经赢下这一墩时把分送过去
+      ...(sparing ? [sparing] : []),
     ]);
   };
 
