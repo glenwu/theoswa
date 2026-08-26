@@ -659,22 +659,16 @@ test('帮队友求件：队友后来改打方块 → 不再回黑桃（信号会
   assert.equal(lead.suit, 'D', '队友改打方块了，说明他有别的安排，黑桃那条请求作废');
 });
 
-// ⚠️ 这条断言【改过】，原来写的是「队友改吊主 → 黑桃那条请求作废 → 回到
-// 自己最长的方块（期望 D）」。它一直是绿的，但是【假绿】：leadView 以前把
-// piecesView 默认成空数组，partnerRequest ① 的停止条件「这门还有件没现身」
-// 对空数组恒为假，于是那段跨墩记忆在这个 fixture 里根本没跑起来。
-// 把默认改成「四支全未现」（真实 view 的样子）之后，它照 c6543a2 的语义
-// 回黑桃 —— 那才是线上一直在跑的行为。
+// 用【闲家】视角测：队友做庄时「跟着庄家吊主」的逻辑会自己领主牌，
+// 那样即使 partnerRequest 错误地返回 TRUMP 也看不出差别（两条都领主）。
+// 闲家没有跟庄的义务，才能把「队友改吊主 → 这条请求作废」单独钉住。
 //
-// ⚠️⚠️ 这里有一处 Glen 前后两句话的张力，还没跟他确认过：
-//   (A)「如果对家吃大，然后打其它牌，证明他有其它安排了，这时候就不再帮他求件了」
-//   (B)「即使自己没件，也需要帮队友把别人的件逼出来，因为这个时候你并不知道
-//       你的队友有多少支、对手有多少支，只能跟着打」
-// c6543a2 按 (B) 实现，停止条件是「件逼完了 / 这门我打空了」。改吊主算不算
-// (A) 说的「有其它安排」，得他裁一句。在他裁定之前，测试钉住线上的行为。
-//
-// 仍然钉得住的那半条：队友领主【不是】求件，不能被当成「回他这门」去领主牌。
-test('帮队友求件：队友改吊主 → 不跟着去领主牌（黑桃那条请求按 c6543a2 仍然有效）', () => {
+// ⚠️ 这条断言在 cc052ec 里被我【改坏过一次】：当时按 c6543a2 的跨墩记忆
+// 改成了「接着帮他逼黑桃」。Glen 裁定作废那一版：
+//   「队友吃大然后打其它牌，证明他有其它计划，正常不应该帮他再逼件，
+//     他也有可能是暗求。」
+// 改吊主就是最彻底的「打其它牌」。现在断言回到原样。
+test('帮队友求件：队友改吊主 → 那条求件请求作废，不跟着去领主牌', () => {
   // 方块给到 6 张、黑桃只留 3 张：这样「自己发展最长副牌」的答案明确是方块，
   // 领到黑桃或主牌都只能是被过期的请求带偏（bothSuits 是 4-4 平手，测不出来）。
   const hand = [
@@ -690,7 +684,7 @@ test('帮队友求件：队友改吊主 → 不跟着去领主牌（黑桃那条
     ],
   }))[0];
   assert.notEqual(lead.suit, 'H', '队友领主牌不是在求件，不该被当成「回他这门」而去领主');
-  assert.equal(lead.suit, 'S', '黑桃那门还有件没现身，按 c6543a2 该接着帮他逼');
+  assert.equal(lead.suit, 'D', '黑桃那条请求已作废，该回到发展自己最长的副牌');
 });
 
 // ============ 求件应答 · 庄家带分吊主 ============
@@ -881,48 +875,52 @@ test('亮件：这门的件已经全现 → 没有风险可言，5 分也照吃'
     '件都现完了还护着 ♠A，那是白护');
 });
 
-// ---- 「快断门」那条豁免只在【真的吃下这一墩】时成立（Glen 第 3 条）----
+// ---- 「快断门」那条豁免要求这支件【换回了东西】（Glen 第 3 条）----
 //
 // Glen 的原话：「如果自己这门已经快断了，比如打 A 后再捅多一支或两支就断了，
 // 可以毙别人，这个时候也可以吃。」落点在那个【吃】字：用这支件把墩拿下来，
 // 换回牌权和分，断门之后还能用主牌毙，所以划算。
 //
-// 原来这条不看结果 —— 垫牌位置、队友已经稳赢的位置照样豁免。那两种位置这支件
-// 什么都没换回来，纯粹把「未现」变成「已现」，替攥着这门的人凑甩牌资格。
-// 实测 200 局：躲得掉却还是打出去的件里，82 支是垫牌位置随手垫的、
-// 44 支是队友已经赢了还把 A 亮出去（A 是 0 分，连送分都算不上）。
-function nearVoidPieceView() {
+// ⚠️ 这条测试【改过一次】，而且是把断言【反过来】写的。我第一版把这条豁免
+// 收紧成「只有真的把这一墩吃下来才算数」，于是「队友 ♠A 稳赢、我手上 ♠K ♠3」
+// 时电脑跟 ♠3 留住 K。那是我按他的措辞推的，推错了 —— Glen 当场纠正：
+//   「队友 A，自己如果只剩下 K 和 3，正常还是要把 K 给队友。」
+// 10 分是实打实进自己家的，比留着那支件更实在。收紧的代码已经退掉，
+// 这条测试留下来当界桩：谁再想收紧这条豁免，它会先红。
+function nearVoidPieceView(mine = 13) {
   return followView({
     seat: 0, declarerSeat: 1,
     hand: [
-      T('S', 13, 40), T('S', 3, 41),                      // 这门只剩两张：♠K + ♠3
+      T('S', mine, 40), T('S', 3, 41),                    // 这门只剩两张：一支件 + ♠3
       ...[9, 8, 7, 6, 5].map((r, i) => T('H', r, i)),     // 5 张主
       ...[9, 6].map((r, i) => T('D', r, i + 50)),
     ],
     piecesView: {
-      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
-          { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+      // 一支 ♠A 是队友刚打出来的那张（已现）；另一支件在我手上，其余未现
+      S: [{ rank: 14, status: 'seen' },
+          { rank: 14, status: mine === 14 ? 'mine' : 'unseen' },
+          { rank: 13, status: mine === 13 ? 'mine' : 'unseen' },
+          { rank: 13, status: 'unseen' }],
       D: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
       C: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
     },
     currentTrick: [
       { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },   // 对手领 ♠4
       { seat: 2, cards: [T('S', 14, 91)] },                 // 队友 ♠A，我是最后一家，稳赢
+                                                            // （同点数先出者大，我的件压不过他）
       { seat: 3, cards: [T('S', 6, 92)] },                  // 另一个对手垫小的
     ],
   });
 }
 
-// ⚠️ 这一条是【按 Glen 的措辞推的】，他没有直接裁过这个具体场面，要跟他确认：
-// 队友的 ♠A 稳赢，我手上 ♠K ♠3。打 ♠K 是把 10 分送给自己人（实打实的分），
-// 代价是这门只剩一支 ♠K 没现身、亮了就等于替对手凑齐甩这门的资格。
-// 按他自己给的门槛（「20 分甚至 30 分那种大利益才值得冒险」），10 分不够格。
-test('件不能乱出：队友已经稳赢这一墩 → 不为了送 10 分把最后一支件亮出去', () => {
-  const played = chooseFollowCards(nearVoidPieceView());
+// Glen 的原话：「队友 A，自己如果只剩下 K 和 3，正常还是要把 K 给队友。」
+test('件不能乱出：队友已经稳赢这一墩 → 把 ♠K 的 10 分送过去', () => {
+  const played = chooseFollowCards(nearVoidPieceView(13));
   assert.equal(played.length, 1);
-  assert.equal(played[0].rank, 3,
-    `该跟 ♠3 留住 ♠K，实际打了 ♠${played[0].rank}`);
+  assert.equal(played[0].rank, 13,
+    `队友稳赢，该把 ♠K 的 10 分送过去，实际打了 ♠${played[0].rank}`);
 });
+
 
 // ---- 读件的位置（Glen）：靠「谁在这门求过牌」判断件大概在谁手上 ----
 //
@@ -2559,13 +2557,15 @@ test('打A封：打完这张这门只剩一张 → 压不住甩牌，不算「�
 //     把对手的件逼出来。」
 // 中间隔了两墩、队友最近领的是别的门，旧代码就把这次求件忘干净了：
 // partnerRequest 只看队友【最近一次】领了什么。
-function forgottenAskView() {
+function forgottenAskView(thirdSuit = 'S') {
   return leadView({
     mySeat: 2, declarerSeat: 0,
     hand: [
       ...[9, 7, 4].map((r, i) => T('S', r, i)),        // 件已经交给队友，只剩小牌
       ...[8, 7, 6, 5, 4, 3].map((r, i) => T('C', r, i + 10)),
-      ...[9, 8].map((r, i) => T('D', r, i + 20)),
+      // ♦ 故意配成「一张 6~9 + 一张 ≤5」：求件走 lowestLead 出 ♦3，
+      // 普通回门走 quietLead 会避开求件信号出 ♦9 —— 两者按点数分得开
+      ...[9, 3].map((r, i) => T('D', r, i + 20)),
       ...[5, 4, 3].map((r, i) => T('H', r, i + 30)),
     ],
     trickHistory: [
@@ -2576,20 +2576,25 @@ function forgottenAskView() {
                 { seat: 2, cards: [T('S', 14, 82)] },   // 我把唯一那支件交了出去
                 { seat: 3, cards: [T('S', 8, 83)] }],
       },
-      { // 第 2 墩：对手领梅花
+      { // 第 2 墩：对手领梅花，队友吃下
         leadSeat: 1, leadSuit: 'C', winnerSeat: 0, trickNo: 2,
         plays: [{ seat: 1, playSuit: 'C', cards: [T('C', 12, 84)] },
                 { seat: 2, cards: [T('C', 3, 85)] },
                 { seat: 3, cards: [T('C', 9, 86)] },
                 { seat: 0, cards: [T('C', 14, 87)] }],
       },
-      { // 第 3 墩：队友领方块（不是求件），我拿到牌权
-        leadSeat: 0, leadSuit: 'D', winnerSeat: 2, trickNo: 3,
-        plays: [{ seat: 0, playSuit: 'D', cards: [T('D', 9, 88)] },
-                { seat: 1, cards: [T('D', 6, 89)] },
-                { seat: 2, cards: [T('D', 13, 90)] },
-                { seat: 3, cards: [T('D', 7, 91)] }],
-      },
+      // 第 3 墩：队友拿着牌权做的选择 —— 接着打黑桃，还是换门打方块
+      thirdSuit === 'S'
+        ? { leadSeat: 0, leadSuit: 'S', winnerSeat: 2, trickNo: 3,
+            plays: [{ seat: 0, playSuit: 'S', cards: [T('S', 9, 88)] },
+                    { seat: 1, cards: [T('S', 6, 89)] },
+                    { seat: 2, cards: [T('S', 13, 90)] },
+                    { seat: 3, cards: [T('S', 7, 91)] }] }
+        : { leadSeat: 0, leadSuit: 'D', winnerSeat: 2, trickNo: 3,
+            plays: [{ seat: 0, playSuit: 'D', cards: [T('D', 9, 88)] },
+                    { seat: 1, cards: [T('D', 6, 89)] },
+                    { seat: 2, cards: [T('D', 13, 90)] },
+                    { seat: 3, cards: [T('D', 7, 91)] }] },
     ],
     piecesView: {
       S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
@@ -2600,27 +2605,41 @@ function forgottenAskView() {
   });
 }
 
-test('帮队友求：隔了两墩、他最近领的是别的门 → 那次求件仍然算数', () => {
-  assert.equal(chooseLeadCards(forgottenAskView())[0].suit, 'S',
-    '旧代码只看队友最近一次领了什么，第 1 墩那次求件早被忘光了');
-});
-
-test('帮队友求：自己一支件都没有了，照样领这门的小牌去逼', () => {
-  const card = chooseLeadCards(forgottenAskView())[0];
-  assert.equal(card.rank, 4, `该领 ♠4，实际领了 ${card.suit}${card.rank}`);
-});
-
-// 停止条件的另一半：这门我【一张都不剩】了。件可能躺在底牌里永远等不到现身，
-// 光靠「还有件没现身」停不下来，所以还要看手上有没有牌 —— 打空了就自然了结，
-// 回退到「回队友最近领的那门」。
+// Glen 的两句话合起来才是完整的规则，缺一不可：
+//   跨墩 —— 「即使自己没件，也需要帮队友把别人的件逼出来……只能跟着打」
+//   换门作废 —— 「队友吃大然后打其它牌，证明他有其它计划，正常不应该帮他再逼件」
+// 所以跨墩只在【同一门】里跨。下面两条就是这条规则的两侧。
 //
-// ⚠️ 去掉 partnerRequest ① 里那句 `if (!holdsCards(suit)) break;`，它会返回一门
-// 我一张都没有的花色，lowestLead 拿到空数组返回 null，addProposal 当场抛异常。
-// 这条测试就是钉那句 break（原来只有整场对局那条端到端测试偶然踩到它，
-// 换个出牌轨迹就踩不到了 —— 不能靠那种巧合）。
-test('帮队友求：这门我已经打空了 → 那次求件了结，回他最近领的那门', () => {
-  const view = forgottenAskView();
+// ⚠️ 这一对测试【改过】。c6543a2 只实现了跨墩那一半，于是「他第 3 墩换门」
+// 也照样回去逼旧那门；Glen 裁定那是错的。同门跨墩这一半仍然要保住 ——
+// 再往前那一版只看最近一领，他第 3 墩领 ♠9（不是求件）就把第 1 墩的 ♠4 忘了。
+test('帮队友求：他第 3 墩还在打这门（只是不再是求件牌）→ 第 1 墩那次求件仍然算数', () => {
+  const card = chooseLeadCards(forgottenAskView('S'))[0];
+  assert.equal(card.suit, 'S');
+  // ♠4 而不是 ♠7 才说明它算的是【求件】：求件走 lowestLead，普通回门走
+  // quietLead（这门没甩牌欲望，会避开 ≤5 的求件信号，改出 ♠7）。
+  assert.equal(card.rank, 4, `该领 ♠4 接着逼件，实际领了 ${card.suit}${card.rank}`);
+});
+
+test('帮队友求：他吃大之后改打方块 → 黑桃那次求件作废，跟着他的新计划走', () => {
+  const card = chooseLeadCards(forgottenAskView('D'))[0];
+  assert.equal(card.suit, 'D',
+    `队友换门就是换了计划（也可能是暗求方块），实际领了 ${card.suit}${card.rank}`);
+  // ♦9 而不是 ♦3：他第 3 墩领的 ♦9 不是求件牌，这一回就只是把牌权还给他这门，
+  // 不该顺手替黑桃那次求件在方块上再喊一嗓子。
+  assert.equal(card.rank, 9, `这不是求件，该走中性牌 ♦9（实际 ♦${card.rank}）`);
+});
+
+// 另一条停止条件：队友那门我【一张都不剩】了 —— 帮不上，就去打自己的牌。
+// 件可能躺在底牌里永远等不到现身，光靠「还有件没现身」停不下来。
+//
+// ⚠️ 去掉 partnerRequest 开头那句 `cardsOfSuit(...).length === 0 → return null`，
+// 它会返回一门我一张都没有的花色，lowestLead 拿到空数组返回 null，
+// addProposal 当场抛异常。这条测试就是钉那一句（原来只有整场对局那条端到端
+// 测试偶然踩到它，换个出牌轨迹就踩不到 —— 不能靠那种巧合）。
+test('帮队友求：队友那门我已经打空了 → 帮不上，回去发展自己最长的副牌', () => {
+  const view = forgottenAskView('S');
   view.you.hand = view.you.hand.filter(card => card.suit !== 'S'); // 黑桃全打完了
   const card = chooseLeadCards(view)[0];
-  assert.equal(card.suit, 'D', `黑桃已经打空，该回队友第 3 墩领的方块（实际 ${card.suit}${card.rank}）`);
+  assert.equal(card.suit, 'C', `帮不上就该打自己 6 张的梅花（实际 ${card.suit}${card.rank}）`);
 });

@@ -782,50 +782,55 @@ function partnerSideProtocolChoice(view, choices, ctx) {
 function partnerRequest(view, ctx) {
   const partnerSeat = partnerSeatOf(view.you.seat);
   const history = view.round?.trickHistory ?? [];
-  const holdsCards = suit => cardsOfSuit(view.you.hand ?? [], suit, ctx).length > 0;
 
-  // ============ ① 还没逼完的求件：这个意图【跨墩有效】 ============
-  // Glen：「即使自己没件，也需要帮队友把别人的件逼出来，因为这个时候
-  //        你并不知道你的队友有多少支、对手有多少支，只能跟着打。」
-  // 所以判断的不是「我还剩不剩件」，是【这门还有没有件没现身】。
-  //
-  // ⚠️ 原来只看队友【最近一次】领了什么：他第 3 墩求件、第 6 墩领了别的门，
-  // 等我第 7 墩拿到牌权，那次求件已经被忘得干干净净 —— 领什么全交给通用提案抢。
-  //
-  // 停止条件是「一支未现的件都没有了」：件已经逼完，接下来该甩而不是接着领。
-  // 件在底牌里的话永远等不到它现身，所以还要求我这门手上有牌 —— 打完就自然停。
-  for (let i = history.length - 1; i >= 0; i -= 1) {
-    const trick = history[i];
-    if (trick.leadSeat !== partnerSeat || trick.leadSuit === 'TRUMP') continue;
-    if (!isPieceAskLead(trick.plays?.[0]?.cards ?? [], ctx)) continue;
-    const suit = trick.leadSuit;
-    const items = view.round?.piecesView?.[suit] ?? [];
-    if (!items.some(item => item.status === 'unseen')) break; // 逼完了
-    if (!holdsCards(suit)) break;                             // 这门我打空了
-    return {
-      suit,
-      seeking: true,
-      partnerIsDeclarer: partnerSeat === view.declarerSeat,
-    };
-  }
-
-  // ============ ② 没有未了的求件：回队友最近领的那门 ============
+  // 队友【最近一次领牌】就是他现在的计划 —— 这条是 Glen 定的：
+  //   「队友吃大然后打其它牌，证明他有其它计划，正常不应该帮他再逼件，
+  //     他也有可能是暗求。」
+  // 能领牌就说明他刚吃下一墩，那一领是他拿着牌权做的选择。他换了门，
+  // 之前那门的请求就作废；他改吊主，说明走的是主牌路线，更不该由我去回副牌。
   let lastIndex = -1;
   for (let i = 0; i < history.length; i += 1) {
     if (history[i].leadSeat === partnerSeat) lastIndex = i;
   }
   const last = lastIndex >= 0 ? history[lastIndex] : null;
   if (!last || last.leadSuit === 'TRUMP') return null;
-  if (cardsOfSuit(view.you.hand ?? [], last.leadSuit, ctx).length === 0) return null;
+  const suit = last.leadSuit;
+  if (cardsOfSuit(view.you.hand ?? [], suit, ctx).length === 0) return null;
+  const partnerIsDeclarer = partnerSeat === view.declarerSeat;
+
+  // ============ ① 这门上还没逼完的求件：意图【跨墩有效】 ============
+  // Glen：「即使自己没件，也需要帮队友把别人的件逼出来，因为这个时候
+  //        你并不知道你的队友有多少支、对手有多少支，只能跟着打。」
+  // 所以判断的不是「我还剩不剩件」，是【这门还有没有件没现身】。
+  //
+  // ⚠️ 跨墩只在【同一门】里跨：他第 3 墩用 ♠4 求件、第 6 墩又领 ♠9，
+  // 那次求件仍然算数（他没换计划，只是牌权回到手上接着打）。
+  // 但他第 6 墩领的是别的门 —— 上面那段已经把 suit 换成新的那门了，
+  // 旧的那次求件到此为止。这两半是 Glen 前后两句话，缺一不可：
+  //   c6543a2 只实现了「跨墩」，把「换门就作废」一起丢了；
+  //   再往前那一版只看最近一领，把「同门跨墩」丢了。
+  //
+  // 停止条件是「一支未现的件都没有了」：件已经逼完，接下来该甩而不是接着领。
+  const items = view.round?.piecesView?.[suit] ?? [];
+  if (items.some(item => item.status === 'unseen')) {
+    for (let i = lastIndex; i >= 0; i -= 1) {
+      const trick = history[i];
+      if (trick.leadSeat !== partnerSeat || trick.leadSuit !== suit) continue;
+      if (!isPieceAskLead(trick.plays?.[0]?.cards ?? [], ctx)) continue;
+      return { suit, seeking: true, partnerIsDeclarer };
+    }
+  }
+
+  // ============ ② 这门上没有未了的求件：只是把牌权还给他这门 ============
   const cards = last.plays?.[0]?.cards ?? [];
   return {
-    suit: last.leadSuit,
+    suit,
     // 「回队友这门」这个意图一直成立，但【求件】只算我方在这门的第一次。
     // 他贡献完件再领一张小牌，那不是在求件，是牌权到手随手往回打。
     seeking:
       cards.length > 0 && cards.every(card => card.rank <= 5) &&
-      !teamAskedPieceBefore(view, ctx, last.leadSuit, view.you.seat % 2, lastIndex),
-    partnerIsDeclarer: partnerSeat === view.declarerSeat,
+      !teamAskedPieceBefore(view, ctx, suit, view.you.seat % 2, lastIndex),
+    partnerIsDeclarer,
   };
 }
 
@@ -1522,7 +1527,7 @@ function coverNeedsFirstPieceUncached(view, ctx) {
 //   · 我这门打完就快断了 —— 「打 A 后再捅多一支或两支就断了，可以毙别人，
 //     这个时候也可以吃」。断门之后我能用主牌毙，反而是优势。
 // 风险的大小看【对手在这门可能还剩多长】：他能甩得越长，亮件越亏。
-function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning, takesTrick) {
+function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
   const hand = view.you?.hand ?? [];
   return cards.reduce((sum, card) => {
     if (!isSidePiece(card, ctx)) return sum;
@@ -1538,21 +1543,19 @@ function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning, takesTric
     if (held >= 3 && stillHidden === 1) return sum;
     if (strongPieceSuit(view, ctx, suit, tuning)) return sum;
     if (partnerAskedSuit === suit) return sum;
-    // 「这门快断了」这条豁免【只在这一手真的把墩拿下来时】才成立。
+    // 「这门快断了」就不罚 —— Glen：「如果自己这门已经快断了，比如打 A 后
+    // 再捅多一支或两支就断了，可以毙别人，这个时候也可以吃。」
     //
-    // Glen 的原话是：「如果自己这门已经快断了，比如打 A 后再捅多一支或两支就断了，
-    // 可以毙别人，这个时候也可以吃。」—— 落点是那个【吃】字：拿这一支件把这墩
-    // 吃下来，代价换回了牌权和分，断门之后还能用主牌毙，所以划算。
-    //
-    // 原来这条不看结果，垫牌位置、队友已经赢下的位置照样豁免。那两种位置这支件
-    // 什么都没换回来，纯粹是把「未现」变成「已现」，替攥着这门的人凑甩牌资格。
-    // 实测 200 局：躲得掉却还是打出去的件里，82 支是垫牌位置随手垫的、
-    // 44 支是队友已经赢了还把 A 亮出去（A 是 0 分，连送分都算不上）。
+    // ⚠️ 这里【试过】收紧成「只有真的把这一墩吃下来才豁免」，又退回来了
+    //（账在 scripts/audit/loose-piece.mjs）。两条理由：
+    //   · 那一版顺带把「队友稳赢、我把 K 的 10 分送过去」也罚掉了，Glen 纠正：
+    //     「队友 A，自己如果只剩下 K 和 3，正常还是要把 K 给队友。」
+    //   · 去掉那一半之后剩下的差别只有 200 局 5 次，而且构造不出能钉住它的
+    //     fixture —— 垫牌位置的候选只有 lowCards / pointCards 两种，一支件只有
+    //     在「便宜到没有对手」时才被选中，那时它是唯一候选，罚多少都改不了结果。
+    // 要再收紧，得先动候选生成那一头。
     const spentHere = cards.filter(item => suitOf(item, ctx) === suit).length;
-    if (
-      takesTrick &&
-      cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER
-    ) return sum;
+    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) return sum;
     const signal = suitAskSignal(view, ctx, suit);
     const threat = maxOpponentSuitEstimate(view, ctx, suit) / PIECE_THREAT_BASELINE;
     const read = signal === 'partner' ? PIECE_READ_PARTNER_ASKED
@@ -2392,11 +2395,7 @@ function scoreFollow(view, cards, ctx) {
     ? { suit: lead.playSuit, seeking: true }
     : partnerRequest(view, ctx);
   const partnerAskedSuit = request?.seeking ? request.suit : null;
-  // takesTrick = 这一手打完【由我领着这一墩】。快断门那条豁免要拿它来卡，
-  // 不能只看 afterTeamWinning —— 队友已经赢下时我这支件也是白亮。
-  const exposureRisk = pieceExposureRisk(
-    view, ctx, cards, partnerAskedSuit, tuning, after?.seat === you.seat
-  );
+  const exposureRisk = pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning);
   if (exposureRisk > 0) {
     // ⚠️ 这里【不】再单独减一遍「这一墩的分」。Glen 的例外（「20 分甚至 30 分那种
     // 大利益也可以冒险」）已经由下面的接管加分表达了 —— 那一条本来就是
