@@ -12,9 +12,6 @@ import { ProposeResetModal, ForceResetModal } from './ResetModals.jsx';
 // 左栏：玩家列表。自己固定排第一行并显著标注，其余三人从自己往下按逆时针排：
 // 我 → 下家 → 对家 → 上家。自己的卡片下挂手牌构成 + 件追踪面板（只显示自己的）。
 export default function PlayerPanel({ game, send }) {
-  const [modal, setModal] = useState(null);
-  const [showPropose, setShowPropose] = useState(false);
-  const [showForce, setShowForce] = useState(false);
   const you = game.you;
   const order = [you.seat, (you.seat + 3) % 4, (you.seat + 2) % 4, (you.seat + 1) % 4];
   const bySeat = Object.fromEntries(game.players.map(p => [p.seat, p]));
@@ -46,35 +43,49 @@ export default function PlayerPanel({ game, send }) {
         ))}
       </div>
 
-      <div className="flex flex-wrap justify-center gap-2 border-t border-white/10 p-2">
-        <button className="btn-icon" title="规则说明" onClick={() => setModal('rules')}>📖</button>
-        <button className="btn-icon" title="本局历史" onClick={() => setModal('history')}>🕘</button>
-        <button className="btn-icon" title="配色方案" onClick={() => setModal('theme')}>🎨</button>
+      <PanelToolbar game={game} send={send} className="border-t border-white/10 p-2" />
+    </div>
+  );
+}
+
+// 五个功能按钮（📖 规则 / 🕘 历史 / 🎨 配色 / 🔄 新开一局 / ⏸ 暂停）连同它们的弹窗。
+//
+// 抽出来是因为【手机横屏】那套布局也要用（Glen：「手牌区上边则显示已打出还有求件的
+// 信息加五个功能按钮」）。弹窗的开关状态跟着按钮走，谁渲染这组按钮谁就有完整的功能，
+// 不必把一堆 useState 往上提到 App 再往下传。
+export function PanelToolbar({ game, send, className = '' }) {
+  const [modal, setModal] = useState(null);
+  const [showPropose, setShowPropose] = useState(false);
+  const [showForce, setShowForce] = useState(false);
+  return (
+    <div className={`flex flex-wrap items-center justify-center gap-2 ${className}`}>
+      <button className="btn-icon" title="规则说明" onClick={() => setModal('rules')}>📖</button>
+      <button className="btn-icon" title="本局历史" onClick={() => setModal('history')}>🕘</button>
+      <button className="btn-icon" title="配色方案" onClick={() => setModal('theme')}>🎨</button>
+      <button
+        className="btn-icon"
+        title={game.resetProposal ? '新开一局提案进行中' : '提议新开一局'}
+        onClick={() => setShowPropose(true)}
+      >
+        🔄
+      </button>
+      <button
+        className="btn-icon"
+        title={game.paused ? '游戏已暂停' : '暂停游戏（所有倒计时一起停住）'}
+        disabled={!!game.paused}
+        onClick={() => send({ type: 'pause' })}
+      >
+        ⏸
+      </button>
+      {game.you.isAdmin && (
         <button
-          className="btn-icon"
-          title={game.resetProposal ? '新开一局提案进行中' : '提议新开一局'}
-          onClick={() => setShowPropose(true)}
+          className="btn-icon !bg-rose-500/30"
+          title="强制重置（跳过全员同意）"
+          onClick={() => setShowForce(true)}
         >
-          🔄
+          ⛔
         </button>
-        <button
-          className="btn-icon"
-          title={game.paused ? '游戏已暂停' : '暂停游戏（所有倒计时一起停住）'}
-          disabled={!!game.paused}
-          onClick={() => send({ type: 'pause' })}
-        >
-          ⏸
-        </button>
-        {you.isAdmin && (
-          <button
-            className="btn-icon !bg-rose-500/30"
-            title="强制重置（跳过全员同意）"
-            onClick={() => setShowForce(true)}
-          >
-            ⛔
-          </button>
-        )}
-      </div>
+      )}
 
       {modal === 'rules' && <RulesModal onClose={() => setModal(null)} />}
       {modal === 'history' && <HistoryModal game={game} onClose={() => setModal(null)} />}
@@ -287,7 +298,9 @@ function statusPill(game, player) {
 }
 
 // 我的卡片下挂：手牌构成（只显示自己的！）+ 件追踪面板
-function MyDetails({ game }) {
+// 「场上已打出」+ 件追踪。⚠️ 导出是给手机横屏那套布局用的（那边左栏藏起来了，
+// 但这块信息是打牌时一直要看的，不能跟着一起藏）。
+export function MyDetails({ game }) {
   const comp = game.you.composition;
   if (!comp) return null;
   const round = game.round;

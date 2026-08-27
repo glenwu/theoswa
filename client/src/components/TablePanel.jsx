@@ -12,6 +12,8 @@ import {
 import { PlayingCard } from './PlayingCard.jsx';
 import Modal from './Modal.jsx';
 import { useNow, secondsLeft, displayNow } from '../useNow.js';
+import { useMediaQuery, COMPACT_PORTRAIT, PHONE_LANDSCAPE } from '../useMedia.js';
+import { MyDetails, PanelToolbar } from './PlayerPanel.jsx';
 import { shortcutAction } from '../shortcut.js';
 import { checkSelection } from '../playCheck.js';
 import { seatPendingText } from '../seatStatus.js';
@@ -161,8 +163,14 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
     return () => window.removeEventListener('keydown', handler);
   }, [game, selected, you.seat, send]);
 
-  return (
-    <div className="table-spot relative flex h-full flex-col rounded-3xl border border-white/10 p-3">
+  // 手机横屏：高度不够，上下堆「牌桌 / 控制栏 / 手牌」会糊成一团（Glen 说没法玩）。
+  // 改成左右分栏 —— 牌桌占左边 40%，右边 60% 上面放信息和功能键、下面放手牌。
+  const phoneLandscape = useMediaQuery(PHONE_LANDSCAPE);
+
+  const table = (
+    <div className={`table-spot relative flex min-h-0 flex-col rounded-3xl border border-white/10 ${
+      phoneLandscape ? 'w-2/5 shrink-0 p-1.5' : 'h-full p-3'
+    }`}>
       {/* 出牌倒计时：牌桌右上角大号显示（与左栏卡片倒计时并存） */}
       <CenterTurnTimer game={game} />
       <TopBanner game={game} />
@@ -176,7 +184,9 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
             信息区顶得上下抖动。min-h 不够——140px 会顶破它，仍有 4px 抖动，实测过。
             9.5rem = 152px 留足余量；内容再高也只是溢出显示，绝不推动这一行。
             牌面尺寸仍可随屏幕变化 —— 变的是牌，不是这一行占的位置。 */}
-        <div className="col-start-2 row-start-1 flex h-[9.5rem] items-center justify-center">
+        <div className={`col-start-2 row-start-1 flex items-center justify-center ${
+          phoneLandscape ? 'h-24' : 'h-[9.5rem]'
+        }`}>
           <PlayZone player={top} game={game} side="top" />
         </div>
         {/* 左右出牌区在各自那一栏里居中：即「中央信息区边缘 → 牌桌外缘」这段空间的正中，
@@ -192,32 +202,43 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
         <div className="col-start-3 row-start-2 flex items-center justify-center">
           <PlayZone player={right} game={game} side="right" />
         </div>
-        <div className="col-start-2 row-start-3 flex h-[9.5rem] items-center justify-center">
+        <div className={`col-start-2 row-start-3 flex items-center justify-center ${
+          phoneLandscape ? 'h-24' : 'h-[9.5rem]'
+        }`}>
           <PlayZone player={bySeat[you.seat]} game={game} side="self" isYou />
         </div>
       </div>
+    </div>
+  );
 
-      <ControlBar
-        game={game}
-        send={send}
-        error={error}
-        selected={selected}
-        onClear={() => setSelected([])}
-        onDeclareOptions={setDeclareOptions}
-        onTogglePlayers={onTogglePlayers}
-        onToggleChat={onToggleChat}
-      />
+  const controls = (
+    <ControlBar
+      game={game}
+      send={send}
+      error={error}
+      selected={selected}
+      onClear={() => setSelected([])}
+      onDeclareOptions={setDeclareOptions}
+      onTogglePlayers={onTogglePlayers}
+      onToggleChat={onToggleChat}
+      compact={phoneLandscape}
+    />
+  );
 
-      <HandArea
-        game={game}
-        send={send}
-        selected={selected}
-        onToggle={toggleCard}
-        onDragAdd={addDragSelection}
-        onToggleGroup={toggleGroupSelection}
-        onDeclareRank={cardId => send({ type: 'declareTrump', cardId })}
-      />
+  const hand = (
+    <HandArea
+      game={game}
+      send={send}
+      selected={selected}
+      onToggle={toggleCard}
+      onDragAdd={addDragSelection}
+      onToggleGroup={toggleGroupSelection}
+      onDeclareRank={cardId => send({ type: 'declareTrump', cardId })}
+    />
+  );
 
+  const overlays = (
+    <>
       {/* 碾压判定面板：摊开四家剩余手牌 + 看结算按钮（不自动跳走） */}
       {game.phase === 'DOMINANCE' && (
         <DominancePanel game={game} onConfirm={() => send({ type: 'confirmDominance' })} />
@@ -238,6 +259,53 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
           onClose={() => setDeclareOptions(null)}
         />
       )}
+    </>
+  );
+
+  // ---- 手机横屏：左 40% 牌桌 / 右 60% 上信息下手牌（Glen 指定的版式）----
+  //
+  // 「现在如果手机横屏的话，整个显示会因为高度不够，糊在一起，没法玩，
+  //   能否做到只要检测到手机横屏模式，左边 40 左右的宽度显示整个牌桌，
+  //   右下 60% 加 50% 的高度显示手牌，还有左右信息框功能框按键，
+  //   手牌区上边则显示已打出还有求件的信息加五个功能按钮。」
+  //
+  // 横屏时左右两个 aside（玩家列表 / 聊天）本来就被 md:/lg: 断点藏起来了，
+  // 所以「已打出 + 件」这块打牌时一直要看的信息、以及那五个功能按钮，
+  // 必须在这里补回来 —— 否则横屏等于把它们整个弄丢。
+  if (phoneLandscape) {
+    return (
+      <div className="relative flex h-full gap-2">
+        {table}
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          {/* 上半：左边「场上已打出 + 件」，右边五个功能按钮竖排 */}
+          <div className="flex min-h-0 flex-1 gap-1.5">
+            <div className="min-w-0 flex-1 overflow-y-auto">
+              <MyDetails game={game} />
+            </div>
+            {/* 五个功能按钮竖排。⚠️ 要 flex-nowrap：基础样式带 flex-wrap，
+                竖排时高度一挤就会折成第二列，而这里只有 44px 宽，折出去就看不见了。
+                宁可让它自己滚。 */}
+            <PanelToolbar
+              game={game}
+              send={send}
+              className="w-11 shrink-0 flex-col flex-nowrap overflow-y-auto !justify-start"
+            />
+          </div>
+          {controls}
+          {/* 下半：手牌固定占一半高度，牌多时自己滚，不去挤上面的信息 */}
+          <div className="h-1/2 min-h-0 shrink-0 overflow-y-auto">{hand}</div>
+        </div>
+        {overlays}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      {table}
+      {controls}
+      {hand}
+      {overlays}
     </div>
   );
 }
@@ -1010,7 +1078,9 @@ function PlayZone({ player, game, side = 'top', isYou }) {
   );
 }
 
-function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, onTogglePlayers, onToggleChat }) {
+// compact = 手机横屏。高度是那套版式里最紧的资源，控制栏得收窄：
+// 去掉上下 padding、行距压到最小，按钮本身不动（拇指还要点得到）。
+function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, onTogglePlayers, onToggleChat, compact = false }) {
   const you = game.you;
   const round = game.round;
   // 注：原来这里有个 useNow(REVEALING) 只为了驱动揭牌键旁边那个 0.1 秒精度的倒计时。
@@ -1210,7 +1280,7 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
   }
 
   return (
-    <div className="flex flex-col items-center gap-1.5 py-2">
+    <div className={`flex shrink-0 flex-col items-center ${compact ? 'gap-1 py-0.5' : 'gap-1.5 py-2'}`}>
       {/* 窄屏的左右栏开关跟在主按钮两侧：原来钉在屏幕两个下角，正好压着手牌。
           平时 70% 不透明不抢戏，碰到/按下才实心。
           显示条件沿用原来的断点：玩家列表 <768px 才需要，聊天 <1024px 才需要。 */}
@@ -1305,15 +1375,7 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
   const rowRef = useRef(null);
   const [avail, setAvail] = useState(0);
   // 与 CSS 的 portrait:max-lg: 断点保持一致（手机竖屏 + iPad 竖屏）。
-  // 布局算法要按屏幕形态换参数，纯 CSS 做不到，这里用 matchMedia 拿到同一个判断。
-  const [compactPortrait, setCompactPortrait] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia('(orientation: portrait) and (max-width: 1023px)');
-    const sync = () => setCompactPortrait(mq.matches);
-    sync();
-    mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
-  }, []);
+  const compactPortrait = useMediaQuery(COMPACT_PORTRAIT);
   // hasRow 依赖：手牌行是在揭牌后才挂载的，挂载时立即测量并开始观察（窗口变化实时重算）
   const hasRow = hand.length > 0;
   useEffect(() => {
