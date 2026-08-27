@@ -4,7 +4,7 @@ import { useNow, secondsLeft, displayNow } from '../useNow.js';
 import { playedCounts, totalCounts } from '../playedCounts.js';
 import { seatStatusText } from '../seatStatus.js';
 import { THEMES, applyTheme, loadTheme } from '../theme.js';
-import { canThrowByStatus, missingPieceLabels } from '../../../server/pieces.js';
+import { canThrowByStatus } from '../../../server/pieces.js';
 import { beep } from '../beep.js';
 import Modal from './Modal.jsx';
 import { ProposeResetModal, ForceResetModal } from './ResetModals.jsx';
@@ -326,9 +326,15 @@ function MyDetails({ game }) {
           {suits.map(suit => {
             const items = round.piecesView[suit] ?? [];
             const canThrow = canThrowByStatus(items);
-            const missing = missingPieceLabels(suit, items);
             return (
-              <div key={suit} className="flex items-center gap-1">
+              // 能甩的那一门整行高亮（Glen）：这是这块面板唯一「现在就能动手」的信息，
+              // 扫一眼就该跳出来，不该和另外两门排成一样的灰。
+              <div
+                key={suit}
+                className={`flex items-center gap-1 rounded ${
+                  canThrow ? 'bg-emerald-400/15 px-1 py-px ring-1 ring-emerald-300/45' : ''
+                }`}
+              >
                 <span className={`w-4 shrink-0 text-center font-black ${suitRed(suit) ? 'text-rose-400' : 'text-white/80'}`}>
                   {suitSymbol(suit)}
                 </span>
@@ -348,9 +354,14 @@ function MyDetails({ game }) {
                     </span>
                   ))}
                 </div>
-                <span className={`shrink-0 font-black ${canThrow ? 'text-emerald-300' : 'text-white/40'}`}>
-                  {canThrow ? '可甩' : `还差 ${missing.join('、')}`}
-                </span>
+                {/* ⚠️ 原来这里不能甩的时候写「还差 缺A、缺K」——【去掉了】（Glen）：
+                    左边每一支件本来就用颜色标着状态（绿=我 / 蓝=现 / 灰=未），
+                    差哪一支一眼就看得到，右边再用文字重复一遍纯属占地方，
+                    而且把三门挤成一样长，反而看不出哪门能甩。
+                    现在只在【能甩】时留一个标记，配合整行高亮。 */}
+                {canThrow && (
+                  <span className="shrink-0 font-black text-emerald-300">可甩</span>
+                )}
               </div>
             );
           })}

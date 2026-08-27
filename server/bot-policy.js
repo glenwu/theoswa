@@ -774,22 +774,53 @@ function partnerSideProtocolChoice(view, choices, ctx) {
     }
   }
 
-  if (!asksForPiece) {
-    // 朋友出 A 但已知最后一家断门时，这不是“确定大”，不能走分送给对手杀。
+  // 「随手出最便宜的无分牌」只在这两种情形下才对：
+  //   ① 朋友已经封住这门（partnerControlSecure）—— 上面走分那条没命中说明手上
+  //      没分可送，那就不必浪费大牌，这一墩本来就是我方的
+  //   ② 最后一家已知断门 —— 他要毙就毙，我压得再大也拦不住，白扔一张大牌
+  //
+  // ⚠️ 这里原来写的是 `if (!asksForPiece)` —— 只要朋友领的不是求件牌就一律
+  // 走这条，把下面整段【第三手封门】截得完全够不着（朋友领 6/7/8/9/J/Q 全落这里）。
+  // Glen 第四次提这件事：
+  //   「第三家的出牌，在保证不乱出鬼、主 2 或是件的前提，还是要尽量吃大一些，
+  //     避免第四家容易吃分。比如前两家都是小于 10 的，第三家还是尽量吃 10 以上，
+  //     不然第四家就容易用 10 吃分。」
+  // 实测 200 局：第三家「前两手都不到 10、手上有非件的 J/Q」402 次，
+  // 其中 204 次打了小牌，96 次第四家当场用 10 拿走。
+  if (partnerControlSecure || lastKnownVoid) {
     return sameSuitChoices
       .filter(choice => choice.pointValue === 0)
       .sort((a, b) => a.preserveCost - b.preserveCost)[0] ?? null;
   }
-  // 没件可交时仍要回应朋友的表示：第三手尽量用大的无分牌压过第二家，
-  // 让最后一家不能随手塞 5/10/K。若真的压不过，就出最大无分牌如实表示自己这门很弱。
-  const noPointChoices = sameSuitChoices.filter(choice => choice.pointValue === 0);
-  const takeovers = noPointChoices.filter(choice => choice.provisionalLeaderSeat === view.you.seat);
-  const pool = takeovers.length > 0 ? takeovers : noPointChoices;
+
+  // 第三手封门：尽量用大的无分牌压过第二家，让最后一家不能随手塞 5/10/K。
+  // 若真的压不过，就出最大无分牌如实表示自己这门很弱。
+  //
+  // ⚠️ 件要排除在外 —— 这是 Glen 给的前提（「在保证不乱出鬼、主 2 或是件的前提」）。
+  // 副 A 是 0 分，不排的话按强度降序排第一个就是它，等于用封门的名义把件送出去。
+  // 鬼和主 2 不用管：这个函数对主牌领牌直接返回 null，它们进不了 sameSuitChoices。
+  // 一门里只剩件可用时宁可不封，退回最便宜的那张。
+  const noPointChoices = sameSuitChoices.filter(
+    choice => choice.pointValue === 0 && !isSidePiece(choice.cards[0], ctx)
+  );
+  // 注：这里【不需要】再筛一层「能拿下这一墩的那些」。推得出它恒等：
+  // 按强度降序取第一张就是这门里最大的那张无分非件牌；它要么压得过场面
+  //（那它自己就在「能拿下」那一组里，而且还是那组里最大的），要么压不过
+  //（那就没有任何一张压得过，筛完是空集，照样退回全集）。两条路结果一样。
+  // 原来写着那一层，变异测试删掉它一条测试都不红 —— 不是没测到，是恒等。
+  const pool = noPointChoices;
   if (pool.length > 0) {
     return pool.sort((a, b) =>
       cardStrength(b.cards[0], ctx) - cardStrength(a.cards[0], ctx) ||
       a.preserveCost - b.preserveCost
     )[0];
+  }
+  // 无分的非件牌一张都没有 —— 别为了封门去动件，退回最便宜的无分牌（多半就是件）
+  // 交给通用评分器去权衡；它那边有完整的亮件代价。
+  if (!asksForPiece) {
+    return sameSuitChoices
+      .filter(choice => choice.pointValue === 0)
+      .sort((a, b) => a.preserveCost - b.preserveCost)[0] ?? null;
   }
 
   // 手上只剩分牌也能超过时，先尽力把朋友的分接住。

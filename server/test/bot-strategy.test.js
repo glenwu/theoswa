@@ -922,6 +922,102 @@ test('件不能乱出：队友已经稳赢这一墩 → 把 ♠K 的 10 分送�
 });
 
 
+// ============ 第三手封门（Glen 第四次提）============
+//
+// 「第三家的出牌，在保证不乱出鬼、主 2 或是件的前提，还是要尽量吃大一些，
+//   避免第四家容易吃分。比如前两家都是小于 10 的，第三家还是尽量吃 10 以上，
+//   不然第四家就容易用 10 吃分。」
+//
+// ⚠️ 这段逻辑代码里【本来就有】，但够不着：partnerSideProtocolChoice 里
+// 「朋友领的不是求件牌 → 出最便宜的无分牌」那条兜底把它整个截住了
+//（朋友领 6/7/8/9/J/Q 全落进兜底）。实测 200 局：第三家「前两手都不到 10、
+// 手上有非件的 J/Q」402 次，其中 204 次打了小牌，96 次第四家当场用 10 拿走。
+function thirdHandView(spades) {
+  return followView({
+    seat: 2, declarerSeat: 0,
+    hand: [
+      ...spades.map((r, i) => T('S', r, i)),
+      ...[9, 7].map((r, i) => T('H', r, i + 10)),
+      ...[8, 6].map((r, i) => T('D', r, i + 20)),
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: spades.includes(14) ? 'mine' : 'unseen' },
+          { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+    // ⚠️ 座位轮转是【逆时针】（server/rotation.js：0 → 3 → 2 → 1）。
+    // 队友座 0 领牌 → 第二家是座 3 → 我（座 2）是第三家 → 最后一家是座 1。
+    // 第一版把第二家写成座 1，那其实是最后一家，整个「第三手」的前提就不成立。
+    currentTrick: [
+      { seat: 0, playSuit: 'S', cards: [T('S', 6, 90)] },   // 队友领 ♠6（不是求件牌）
+      { seat: 3, cards: [T('S', 9, 91)] },                  // 对手 ♠9 暂时领先
+    ],
+  });
+}
+
+test('第三手封门：前两家都不到 10 → 用非件的大牌压住，别让第四家用 10 收走', () => {
+  const cards = chooseFollowCards(thirdHandView([14, 12, 11, 7]));
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].rank, 12,
+    `该用 ♠Q 封住（♠J 也行，但他说「尽量吃大」），实际打了 ♠${cards[0].rank}`);
+});
+
+// 前提的另一半：「在保证不乱出鬼、主 2 或是件的前提」。
+// 同一个场面，手上唯一压得住的大牌是 ♠A（件）——那就宁可不封。
+// ⚠️ 两条成对看：只有上面那条的话，「按强度降序挑第一个」会先把 ♠A 送出去
+//（副 A 是 0 分，混在无分牌里排第一）。
+test('第三手封门：唯一压得住的是件（♠A）→ 宁可不封，也不把件送出去', () => {
+  const cards = chooseFollowCards(thirdHandView([14, 7, 6, 3]));
+  assert.equal(cards.length, 1);
+  assert.notEqual(cards[0].rank, 14,
+    `封门不能拿件去封（Glen 的前提），实际打了 ♠${cards[0].rank}`);
+});
+
+// 另一条反向保护：最后一家【已知断门】—— 他要毙就毙，我压得再大也拦不住，
+// 这时候封门纯粹是白扔一张大牌，该出最便宜的。
+test('第三手封门：最后一家已知这门断了 → 封也没用，出最小的', () => {
+  const view = thirdHandView([12, 11, 7]);
+  // 上一墩领的就是黑桃，座 3（最后一家）没跟黑桃 → 公开信息已证明他断门
+  view.round.trickHistory = [{
+    trickNo: 1, leadSeat: 0, leadSuit: 'S', winnerSeat: 0, points: 0,
+    plays: [
+      { seat: 0, playSuit: 'S', cards: [T('S', 8, 70)] },
+      { seat: 3, cards: [T('S', 5, 71)] },
+      { seat: 2, cards: [T('S', 3, 72)] },
+      { seat: 1, cards: [T('D', 4, 73)] },   // 最后一家（座 1）垫了方块 = 黑桃断了
+    ],
+  }];
+  const cards = chooseFollowCards(view);
+  assert.equal(cards[0].rank, 7,
+    `他断门了，封门拦不住，别浪费大牌（实际打了 ♠${cards[0].rank}）`);
+});
+
+// 反向保护：朋友已经把这门封死了（他领 ♠A，没有更大的牌没现身），
+// 这一墩本来就是我方的 —— 那就别浪费大牌，出最便宜的。
+// 这正是原来那条兜底【真正想管】的情形，不能连它一起改掉。
+test('第三手封门：朋友的 ♠A 已经封住这门 → 不浪费大牌，出最小的', () => {
+  const view = followView({
+    seat: 2, declarerSeat: 0,
+    hand: [
+      ...[12, 11, 7].map((r, i) => T('S', r, i)),
+      ...[9, 7].map((r, i) => T('H', r, i + 10)),
+      ...[8, 6].map((r, i) => T('D', r, i + 20)),
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'seen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+    currentTrick: [
+      { seat: 0, playSuit: 'S', cards: [T('S', 14, 90)] },  // 队友 ♠A，这门已封死
+      { seat: 3, cards: [T('S', 9, 91)] },
+    ],
+  });
+  const cards = chooseFollowCards(view);
+  assert.equal(cards[0].rank, 7, `这一墩已经是我方的，别浪费（实际打了 ♠${cards[0].rank}）`);
+});
+
 // ---- 垫件 vs 垫小主：默认垫件，两个例外（Glen）----
 //
 // 「副 A 和低主这个也要看是留 A 更有价值，因为副 A 有时候可以成为起手牌，
