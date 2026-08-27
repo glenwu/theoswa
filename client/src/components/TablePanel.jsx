@@ -234,6 +234,7 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
       onDragAdd={addDragSelection}
       onToggleGroup={toggleGroupSelection}
       onDeclareRank={cardId => send({ type: 'declareTrump', cardId })}
+      className={phoneLandscape ? 'flex h-full flex-col' : ''}
     />
   );
 
@@ -576,19 +577,35 @@ function CenterInfo({ game, send }) {
 
   return (
     <div className="flex h-44 w-60 flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-center compact:h-auto compact:w-40 compact:gap-1 compact:px-2 compact:py-1.5">
+      {/* 窄屏不再单独占一行画大花色（Glen：「把上边那个大的花色符号取消」）——
+          花色改成直接长在「主牌：♦ · 打 2」这一行里，放大加色，一行说完两件事。 */}
       <div
-        className={`text-4xl font-black ${
+        className={`text-4xl font-black compact:hidden ${
           trumpSuit ? (suitRed(trumpSuit) ? 'text-rose-400' : 'text-white/90') : 'text-white/30'
         }`}
       >
         {trumpSuit ? suitSymbol(trumpSuit) : '?'}
       </div>
       <div className="text-xs font-bold text-white/60">
-        {round
-          ? trumpSuit
-            ? `主牌：${suitSymbol(trumpSuit)} · 打 ${rankLabel(round.rankCard)}`
-            : `打 ${rankLabel(round.rankCard)} · 主牌未定`
-          : '未开局'}
+        {round ? (
+          trumpSuit ? (
+            <>
+              主牌：
+              <span
+                className={`align-middle text-2xl font-black ${
+                  suitRed(trumpSuit) ? 'text-rose-400' : 'text-white/90'
+                }`}
+              >
+                {suitSymbol(trumpSuit)}
+              </span>
+              {` · 打 ${rankLabel(round.rankCard)}`}
+            </>
+          ) : (
+            `打 ${rankLabel(round.rankCard)} · 主牌未定`
+          )
+        ) : (
+          '未开局'
+        )}
       </div>
 
       {game.phase === 'REVEAL_FIRST' && round.flipShown.length > 0 && (
@@ -618,7 +635,9 @@ function CenterInfo({ game, send }) {
       )}
 
       <div className="pill bg-amber-400/15 text-amber-300">闲家 {pts} / 80</div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+      {/* 窄屏把进度条收窄一半：它只是个粗略的观感刻度，旁边那个「闲家 40 / 80」
+          才是准数（Glen：「把进度条缩短」）。 */}
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10 compact:w-2/3">
         <div
           className="h-full rounded-full bg-gradient-to-r from-amber-400 to-rose-400 transition-all duration-300"
           style={{ width: `${pct}%` }}
@@ -628,15 +647,17 @@ function CenterInfo({ game, send }) {
       <div className="text-xs font-bold text-white/70 compact:hidden">
         {PHASE_HINTS[game.phase]}
       </div>
-      {/* 竖屏窄屏：托管按钮放在「说明」上边（手牌区那一行挤不下） */}
-      <AutoPlayToggle game={game} send={send} className="hidden compact:block" />
-      <button
-        type="button"
-        className="hidden rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-black text-white/70 compact:block"
-        onClick={() => setShowHint(true)}
-      >
-        说明
-      </button>
+      {/* 窄屏：托管和说明并成一行（Glen）—— 各占一行太浪费，这两个都是小按钮 */}
+      <div className="hidden items-center gap-1.5 compact:flex">
+        <AutoPlayToggle game={game} send={send} />
+        <button
+          type="button"
+          className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-black text-white/70"
+          onClick={() => setShowHint(true)}
+        >
+          说明
+        </button>
+      </div>
       {showHint && (
         <Modal title={PHASE_NAMES_CN[game.phase] ?? game.phase} onClose={() => setShowHint(false)}>
           <p className="py-2 text-sm font-bold leading-relaxed text-white/80">
@@ -1413,7 +1434,10 @@ function ErrorToast({ error }) {
 // 拖回已选牌不会取消），位移超过 5px 进入拖动模式；触摸同样支持滑动多选。
 // 换底时庄家 33 张（底牌已并入，统一排序），从中点选 8 张埋回；
 // 过河时点选 3 张（发起者：全部主牌 + 副牌补足；对家：3 张副牌）。
-function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, onDeclareRank }) {
+// className：手机横屏那套版式要它把剩下的高度吃满，好让手牌区的底线和左边
+// 牌桌那一栏对齐（Glen：「手牌区的底线和桌面区的底线不一致」）。
+// 不加的话外层容器撑满了、里面这块面板还是内容高度，实测差 42px。
+function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, onDeclareRank, className = '' }) {
   const you = game.you;
   const hand = you.hand ?? [];
   const revealing = game.phase === 'REVEALING';
@@ -1701,7 +1725,7 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
   })();
 
   return (
-    <div className="relative rounded-2xl border border-white/10 bg-black/15 p-2">
+    <div className={`relative rounded-2xl border border-white/10 bg-black/15 p-2 compact:p-1.5 ${className}`}>
       {/* 自己的名字（手机竖屏专用）—— 牌桌上那一格贴着控制栏，名字会压住揭牌键，
           所以搬到这里：手牌区右下角，自己的地盘。
           ⚠️ z-0 是【故意的】：牌行是 z-10，牌多到铺过来时直接盖在名字上层
@@ -1710,15 +1734,18 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
       <div className="pointer-events-none absolute bottom-1.5 right-3 z-0 hidden text-xs font-black text-white/45 compact:block">
         {PLAYER_EMOJI[you.id]} {you.nickname}(我)
       </div>
-      <div className="mb-1 flex items-center justify-between text-xs font-bold text-white/50">
+      {/* ⚠️ 平时【不写】「我的手牌」四个字（Glen：「把"我的手牌"字样取消」）——
+          自己的手牌摆在自己面前，本来就不用标注；那一行的高度留给牌。
+          换底 / 过河这类【要你照着做】的提示仍然要出，那不是标签是指令。 */}
+      <div className="mb-1 flex items-center justify-between text-xs font-bold text-white/50 compact:mb-0">
         <span>
           {exchangeSelectable
-            ? `我的手牌 + 底牌（点选 8 张埋回，已选 ${selected.length}/8）`
+            ? `手牌 + 底牌（点选 8 张埋回，已选 ${selected.length}/8）`
             : crossSelectable
               ? cross.mustRespond
                 ? `回给对家：点选 3 张副牌（已选 ${selected.length}/3）`
                 : `过河送出：全部主牌 + 副牌补足 3 张（已选 ${selected.length}/3）`
-              : '我的手牌'}
+              : ''}
         </span>
         <span className="flex items-center gap-2">
           {/* 竖屏窄屏这里空间紧张，托管按钮改挂到中央信息区（「说明」上边） */}
@@ -1733,12 +1760,18 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
         </div>
       ) : (
         /* 固定重叠 + 左对齐：牌始终叠在一起靠左排，视口再宽也不摊开、不右移。
-           顶部预留抬起 + 角标空间（pt-5），不设 overflow hidden，避免抬起的牌被裁掉 */
-        <div ref={rowRef} className="relative z-10 flex flex-col gap-1 pb-2 pt-5">
+           顶部预留抬起 + 角标空间（pt-5），不设 overflow hidden，避免抬起的牌被裁掉。
+           窄屏收到 pt-3、底部去掉 pb —— 牌尽量往上贴（Glen），
+           底线也才和左边牌桌那一栏对得齐。 */
+        <div ref={rowRef} className="relative z-10 flex flex-col gap-1 pb-2 pt-5 compact:pb-0 compact:pt-3">
           {rowChunks.map((chunk, i) => (
             <div
               key={i}
-              className={`flex items-end ${compactPortrait ? 'justify-center' : 'justify-start'}`}
+              // 窄屏一律居中（Glen：「所有手牌居中」）。宽屏保持左对齐 ——
+              // 那边是刻意的锚定：打掉牌只是行尾变短，已出的牌左侧位置纹丝不动。
+              className={`flex items-end ${
+                compactPortrait || phoneLandscapeHand ? 'justify-center' : 'justify-start'
+              }`}
             >
               {chunk}
             </div>
