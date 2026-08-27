@@ -101,6 +101,23 @@ export function nextDeclarerSeat(declarerSeat, transfer) {
 // 局末结算（打完 25 轮后调用）：
 // 计算底牌分/撬底/最终 P，更新级别与庄家，生成 RoundSummary 并入 rounds，
 // 转移到 ROUND_END（或某队获胜 → GAME_OVER）。
+// 最后一墩停留结束 → 真正结算。
+//
+// 停留这一步是给人看牌的（Glen：「就是自动打出那个面板，至少设成停 5 秒，
+// 原来可能 1 秒都还没到」），停完才 finishRound。引擎的计时器走这里；
+// 测试里直接用 applyAction 打完一局的，也调这个，两边共用同一份收尾。
+export function settleFinalTrick(state) {
+  const r = state.round;
+  if (!r?.finalTrickPending) return false;
+  r.finalTrickPending = false;
+  r.lastTrickHolds = [];
+  // ⚠️ 【不清 lastTrick】。局已经结束，下一局 createRoundState 会重置它；
+  // 留着的好处是最后一墩的牌面还在结算面板后面，而且不少测试要在打完之后
+  // 检查这一墩的赢家和分数。清掉纯属多此一举。
+  finishRound(state);
+  return true;
+}
+
 export function finishRound(state) {
   const r = state.round;
   const declarerTeam = state.declarerSeat % 2;

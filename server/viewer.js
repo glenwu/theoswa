@@ -62,6 +62,8 @@ function clipRound(round, viewerSeat) {
     playDeadline: round.playDeadline,
     currentTrick: round.currentTrick,
     lastTrick: round.lastTrick,
+    lastTrickHolds: [...(round.lastTrickHolds ?? [])],
+    finalTrickPending: !!round.finalTrickPending,
     settleDeadline: round.settleDeadline,
     trickHistory: round.trickHistory,
     dominance: round.dominance ?? null,

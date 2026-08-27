@@ -327,6 +327,10 @@ function timerSpecFor(game) {
   if (game.phase === 'DOMINANCE') {
     return { deadline: round.dominanceDeadline, seat: null };
   }
+  // 本局最后一墩的停留（5 秒，有人按住则 60 秒）—— 有服务端兜底就必须有表。
+  if (game.phase === 'PLAYING' && round.finalTrickPending) {
+    return { deadline: round.settleDeadline, seat: null };
+  }
   // 揭牌那 3 秒也归这里（Glen：「揭牌键右边的倒数去掉，桌面中间有倒数就行了」）。
   // ⚠️ 是【搬】不是【删】：服务端到点会自动替他摸牌，按这个函数上面那条铁律，
   // 有兜底就必须有表。原来表挂在揭牌键右边，现在统一收到牌桌中央。
@@ -1164,6 +1168,33 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
         </button>
       </div>
     );
+  } else if (game.phase === 'PLAYING' && round?.finalTrickPending) {
+    // 本局最后一墩的停留（Glen）：
+    //   「就是自动打出那个面板，至少设成停 5 秒，原来可能 1 秒都还没到。
+    //     加一个『我想再看一会』的按钮，如果没人按，那就 5 秒关，
+    //     如果有人按，那么会等他按继续才关，倒数 60 秒。」
+    // 这一墩是四家各剩一张自动打出的、决定撬底，最该看清楚。
+    const holds = round.lastTrickHolds ?? [];
+    const iHold = holds.includes(you.seat);
+    buttons.push(
+      <button
+        key="hold"
+        className={iHold ? 'btn-gold' : 'btn-emerald'}
+        onClick={() => send({ type: iHold ? 'releaseLastTrick' : 'holdLastTrick' })}
+      >
+        {iHold ? '继续（我看完了）' : '我想再看一会'}
+      </button>
+    );
+    if (holds.length > 0) {
+      const names = holds
+        .map(seat => game.players.find(p => p.seat === seat)?.nickname ?? '—')
+        .join('、');
+      hints.push(
+        <span key="holders" className="text-xs font-bold text-emerald-300/80">
+          {names} 还在看这一墩，等他{holds.length > 1 ? '们' : ''}按「继续」
+        </span>
+      );
+    }
   } else if (game.phase === 'KITTY_EXCHANGE') {
     if (game.declarerSeat === you.seat) {
       buttons.push(

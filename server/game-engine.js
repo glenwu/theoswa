@@ -11,6 +11,7 @@ import {
   completeDeal,
 } from './round.js';
 import { settleNoTrump, advanceToReadyCheck, startRevealing } from './flow.js';
+import { settleFinalTrick } from './scoring.js';
 import { settleFallbackTrump } from './reveal.js';
 import { cardLabel } from './cards.js';
 import { pickAutoCards } from './trick.js';
@@ -221,12 +222,26 @@ export class GameEngine {
 
   // 收牌停留结束：清空 lastTrick，轮到赢家出牌。
   // 四家各只剩 1 张时（最后一轮）谁出什么已无选择：直接自动逐张打出并结算
-  //（仍走完整出牌展示 + 1.5 秒收牌停留，这一轮决定撬底，不能闪跳）。
+  //（仍走完整出牌展示 + 收牌停留，这一轮决定撬底，不能闪跳）。
   settleTrick() {
     const s = this.state;
     const r = s.round;
     if (s.phase === 'PLAYING' && r.lastTrick) {
+      // 有人按住「我想再看一会」→ 现在还不能收。
+      // 按住时 settleDeadline 已经被延到 60 秒，afterAction 会照新的时间重排；
+      // 这里再挡一道，防止旧计时器抢先跑进来（clearTimers 之外的竞态兜底）。
+      if ((r.lastTrickHolds ?? []).length > 0 && Date.now() < (r.settleDeadline ?? 0)) return;
+      // 本局最后一墩：停留看完了才结算（原来是打完立刻 finishRound，
+      // 结算面板一秒不到就盖上来，见 actions.js 那段注释）。
+      // ⚠️ 用显式标记，不用「四家手牌都空了」—— 那个条件在刚建好、还没发牌的
+      // state 上也成立（engine.test.js 里就有这样的 fixture），会把没打过的局
+      // 直接推去 finishRound，当场抛「kittyGrab 判定需要已打完的局」。
+      if (settleFinalTrick(s)) {
+        this.afterAction();
+        return;
+      }
       r.lastTrick = null;
+      r.lastTrickHolds = [];
       if (r.currentTrick.length === 0 && s.players.every(p => p.hand.length === 1)) {
         // 最后一轮：逐张自动打出（内部自行 afterAction 并排下一张的计时器）。
         // 这里立即返回，避免再次 afterAction → clearTimers 把 autoLast 计时器清掉。

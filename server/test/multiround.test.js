@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createInitialState, playerBySeat } from '../state.js';
 import { applyAction, expireCrossRiverDecision } from '../actions.js';
+import { settleFinalTrick } from '../scoring.js';
 import { flipCardForRevealFirst, drawOneCard, completeDeal } from '../round.js';
 import { settleNoTrump } from '../flow.js';
 import { settleFallbackTrump } from '../reveal.js';
@@ -123,6 +124,10 @@ function playFullRound(state) {
       const res = applyAction(state, { type: 'play', cardIds: cards.map(x => x.id) }, p.id);
       assert.equal(res.ok, true, `第${state.rounds.length + 1}局 bot 出牌失败：${res.error?.reason}`);
     }
+    // 最后一墩打完不再当场结算 —— 先停 5 秒给人看牌（Glen），由引擎计时后收尾。
+    // 这里是手工 applyAction 打的，没有引擎，调同一个收尾函数补上；
+    // 不补的话 phase 一直停在 PLAYING，循环会拿着空手牌继续打下去。
+    settleFinalTrick(state);
   }
   // 模拟引擎：SCORING → ROUND_END → READY_CHECK（round 置空，下一局整体重建）
   if (state.phase === 'SCORING') state.phase = 'ROUND_END';

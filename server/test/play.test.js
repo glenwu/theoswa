@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { settleFinalTrick } from '../scoring.js';
 import assert from 'node:assert/strict';
 import { createInitialState, createRoundState, playerBySeat } from '../state.js';
 import { applyAction, ErrorCode } from '../actions.js';
@@ -59,6 +60,9 @@ function playTrick(state, ctx) {
     const res = applyAction(state, { type: 'play', cardIds: cards.map(x => x.id) }, p.id);
     assert.equal(res.ok, true, `bot 出牌失败：${res.error?.reason}`);
   }
+  // 最后一墩打完不再当场结算 —— 要先停 5 秒给人看牌（Glen），由引擎计时后收尾。
+  // 这里没有引擎，直接调同一个收尾函数把那一步补上。
+  settleFinalTrick(state);
 }
 
 test('出牌顺序：未轮到你 → NOT_YOUR_TURN；轮到者正常出牌；结算停留中 → WAIT_SETTLE', () => {

@@ -698,8 +698,18 @@ export function handlePlay(state, action, actorId) {
   );
 
   if (state.players.every(p => p.hand.length === 0)) {
-    // 局末结算：底牌计分、撬底、升级移庄、庄家轮转、胜负判定
-    finishRound(state);
+    // 本局【最后一墩】：不立刻结算。
+    //
+    // ⚠️ 原来这里直接 finishRound，phase 立刻变 SCORING，结算面板盖上来 ——
+    // 而这一墩正是四家各剩一张自动打出的那一墩、决定撬底，最该看清楚，
+    // 实际却露不到 1 秒（Glen：「就是自动打出那个面板，至少设成停 5 秒，
+    // 原来可能 1 秒都还没到」）。
+    //
+    // 改成：lastTrick 留着、phase 仍是 PLAYING，停 5 秒；期间谁想再看可以按住
+    //（handleHoldLastTrick），到点由引擎 settleTrick() 收尾去 finishRound。
+    r.settleDeadline = Date.now() + (state.timing ? state.timing.finalSettleMs : 5000);
+    r.lastTrickHolds = [];
+    r.finalTrickPending = true;
     return succeed();
   }
   // 每轮结算后检测碾压（充分条件，宁可漏检不误判）
@@ -747,6 +757,55 @@ export function handleConfirmDominance(state, action, actorId) {
   r.currentTrick = [];
   for (const p of state.players) p.hand = [];
   finishRound(state);
+  return succeed();
+}
+
+// ---- 最后一墩停留：按住 / 放开（Glen）----
+//
+// 「加一个『我想再看一会』的按钮，如果没人按，那就 5 秒关，如果有人按，
+//   那么会等他按继续才关，倒数 60 秒。」
+//
+// 只在【最后一墩】开放：普通墩的 1.5 秒收牌停留照旧，不加按钮 ——
+// 每墩都弹个按钮出来只会碍事。判据就是「四家手牌都空了」。
+
+function inFinalTrickHold(state) {
+  const r = state.round;
+  return state.phase === 'PLAYING' && !!r?.lastTrick && !!r.finalTrickPending;
+}
+
+export function handleHoldLastTrick(state, action, actorId) {
+  if (!inFinalTrickHold(state)) {
+    return fail(ErrorCode.WRONG_PHASE, '现在没有可以暂留的牌面');
+  }
+  const r = state.round;
+  const me = playerById(state, actorId);
+  if ((r.lastTrickHolds ?? []).includes(me.seat)) {
+    return fail(ErrorCode.ALREADY_VOTED, '你已经按过「再看一会」了');
+  }
+  r.lastTrickHolds = [...(r.lastTrickHolds ?? []), me.seat];
+  // 只在第一个人按下时把窗口拉到 60 秒。后面的人再按不续期 ——
+  // 否则四个人轮流按就能把全场无限拖住。
+  if (r.lastTrickHolds.length === 1) {
+    r.settleDeadline = Date.now() + (state.timing ? state.timing.finalHoldMs : 60000);
+  }
+  pushLog(state, `${me.nickname} 想再看一会最后一墩（${r.lastTrickHolds.length} 人）`);
+  return succeed();
+}
+
+export function handleReleaseLastTrick(state, action, actorId) {
+  if (!inFinalTrickHold(state)) {
+    return fail(ErrorCode.WRONG_PHASE, '现在没有可以继续的牌面');
+  }
+  const r = state.round;
+  const me = playerById(state, actorId);
+  if (!(r.lastTrickHolds ?? []).includes(me.seat)) {
+    return fail(ErrorCode.ALREADY_VOTED, '你没有按住这一墩');
+  }
+  r.lastTrickHolds = r.lastTrickHolds.filter(seat => seat !== me.seat);
+  pushLog(state, `${me.nickname} 看完了最后一墩`);
+  // 按住的人都放开了 → 立刻收：留下来的是他们，说走也该由他们说。
+  // 置成「已经到点」，afterAction 重排计时器时会马上触发 settleTrick。
+  if (r.lastTrickHolds.length === 0) r.settleDeadline = Date.now();
   return succeed();
 }
 
@@ -892,6 +951,8 @@ const HANDLERS = {
   play: handlePlay,
   confirmDominance: handleConfirmDominance,
   confirmRoundEnd: handleConfirmRoundEnd,
+  holdLastTrick: handleHoldLastTrick,
+  releaseLastTrick: handleReleaseLastTrick,
   confirmFlip: handleConfirmFlip,
   setAutoPlay: handleSetAutoPlay,
   pause: handlePause,

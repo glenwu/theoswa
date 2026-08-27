@@ -396,7 +396,9 @@ test('最后一轮自动打出：四家各 1 张（无论第几轮）→ 逐张�
 
   const engine = new GameEngine({
     state,
-    timings: { settleMs: 40, autoLastMs: 15, scoringMs: 60000 },
+    // finalSettleMs 也要压小：最后一墩现在会单独停 5 秒给人看牌（Glen），
+    // 不设的话这条测试要等满 5 秒才进结算。
+    timings: { settleMs: 40, finalSettleMs: 40, autoLastMs: 15, scoringMs: 60000 },
     broadcast: () => {},
   });
   try {

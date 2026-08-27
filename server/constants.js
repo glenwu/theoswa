@@ -67,6 +67,12 @@ export const REVEAL_GRACE_MS = 3000;    // 100张摸完后的亮主宽限窗口
 export const FALLBACK_REVEAL_MS = 800;  // 揭底定主：逐张翻底牌间隔
 export const DEALING_MS = 600;          // 剩余牌一次性发完的展示停留
 export const TRICK_SETTLE_MS = 1500;    // 一轮结束后收牌停留（服务端计时，四端同步）
+// 本局【最后一墩】的停留。这一墩是四家各剩一张自动打出的，决定撬底，最该看清楚，
+// 可原来打完立刻 finishRound → 结算面板盖上来，牌面露不到 1 秒（Glen 反馈）。
+// 单独给 5 秒，并且允许谁想再看就按住（见 FINAL_TRICK_HOLD_MS）。
+export const FINAL_TRICK_SETTLE_MS = 5000;
+// 有人按了「我想再看一会」之后的停留上限；他按「继续」就提前结束
+export const FINAL_TRICK_HOLD_MS = 60000;
 export const SCORING_MS = 600;          // 局末结算展示停留
 // 本局小结停留：给四个人复盘的时间（看得分构成、看底牌、回顾这局怎么赢/怎么输）。
 // 四人都点「看完了」可提前进入下一局；没点满就等满这 100 秒。
@@ -103,6 +109,8 @@ export const DEFAULT_TIMINGS = Object.freeze({
   fallbackMs: FALLBACK_REVEAL_MS,
   dealingMs: DEALING_MS,
   settleMs: TRICK_SETTLE_MS,
+  finalSettleMs: FINAL_TRICK_SETTLE_MS,
+  finalHoldMs: FINAL_TRICK_HOLD_MS,
   scoringMs: SCORING_MS,
   roundEndMs: ROUND_END_MS,
   playMs: PLAY_TIMEOUT_MS,
@@ -122,6 +130,8 @@ export const TIMING_ENV_KEYS = Object.freeze({
   fallbackMs: 'FALLBACK_MS',
   dealingMs: 'DEALING_MS',
   settleMs: 'SETTLE_MS',
+  finalSettleMs: 'FINAL_SETTLE_MS',
+  finalHoldMs: 'FINAL_HOLD_MS',
   scoringMs: 'SCORING_MS',
   roundEndMs: 'ROUND_END_MS',
   playMs: 'PLAY_MS',

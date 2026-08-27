@@ -249,6 +249,8 @@ export async function simulateRound({
       fallbackMs: 1,
       dealingMs: 1,
       settleMs: 1,
+      finalSettleMs: 1,
+      finalHoldMs: 1,
       scoringMs: 1,
       roundEndMs: 1,
       playMs: 100,

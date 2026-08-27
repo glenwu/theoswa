@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createInitialState, createRoundState, playerBySeat } from '../state.js';
 import { applyAction } from '../actions.js';
+import { settleFinalTrick } from '../scoring.js';
 import { rebuildPieces } from '../pieces.js';
 import { checkDominance } from '../dominance.js';
 import { playSuitOf, cardStrength, sortHand } from '../cards.js';
@@ -192,6 +193,9 @@ test('对拍：碾压结算结果 与 bot 老老实实打完剩余轮次 完全�
       assert.equal(res.ok, true, `对拍分支 bot 出牌失败：${res.error?.reason}`);
     }
   }
+  // 最后一墩打完不再当场结算 —— 先停 5 秒给人看牌（Glen），由引擎计时后收尾。
+  // 这个分支是手工 applyAction 打出来的，没有引擎，直接调同一个收尾函数补上。
+  settleFinalTrick(stateB);
   assert.equal(stateB.phase, 'SCORING');
   const summaryB = stateB.rounds[0];
 

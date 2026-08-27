@@ -141,6 +141,13 @@ export function createRoundState(roundNumber, declarerSeat) {
     playTurnSeat: null,     // 出牌限时对应的当前回合座位（换人时重置）
     currentTrick: [],
     lastTrick: null,
+    // 最后一墩停留期间按了「我想再看一会」的座位。非空就一直等着，
+    // 直到他们都按了「继续」（清空）或 60 秒到。
+    lastTrickHolds: [],
+    // 「这一墩打完就该结算了，只是先停着给人看」。
+    // ⚠️ 必须是显式标记，不能用「四家手牌都空了」去推 —— 那个条件在
+    // 刚建好、还没发牌的 state 上也成立，会把没打过的局直接推去结算。
+    finalTrickPending: false,
     settleDeadline: null,   // 收牌停留截止时刻（服务端计时，四端同步）
     trickHistory: [],
     dominance: null,        // 碾压判定（充分条件命中后填入，DOMINANCE 阶段展示）
