@@ -113,6 +113,11 @@ body {
   .btn-gold-sm {
     @apply rounded-full bg-gradient-to-b from-gold-300 to-gold-600 px-3 py-1 text-xs font-black text-amber-950 shadow-md transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40;
   }
+  /* 亮主键：和揭牌键（金色）分色。两者在揭牌阶段同时出现，一个是「轮到我才能按」
+     的流程键，一个是「随时能按」的决断键 —— 同色最容易按错（Glen 要求改色）。 */
+  .btn-emerald {
+    @apply rounded-full bg-gradient-to-b from-emerald-300 to-emerald-600 px-6 py-2.5 text-base font-black text-emerald-950 shadow-md transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40;
+  }
   .btn-icon {
     @apply grid h-9 w-9 place-items-center rounded-full bg-white/10 text-base transition hover:bg-white/20 disabled:pointer-events-none disabled:opacity-35;
   }

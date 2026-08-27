@@ -14,6 +14,7 @@
     "server:debug": "env DEBUG=1 HOST=0.0.0.0 node server/index.js",
     "server:fast": "env DEBUG=1 PLAY_MS=2500 SETTLE_MS=500 HOST=0.0.0.0 node server/index.js",
     "client": "npm run dev -w client",
+    "ui:preview": "concurrently -k -n API,WEB -c green,cyan \"PORT=8899 SAVE_FILE=.ui-preview-save.json BOT_DELAY_MS=200 node server/index.js\" \"API_PORT=8899 UI_PORT=5174 npm run dev -w client\"",
     "build": "npm run build -w client",
     "start:prod": "npm run build && node server/index.js",
     "start:lan": "npm run build && HOST=0.0.0.0 node server/index.js",

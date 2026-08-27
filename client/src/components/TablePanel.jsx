@@ -259,6 +259,12 @@ function timerSpecFor(game) {
   if (game.phase === 'DOMINANCE') {
     return { deadline: round.dominanceDeadline, seat: null };
   }
+  // 揭牌那 3 秒也归这里（Glen：「揭牌键右边的倒数去掉，桌面中间有倒数就行了」）。
+  // ⚠️ 是【搬】不是【删】：服务端到点会自动替他摸牌，按这个函数上面那条铁律，
+  // 有兜底就必须有表。原来表挂在揭牌键右边，现在统一收到牌桌中央。
+  if (game.phase === 'REVEALING' && round.drawnCount < 100 && !round.trumpSuit) {
+    return { deadline: round.drawDeadline, seat: round.revealTurnSeat };
+  }
   return null;
 }
 
@@ -923,8 +929,15 @@ function PlayZone({ player, game, side = 'top', isYou }) {
             电脑
           </span>
         )}
-        {PLAYER_EMOJI[player.id]} {player.nickname}
-        {isYou ? '(我)' : ''}
+        {/* 手机竖屏把【自己】的名字藏起来（Glen）：这一格贴着控制栏，
+            「半仙(我)」正好压在揭牌键上。名字改到手牌区右下角去显示 ——
+            那里本来就是自己的地盘，也不会挡住任何人。
+            ⚠️ 只藏名字文本，后面的「亮X」「🏆/👑」照留：那几个是随时在变的
+            局面信息，不能跟着一起没掉。 */}
+        <span className={isYou ? 'portrait:max-lg:hidden' : undefined}>
+          {PLAYER_EMOJI[player.id]} {player.nickname}
+          {isYou ? '(我)' : ''}
+        </span>
         {isDeclarer && (
           // 谁亮的主：第二局起亮主者不一定是庄家，所以这是独立于「庄」的标记
           <span
@@ -1000,7 +1013,8 @@ function PlayZone({ player, game, side = 'top', isYou }) {
 function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, onTogglePlayers, onToggleChat }) {
   const you = game.you;
   const round = game.round;
-  const now = displayNow(game, useNow(game.phase === 'REVEALING'));
+  // 注：原来这里有个 useNow(REVEALING) 只为了驱动揭牌键旁边那个 0.1 秒精度的倒计时。
+  // 倒计时搬去牌桌中央之后，整条控制栏不必再每帧重渲染了。
   const buttons = [];
   const hints = []; // 提示与辅助按钮：单独一行放在主按钮下方，不跟主按钮抢横向空间
 
@@ -1048,43 +1062,38 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
     const myTurn =
       round && round.drawnCount < 100 && !round.trumpSuit && round.revealTurnSeat === you.seat;
     const drawer = game.players.find(p => p.seat === round.revealTurnSeat);
-    buttons.push(
-      <button
-        key="draw"
-        className="btn-gold"
-        disabled={!myTurn}
-        onClick={() => send({ type: 'drawCard' })}
-      >
-        {myTurn ? '揭牌（空格）' : `等待 ${drawer?.nickname ?? '—'} 揭牌`}
-      </button>
-    );
-    if (round.drawnCount < 100) {
-      const left = secondsLeft(round.drawDeadline, now);
-      if (left !== null) {
-        buttons.push(
-          <span key="t" className="pill bg-amber-400/15 text-amber-300">
-            ⏱ {left.toFixed(1)}s
-          </span>
-        );
-      }
-    }
     // 亮主：手里有未亮出的级牌即可按（与揭牌回合无关，宽限窗口内同样可用）
     const rankCards = (you.hand ?? []).filter(c => c.rank === round.rankCard);
-    if (rankCards.length > 0) {
-      buttons.push(
+    // 亮主【放在揭牌上边】，而且换成绿色（Glen）。
+    // 两件事一起做才有意义：这两个按钮同时出现、又是完全不同的动作
+    //（揭牌是轮到我才能按的流程键，亮主是随时能按的决断键），
+    // 并排 + 同色最容易按错。上下分开 + 分色，手指和眼睛都不会混。
+    // 倒计时不再插在两者之间 —— 它搬去牌桌中央了。
+    buttons.push(
+      <div key="reveal" className="flex flex-col items-center gap-2">
+        {rankCards.length > 0 && (
+          <button
+            key="declare"
+            className="btn-emerald"
+            onClick={() => {
+              const suits = [...new Set(rankCards.map(c => c.suit))];
+              if (suits.length === 1) send({ type: 'declareTrump', cardId: rankCards[0].id });
+              else onDeclareOptions(rankCards);
+            }}
+          >
+            亮主{rankCards.length > 1 ? `（按 1~${rankCards.length} 直接亮）` : '（按 1 直接亮）'}
+          </button>
+        )}
         <button
-          key="declare"
+          key="draw"
           className="btn-gold"
-          onClick={() => {
-            const suits = [...new Set(rankCards.map(c => c.suit))];
-            if (suits.length === 1) send({ type: 'declareTrump', cardId: rankCards[0].id });
-            else onDeclareOptions(rankCards);
-          }}
+          disabled={!myTurn}
+          onClick={() => send({ type: 'drawCard' })}
         >
-          亮主{rankCards.length > 1 ? `（按 1~${rankCards.length} 直接亮）` : '（按 1 直接亮）'}
+          {myTurn ? '揭牌（空格）' : `等待 ${drawer?.nickname ?? '—'} 揭牌`}
         </button>
-      );
-    }
+      </div>
+    );
   } else if (game.phase === 'KITTY_EXCHANGE') {
     if (game.declarerSeat === you.seat) {
       buttons.push(
@@ -1556,7 +1565,15 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
   })();
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/15 p-2">
+    <div className="relative rounded-2xl border border-white/10 bg-black/15 p-2">
+      {/* 自己的名字（手机竖屏专用）—— 牌桌上那一格贴着控制栏，名字会压住揭牌键，
+          所以搬到这里：手牌区右下角，自己的地盘。
+          ⚠️ z-0 是【故意的】：牌行是 z-10，牌多到铺过来时直接盖在名字上层
+          （Glen：「有牌在上边的话就把牌叠在上层」）。名字只是个落款，
+          不能反过来挡住牌面 —— 手牌右下角正好是最后一张牌露出点数的地方。 */}
+      <div className="pointer-events-none absolute bottom-1.5 right-3 z-0 hidden text-xs font-black text-white/45 portrait:max-lg:block">
+        {PLAYER_EMOJI[you.id]} {you.nickname}(我)
+      </div>
       <div className="mb-1 flex items-center justify-between text-xs font-bold text-white/50">
         <span>
           {exchangeSelectable
@@ -1574,14 +1591,14 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
         </span>
       </div>
       {hand.length === 0 ? (
-        <div className="flex min-h-24 items-center justify-center gap-2">
+        <div className="relative z-10 flex min-h-24 items-center justify-center gap-2">
           <PlayingCard suit={null} rank={null} faceUp={false} className="opacity-40" />
           <span className="text-xs font-bold text-white/40">揭牌后手牌显示在这里</span>
         </div>
       ) : (
         /* 固定重叠 + 左对齐：牌始终叠在一起靠左排，视口再宽也不摊开、不右移。
            顶部预留抬起 + 角标空间（pt-5），不设 overflow hidden，避免抬起的牌被裁掉 */
-        <div ref={rowRef} className="flex flex-col gap-1 pb-2 pt-5">
+        <div ref={rowRef} className="relative z-10 flex flex-col gap-1 pb-2 pt-5">
           {rowChunks.map((chunk, i) => (
             <div
               key={i}

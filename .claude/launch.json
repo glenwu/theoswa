@@ -36,6 +36,15 @@
         "server:fast"
       ],
       "port": 8787
+    },
+    {
+      "name": "ui-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "ui:preview"
+      ],
+      "port": 5174
     }
   ]
 }
