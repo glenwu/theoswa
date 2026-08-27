@@ -1,6 +1,9 @@
 import { suitSymbol, suitRed, rankLabel } from '../utils.js';
 
 const SIZES = {
+  // xs：只在窄屏的底牌堆里用 —— 那里只需要"有几张牌背"这个信息，
+  // 牌面内容完全不重要（Glen：「牌也尽量小」）。
+  xs: { box: 'h-8 w-5', text: 'text-[9px]' },
   sm: { box: 'h-12 w-8', text: 'text-[11px]' },
   md: { box: 'h-16 w-11', text: 'text-sm' },
   lg: { box: 'h-20 w-14', text: 'text-base' },

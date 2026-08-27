@@ -9,6 +9,7 @@ import OnlineToast from './components/OnlineToast.jsx';
 import PauseModal from './components/PauseModal.jsx';
 import Modal from './components/Modal.jsx';
 import { PLAYER_EMOJI } from './utils.js';
+import { useMediaQuery, PHONE_LANDSCAPE } from './useMedia.js';
 
 const VALID_IDS = ['T', 'H', 'B', 'M'];
 
@@ -126,6 +127,12 @@ function GameLayout({ game, send, error }) {
   // 换座请求（阶段7）：全屏确认对话框，同意/拒绝必须显式选择
   const incomingSwap = game.swapProposals.find(sp => sp.toSeat === game.you.seat);
 
+  // ⚠️ 手机横过来【宽度】有 800~950，md:(768) 甚至 lg:(1024) 这些断点会把它
+  // 当成桌面，于是左栏玩家列表直接铺在牌桌旁边，而 ControlBar 里的 👥 浮层开关
+  // （md:hidden）反倒被藏了 —— 两头都错。Glen：「左边那个状态显示要关掉，和竖屏一样。」
+  // 所以横屏这一档必须由【高度】判据统一接管：两个 aside 一律收起，浮层照常开。
+  const phoneLandscape = useMediaQuery(PHONE_LANDSCAPE);
+
   return (
     // h-[100dvh] 而不是 h-screen(100vh)：iOS Safari 的 100vh 不含浏览器工具栏，
     // 配上 overflow-hidden 就会把顶部裁掉（iPad 上表现为左栏标题和上家出牌区被遮）。
@@ -155,10 +162,12 @@ function GameLayout({ game, send, error }) {
         <SwapConfirmModal game={game} swap={incomingSwap} send={send} />
       )}
 
-      {/* 左栏：玩家列表（220px） */}
-      <aside className="hidden w-[220px] shrink-0 md:block">
-        <PlayerPanel game={game} send={send} />
-      </aside>
+      {/* 左栏：玩家列表（220px）—— 手机横屏收起，走 👥 浮层，和竖屏一致 */}
+      {!phoneLandscape && (
+        <aside className="hidden w-[220px] shrink-0 md:block">
+          <PlayerPanel game={game} send={send} />
+        </aside>
+      )}
 
       {/* 中栏：牌桌 + 手牌 */}
       <main className="min-w-0 flex-1">
@@ -173,20 +182,29 @@ function GameLayout({ game, send, error }) {
         />
       </main>
 
-      {/* 右栏：消息与聊天（300px，消息多换行没关系——本来就是可滚动的流水账） */}
-      <aside className="hidden w-[300px] shrink-0 lg:block">
-        <ChatPanel game={game} send={send} />
-      </aside>
+      {/* 右栏：消息与聊天（300px，消息多换行没关系——本来就是可滚动的流水账）
+          手机横屏同样收起，走 💬 浮层 */}
+      {!phoneLandscape && (
+        <aside className="hidden w-[300px] shrink-0 lg:block">
+          <ChatPanel game={game} send={send} />
+        </aside>
+      )}
 
       {showPlayers && (
-        <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setShowPlayers(false)}>
+        <div
+          className={`fixed inset-0 z-30 bg-black/60 ${phoneLandscape ? '' : 'md:hidden'}`}
+          onClick={() => setShowPlayers(false)}
+        >
           <div className="h-full w-64 p-2" onClick={e => e.stopPropagation()}>
             <PlayerPanel game={game} send={send} />
           </div>
         </div>
       )}
       {showChat && (
-        <div className="fixed inset-0 z-30 bg-black/60 lg:hidden" onClick={() => setShowChat(false)}>
+        <div
+          className={`fixed inset-0 z-30 bg-black/60 ${phoneLandscape ? '' : 'lg:hidden'}`}
+          onClick={() => setShowChat(false)}
+        >
           <div className="ml-auto h-full w-80 p-2" onClick={e => e.stopPropagation()}>
             <ChatPanel game={game} send={send} />
           </div>

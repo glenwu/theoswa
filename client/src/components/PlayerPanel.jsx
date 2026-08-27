@@ -43,7 +43,7 @@ export default function PlayerPanel({ game, send }) {
         ))}
       </div>
 
-      <PanelToolbar game={game} send={send} className="border-t border-white/10 p-2" />
+      <PanelToolbar game={game} send={send} className="flex-wrap border-t border-white/10 p-2" />
     </div>
   );
 }
@@ -53,12 +53,16 @@ export default function PlayerPanel({ game, send }) {
 // 抽出来是因为【手机横屏】那套布局也要用（Glen：「手牌区上边则显示已打出还有求件的
 // 信息加五个功能按钮」）。弹窗的开关状态跟着按钮走，谁渲染这组按钮谁就有完整的功能，
 // 不必把一堆 useState 往上提到 App 再往下传。
+// ⚠️ 基础样式里【故意不写 flex-wrap】。写了的话调用方再传 flex-nowrap 也压不住
+// （两个类特异度一样，谁生效取决于生成的 CSS 里谁在后面），横屏那栏 44px 宽，
+// 一折行就把后三个按钮甩到屏幕外面 —— 实测 🎨 落在 x=836、⏸ 落在 x=880，
+// 而视口只有 844 宽。折不折由调用方在 className 里明说。
 export function PanelToolbar({ game, send, className = '' }) {
   const [modal, setModal] = useState(null);
   const [showPropose, setShowPropose] = useState(false);
   const [showForce, setShowForce] = useState(false);
   return (
-    <div className={`flex flex-wrap items-center justify-center gap-2 ${className}`}>
+    <div className={`flex items-center justify-center gap-2 ${className}`}>
       <button className="btn-icon" title="规则说明" onClick={() => setModal('rules')}>📖</button>
       <button className="btn-icon" title="本局历史" onClick={() => setModal('history')}>🕘</button>
       <button className="btn-icon" title="配色方案" onClick={() => setModal('theme')}>🎨</button>
@@ -334,8 +338,11 @@ export function MyDetails({ game }) {
           </span>
         ))}
       </div>
+      {/* 窄屏（手机竖屏/横屏）：三门的件不再各占一行，改成横向自动折行 ——
+          右栏有 ~490px 宽，两门能并到一行，纵向省下的正是横屏最缺的
+          （Glen：「打出牌提示区可以分两行显示」）。宽屏保持一门一行。 */}
       {round?.piecesView && (
-        <div className="space-y-0.5 text-[11px]">
+        <div className="space-y-0.5 text-[11px] compact:flex compact:flex-wrap compact:gap-x-3 compact:gap-y-0 compact:space-y-0">
           {suits.map(suit => {
             const items = round.piecesView[suit] ?? [];
             const canThrow = canThrowByStatus(items);

@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/* 「窄屏紧凑」变体 —— 一个名字管两种小屏。
+ *
+ * 原来这套精简样式挂在 portrait:max-lg: 上（手机竖屏 + iPad 竖屏）。
+ * 手机【横过来】宽度有 800~950，那个前缀一条都不命中，于是牌桌中间的信息、
+ * 顶部信息条、倒计时全都按桌面的尺寸铺开，在 390px 高里糊成一团
+ * （Glen：「台面中间信息全部精简，和竖屏版一样」）。
+ *
+ * 判据两条取并集：竖屏看【宽度】，横屏看【高度】。
+ * ⚠️ 和 client/src/useMedia.js 里的两个常量必须保持一致 —— JS 那边要按同一个
+ * 判断切布局（纯 CSS 换不了 DOM 结构），两处对不上就会一半紧凑一半不紧凑。
+ */
+@custom-variant compact {
+  @media (orientation: portrait) and (max-width: 1023px) { @slot; }
+  @media (orientation: landscape) and (max-height: 520px) { @slot; }
+}
+
 @theme {
   --color-felt-900: #171130;
   --color-felt-800: #241b45;
@@ -117,6 +133,13 @@ body {
      的流程键，一个是「随时能按」的决断键 —— 同色最容易按错（Glen 要求改色）。 */
   .btn-emerald {
     @apply rounded-full bg-gradient-to-b from-emerald-300 to-emerald-600 px-6 py-2.5 text-base font-black text-emerald-950 shadow-md transition hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40;
+  }
+  /* 窄屏控制栏：出牌 / 亮主 这些主按钮整体做小一号（Glen：「出牌亮主按钮做小」）。
+     写成容器上的一个修饰类，比给每个按钮各加一串条件类干净，
+     而且以后新增的按钮自动跟着小。 */
+  .controls-compact .btn-gold,
+  .controls-compact .btn-emerald {
+    @apply px-3 py-1 text-sm;
   }
   .btn-icon {
     @apply grid h-9 w-9 place-items-center rounded-full bg-white/10 text-base transition hover:bg-white/20 disabled:pointer-events-none disabled:opacity-35;

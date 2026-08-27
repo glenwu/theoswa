@@ -12,8 +12,8 @@ import {
 import { PlayingCard } from './PlayingCard.jsx';
 import Modal from './Modal.jsx';
 import { useNow, secondsLeft, displayNow } from '../useNow.js';
-import { useMediaQuery, COMPACT_PORTRAIT, PHONE_LANDSCAPE } from '../useMedia.js';
-import { MyDetails, PanelToolbar } from './PlayerPanel.jsx';
+import { useMediaQuery, COMPACT_PORTRAIT, PHONE_LANDSCAPE, COMPACT } from '../useMedia.js';
+import { MyDetails } from './PlayerPanel.jsx';
 import { shortcutAction } from '../shortcut.js';
 import { checkSelection } from '../playCheck.js';
 import { seatPendingText } from '../seatStatus.js';
@@ -277,23 +277,24 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
       <div className="relative flex h-full gap-2">
         {table}
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          {/* 上半：左边「场上已打出 + 件」，右边五个功能按钮竖排 */}
-          <div className="flex min-h-0 flex-1 gap-1.5">
-            <div className="min-w-0 flex-1 overflow-y-auto">
-              <MyDetails game={game} />
-            </div>
-            {/* 五个功能按钮竖排。⚠️ 要 flex-nowrap：基础样式带 flex-wrap，
-                竖排时高度一挤就会折成第二列，而这里只有 44px 宽，折出去就看不见了。
-                宁可让它自己滚。 */}
-            <PanelToolbar
-              game={game}
-              send={send}
-              className="w-11 shrink-0 flex-col flex-nowrap overflow-y-auto !justify-start"
-            />
+          {/* 上半：「场上已打出 + 件」+ 五个功能按钮横排在它下面。
+              ⚠️ 按钮【不能】竖排在右侧：这一栏只有 ~127px 高，五个 36px 的按钮
+              竖着要 212px，放不下就得滚，最后两个等于藏起来了。横排一行
+              5×36 + 间距 ≈ 200px，在 ~490px 宽里绰绰有余。
+              ⚠️ 这一块【按内容撑开】(shrink-0)，弹性留给手牌 —— 反过来写成
+              「手牌固定一半、上面 flex-1」实测把件追踪那三行裁掉了
+              （容器 87px、内容 121px），而那正是 Glen 点名要看的信息。
+              它是固定的一小块，手牌才是会长会短的那个。 */}
+          {/* ⚠️ 这里【不再】放那五个功能按钮。一开始按 Glen 的原话补了一份，
+              他看到实机之后改口：「5 个在出牌按钮上方的功能键也取消吧，重复了，
+              还占地」—— 👥 抽屉里的玩家面板底部本来就有同一组按钮，
+              横屏那 390px 高度里，40px 花在重复的东西上太贵。 */}
+          <div className="shrink-0">
+            <MyDetails game={game} />
           </div>
           {controls}
-          {/* 下半：手牌固定占一半高度，牌多时自己滚，不去挤上面的信息 */}
-          <div className="h-1/2 min-h-0 shrink-0 overflow-y-auto">{hand}</div>
+          {/* 下半：手牌拿走剩下的全部高度，牌多时自己滚 */}
+          <div className="min-h-0 flex-1 overflow-y-auto">{hand}</div>
         </div>
         {overlays}
       </div>
@@ -350,16 +351,16 @@ function CenterTurnTimer({ game }) {
   return (
     // 竖屏窄屏：横排的「⏱时间 + 人名」会横跨到顶部信息条上面，把「庄家：X」压住。
     // 改成上下两行并整体缩小，宽度收到 ~60px，就落在信息条右侧的空白里了。
-    <div className="absolute right-3 top-3 z-10 flex items-center gap-2 portrait:max-lg:right-1 portrait:max-lg:top-1 portrait:max-lg:flex-col portrait:max-lg:items-end portrait:max-lg:gap-0.5">
+    <div className="absolute right-3 top-3 z-10 flex items-center gap-2 compact:right-1 compact:top-1 compact:flex-col compact:items-end compact:gap-0.5">
       <span
-        className={`rounded-full px-4 py-2 text-lg font-black shadow-lg portrait:max-lg:px-2 portrait:max-lg:py-0.5 portrait:max-lg:text-xs portrait:max-lg:leading-tight ${
+        className={`rounded-full px-4 py-2 text-lg font-black shadow-lg compact:px-2 compact:py-0.5 compact:text-xs compact:leading-tight ${
           urgent ? 'bg-rose-500 text-white' : 'bg-black/50 text-amber-300'
         }`}
       >
         ⏱ {Math.floor(left / 60)}:{String(Math.ceil(left % 60)).padStart(2, '0')}
       </span>
       {player && (
-        <span className="pill bg-black/50 text-white/80 portrait:max-lg:px-1.5 portrait:max-lg:py-0 portrait:max-lg:text-[10px] portrait:max-lg:leading-tight">
+        <span className="pill bg-black/50 text-white/80 compact:px-1.5 compact:py-0 compact:text-[10px] compact:leading-tight">
           {PLAYER_EMOJI[player.id]} {player.nickname}
         </span>
       )}
@@ -574,7 +575,7 @@ function CenterInfo({ game, send }) {
   const graceLeft = secondsLeft(round?.graceDeadline, now);
 
   return (
-    <div className="flex h-44 w-60 flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-center portrait:max-lg:h-auto portrait:max-lg:w-40 portrait:max-lg:gap-1 portrait:max-lg:px-2 portrait:max-lg:py-1.5">
+    <div className="flex h-44 w-60 flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-center compact:h-auto compact:w-40 compact:gap-1 compact:px-2 compact:py-1.5">
       <div
         className={`text-4xl font-black ${
           trumpSuit ? (suitRed(trumpSuit) ? 'text-rose-400' : 'text-white/90') : 'text-white/30'
@@ -624,14 +625,14 @@ function CenterInfo({ game, send }) {
         />
       </div>
       {/* 阶段说明：竖屏窄屏空间宝贵，整段文字换成一个「说明」小按钮，点开才看 */}
-      <div className="text-xs font-bold text-white/70 portrait:max-lg:hidden">
+      <div className="text-xs font-bold text-white/70 compact:hidden">
         {PHASE_HINTS[game.phase]}
       </div>
       {/* 竖屏窄屏：托管按钮放在「说明」上边（手牌区那一行挤不下） */}
-      <AutoPlayToggle game={game} send={send} className="hidden portrait:max-lg:block" />
+      <AutoPlayToggle game={game} send={send} className="hidden compact:block" />
       <button
         type="button"
-        className="hidden rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-black text-white/70 portrait:max-lg:block"
+        className="hidden rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-black text-white/70 compact:block"
         onClick={() => setShowHint(true)}
       >
         说明
@@ -864,14 +865,50 @@ function RematchPanel({ game, send }) {
 // 底牌行：竖屏窄屏改用更小的牌与更紧的间距 —— 这里真正要看的只有
 // 「被系统亮出来的副牌 A/K（件）」，其余牌背只是占位。
 function KittyBacksRow({ game }) {
+  const compact = useMediaQuery(COMPACT);
   const round = game.round;
   if (!round || game.phase !== 'PLAYING' && game.phase !== 'DOMINANCE') return null;
   const total = round.kittyCount ?? 0;
   if (total <= 0) return null;
   const revealed = round.kittyRevealedPieces ?? [];
+
+  // 窄屏（手机竖屏 / 手机横屏）：底牌这一块只保留两个信息 ——
+  // 一共几张、亮出来的是哪几支件。件用「♠A」这样一个字宽的标签，不画整张牌面
+  //（Glen：「底牌也精简，只要露出 ♠A 像这样的单个字的件就行，牌也尽量小」）。
+  // 牌背保留但换到最小的 xs 档、叠得更紧 —— 它只需要传达"底牌还压着这么多张"。
+  if (compact) {
+    return (
+      <div className="flex items-center gap-1 rounded-full border border-white/10 bg-black/25 px-1.5 py-0.5">
+        <div className="flex">
+          {Array.from({ length: total }, (_, i) => (
+            <PlayingCard
+              key={`kitty-${i}`}
+              suit={null}
+              rank={null}
+              faceUp={false}
+              size="xs"
+              className="-ml-[1.05rem] first:ml-0"
+            />
+          ))}
+        </div>
+        {revealed.map((piece, i) => (
+          <span
+            key={`p-${i}`}
+            className={`rounded px-1 text-[10px] font-black leading-tight ${
+              suitRed(piece.suit) ? 'bg-rose-400/20 text-rose-300' : 'bg-white/15 text-white/85'
+            }`}
+            title={`底牌亮出：${suitSymbol(piece.suit)}${rankLabel(piece.rank)}`}
+          >
+            {suitSymbol(piece.suit)}{rankLabel(piece.rank)}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-black/25 px-3 py-1.5 portrait:max-lg:gap-1 portrait:max-lg:px-1.5 portrait:max-lg:py-1">
-      <span className="text-[10px] font-bold text-white/40 portrait:max-lg:hidden">底牌</span>
+    <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-black/25 px-3 py-1.5 compact:gap-1 compact:px-1.5 compact:py-1">
+      <span className="text-[10px] font-bold text-white/40 compact:hidden">底牌</span>
       <div className="flex">
         {Array.from({ length: total }, (_, i) => {
           const piece = revealed[i] ?? null; // 明牌亮出的件排在前面
@@ -890,7 +927,7 @@ function KittyBacksRow({ game }) {
               rank={null}
               faceUp={false}
               size="sm"
-              className="-ml-3 first:ml-0 portrait:max-lg:-ml-[1.35rem]"
+              className="-ml-3 first:ml-0 compact:-ml-[1.35rem]"
             />
           );
         })}
@@ -1006,7 +1043,7 @@ function PlayZone({ player, game, side = 'top', isYou }) {
             那里本来就是自己的地盘，也不会挡住任何人。
             ⚠️ 只藏名字文本，后面的「亮X」「🏆/👑」照留：那几个是随时在变的
             局面信息，不能跟着一起没掉。 */}
-        <span className={isYou ? 'portrait:max-lg:hidden' : undefined}>
+        <span className={isYou ? 'compact:hidden' : undefined}>
           {PLAYER_EMOJI[player.id]} {player.nickname}
           {isYou ? '(我)' : ''}
         </span>
@@ -1048,7 +1085,7 @@ function PlayZone({ player, game, side = 'top', isYou }) {
               单张不显示（一张牌不用标 1）。 */}
           {play.cards.length > 1 && (
             <span
-              className="pointer-events-none absolute -right-1.5 -top-1.5 z-20 grid h-6 w-6 place-items-center rounded-full bg-amber-400 text-xs font-black text-amber-950 shadow-md shadow-black/40 portrait:max-lg:-right-1 portrait:max-lg:-top-1 portrait:max-lg:h-5 portrait:max-lg:w-5 portrait:max-lg:text-[10px]"
+              className="pointer-events-none absolute -right-1.5 -top-1.5 z-20 grid h-6 w-6 place-items-center rounded-full bg-amber-400 text-xs font-black text-amber-950 shadow-md shadow-black/40 compact:-right-1 compact:-top-1 compact:h-5 compact:w-5 compact:text-[10px]"
               title={`甩了 ${play.cards.length} 张`}
             >
               {play.cards.length}
@@ -1057,7 +1094,7 @@ function PlayZone({ player, game, side = 'top', isYou }) {
           {/* 左右两侧在竖屏手机上改为竖向叠放：竖屏横向空间本来就窄，
               甩牌多张时横排会把中间牌桌挤没。单张时横竖一样，无影响。
               仅限竖屏 + 窄屏，横屏和桌面保持原来的横排。 */}
-          <div className={`flex ${sideways ? 'portrait:max-lg:flex-col' : ''}`}>
+          <div className={`flex ${sideways ? 'compact:flex-col' : ''}`}>
             {play.cards.map((c, i) => (
               <PlayingCard
                 key={c.id}
@@ -1068,7 +1105,7 @@ function PlayZone({ player, game, side = 'top', isYou }) {
                   i === 0
                     ? ''
                     : sideways
-                      ? `${play.cards.length > 10 ? '-ml-[54px]' : '-ml-12'} portrait:max-lg:ml-0 portrait:max-lg:-mt-[4.5rem]`
+                      ? `${play.cards.length > 10 ? '-ml-[54px]' : '-ml-12'} compact:ml-0 compact:-mt-[4.5rem]`
                       : play.cards.length > 10
                         ? '-ml-[54px]'
                         : '-ml-12'
@@ -1317,9 +1354,11 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
           显示条件沿用原来的断点：玩家列表 <768px 才需要，聊天 <1024px 才需要。 */}
       <div className="relative flex w-full items-center justify-center gap-3">
         {onTogglePlayers && (
+          // ⚠️ 横屏时不能挂 md:hidden：手机横过来宽度 800+，那个类会把开关藏掉，
+          // 而左栏这时候恰恰是收起来的 —— 玩家列表就彻底没入口了。
           <button
             type="button"
-            className="btn-float-sm absolute left-0 md:hidden"
+            className={`btn-float-sm absolute left-0 ${compact ? '' : 'md:hidden'}`}
             title="玩家列表"
             onClick={onTogglePlayers}
           >
@@ -1330,7 +1369,7 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
         {onToggleChat && (
           <button
             type="button"
-            className="btn-float-sm absolute right-0 lg:hidden"
+            className={`btn-float-sm absolute right-0 ${compact ? '' : 'lg:hidden'}`}
             title="消息与聊天"
             onClick={onToggleChat}
           >
@@ -1405,8 +1444,12 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
   //   不溢出/不横向滚动这条底线优先于“固定露出”。
   const rowRef = useRef(null);
   const [avail, setAvail] = useState(0);
-  // 与 CSS 的 portrait:max-lg: 断点保持一致（手机竖屏 + iPad 竖屏）。
+  // 与 CSS 的 compact: 断点保持一致（手机竖屏 + iPad 竖屏）。
   const compactPortrait = useMediaQuery(COMPACT_PORTRAIT);
+  // 手机横屏：手牌只分到 ~150px 高，最大那档（56px 宽的牌）两行就顶破了。
+  // 直接把最大档去掉，让择优逻辑从 md 起挑（Glen：「手牌区的牌也小一号试试」）。
+  const phoneLandscapeHand = useMediaQuery(PHONE_LANDSCAPE);
+  const tiers = phoneLandscapeHand ? HAND_TIERS.slice(1) : HAND_TIERS;
   // hasRow 依赖：手牌行是在揭牌后才挂载的，挂载时立即测量并开始观察（窗口变化实时重算）
   const hasRow = hand.length > 0;
   useEffect(() => {
@@ -1444,7 +1487,7 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
 
     if (avail === 0) {
       // 首帧未测量：先按最大档给出目标露出，ResizeObserver 测到后再重算
-      const t0 = HAND_TIERS[0];
+      const t0 = tiers[0];
       return { size: t0.name, w: t0.w, s: target, rows: 1, ...gapsFor(target) };
     }
 
@@ -1461,7 +1504,7 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
     const COMFORT = 16;
     let best = null;
     for (let rows = 1; rows <= maxRows; rows++) {
-      for (const tier of HAND_TIERS) {
+      for (const tier of tiers) {
         const s = Math.min(target, maxExposeFor(tier, rows));
         if (s < MIN_EXPOSE_W) continue;
         const cand = { size: tier.name, w: tier.w, s, rows };
@@ -1473,7 +1516,7 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
     if (best) return { ...best, ...gapsFor(best.s) };
 
     // 所有组合都低于下限：最小档 + 最多行数 + 压到下限（绝不横向溢出）
-    const tier = HAND_TIERS[HAND_TIERS.length - 1];
+    const tier = tiers[tiers.length - 1];
     const s = Math.max(MIN_EXPOSE_W, Math.min(target, maxExposeFor(tier, maxRows)));
     return { size: tier.name, w: tier.w, s, rows: maxRows, ...gapsFor(s) };
   }, [peak, avail, hand.length, compactPortrait]);
@@ -1620,7 +1663,7 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
   // 每组连同它前面的间隔打包成一个 segment，并算出该组占宽 ——
   // 分行时以 segment 为最小单位，绝不把同一花色组拦腰截断。
   const segS = layout?.s ?? EXPOSE_W;
-  const segW = layout?.w ?? HAND_TIERS[0].w;
+  const segW = layout?.w ?? tiers[0].w;
   const segments = [];
   let pos = 0;
   for (let g = 0; g < groups.length; g++) {
@@ -1664,7 +1707,7 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
           ⚠️ z-0 是【故意的】：牌行是 z-10，牌多到铺过来时直接盖在名字上层
           （Glen：「有牌在上边的话就把牌叠在上层」）。名字只是个落款，
           不能反过来挡住牌面 —— 手牌右下角正好是最后一张牌露出点数的地方。 */}
-      <div className="pointer-events-none absolute bottom-1.5 right-3 z-0 hidden text-xs font-black text-white/45 portrait:max-lg:block">
+      <div className="pointer-events-none absolute bottom-1.5 right-3 z-0 hidden text-xs font-black text-white/45 compact:block">
         {PLAYER_EMOJI[you.id]} {you.nickname}(我)
       </div>
       <div className="mb-1 flex items-center justify-between text-xs font-bold text-white/50">
@@ -1679,7 +1722,7 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
         </span>
         <span className="flex items-center gap-2">
           {/* 竖屏窄屏这里空间紧张，托管按钮改挂到中央信息区（「说明」上边） */}
-          <AutoPlayToggle game={game} send={send} className="portrait:max-lg:hidden" />
+          <AutoPlayToggle game={game} send={send} className="compact:hidden" />
           <span>{hand.length} 张</span>
         </span>
       </div>
