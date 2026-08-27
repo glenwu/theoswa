@@ -1397,6 +1397,63 @@ test('甩尾手：计划挂起时宁可垫低主也不拆长门（垫一张就�
   assert.equal(played[0].suit, 'D', '该垫的是那门中性副牌');
 });
 
+// ============ 对手在求的那门，不主动去领 ============
+//
+// Glen：「对手在求某一门牌，正常来说我们这边不能帮他们求，也就是说一般不主动
+//   打这个花色，让他们出，因为这样我方是有优势的，他们出牌我方会最后下。」
+//
+// 领这门有两重亏：替他把件逼出来，还把「他先出、我方最后下」的位置优势让掉。
+// 这也是他那句「保件防对手甩牌」真正的落点 —— 防守在领牌这一侧，
+// 不是跟牌时死攥着件不放（跟牌那边他的裁定是「对方求的件一般要给他」）。
+function opponentAskedView(spades, spadePieces) {
+  return leadView({
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),                                    // 双大鬼
+      ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),   // 凑满 9 张主 → 有保底，不吊主
+      ...spades.map((r, i) => T('S', r, i + 40)),
+      ...[8, 6].map((r, i) => T('D', r, i + 60)),
+    ],
+    declarerSeat: 0, mySeat: 0,
+    piecesView: {
+      S: spadePieces ?? [
+        { rank: 14, status: 'unseen' }, { rank: 14, status: 'unseen' },
+        { rank: 13, status: 'unseen' }, { rank: 13, status: 'seen' },
+      ],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+    // 对手（座 1）第 1 墩领 ♠4 求件，件还没逼完
+    trickHistory: [{
+      trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0,
+      plays: [{ seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] }],
+    }],
+  });
+}
+
+test('不帮对手求：他在求黑桃、件还没逼完 → 改领别门，让他自己来', () => {
+  const lead = chooseLeadCards(opponentAskedView([9, 7, 4]))[0];
+  assert.equal(lead.suit, 'D',
+    `黑桃是对手在求的门，领它等于替他逼件（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 例外：这门我自己也有甩牌欲望 —— 那是我的武器，领它是为了自己甩，不是帮他。
+// ⚠️ 两条成对看，不然「永远不领对手求过的门」也能让上面那条绿。
+// 躲的是【还没逼完】那件事。件全现完了，他这门再也求不出东西来，
+// 那就没有「帮他」可言，这门跟别的门一样正常参与选择。
+test('不帮对手求：这门的件已经全现 → 躲这件事了结，照常领', () => {
+  const lead = chooseLeadCards(opponentAskedView(
+    [9, 7, 4],
+    [14, 14, 13, 13].map(rank => ({ rank, status: 'seen' })),
+  ))[0];
+  assert.equal(lead.suit, 'S',
+    `件都现完了还躲着不领，那是白躲（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+test('不帮对手求：但这门我自己够长（是我的武器）→ 照领不误', () => {
+  const lead = chooseLeadCards(opponentAskedView([11, 9, 8, 7, 6, 5, 4, 3]))[0];
+  assert.equal(lead.suit, 'S',
+    `八张黑桃是我自己的甩牌本钱，不能因为他求过就不打（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ============ Glen 实战反馈第 1 条：别乱求件 ============
 //
 // 「发现 bot 会乱求牌。一般真人玩家第一轮如果不是那门有甩牌的欲望

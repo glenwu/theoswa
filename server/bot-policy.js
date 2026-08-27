@@ -219,6 +219,20 @@ function quietLead(view, ctx, cards, tuning = strategyTuning(view)) {
   return quiet.length ? lowestLead(quiet, ctx) : natural;
 }
 
+// 「对手在这门求过件、而且还没逼完」—— 这门我不主动去领。Glen：
+//   「对手在求某一门牌，正常来说我们这边不能帮他们求，也就是说一般不主动打
+//     这个花色，让他们出，因为这样我方是有优势的，他们出牌我方会最后下。」
+// 我去领这门有两重亏：替他把件逼出来，还把「他先出、我方最后下」的位置优势让掉。
+//
+// 判据用 suitAskSignal（它是「对家优先」的：队友也求过这门就返回 'partner'，
+// 那时该走帮队友那条路，不归这里管）。
+function opponentAskOpen(view, ctx, suit) {
+  return (
+    suitAskSignal(view, ctx, suit) === 'opponent' &&
+    (view.round?.piecesView?.[suit] ?? []).some(item => item.status === 'unseen')
+  );
+}
+
 // 「这门我方已经在求件、而且还没逼完」—— 这时候接着领小牌不是乱求，
 // 正是 Glen 第 2 条要的【帮队友把别人的件逼出来】，一分都不该罚。
 // 判据和 partnerRequest ① 那段一致：我方有人在这门求过 + 还有件没现身。
@@ -2014,6 +2028,24 @@ export function chooseLeadCards(view) {
   // 只剩主牌时 quietLead 自动退化成 lowestLead（主牌不是求件信号）。
   const fallback = quietLead(view, ctx, nonTrumps.length ? nonTrumps : trumps, tuning);
   if (fallback) addProposal([fallback], 20, 'low-card-fallback');
+
+  // 【对手在求的那门，不主动去领】—— 判据在 opponentAskOpen 上面那段。
+  //
+  // 例外：这门我自己也有甩牌欲望 —— 那是我的武器，领它是为了自己甩，
+  // 不是在帮他逼件，照打。
+  //
+  // 兜底同下面两段：真的没别的门可领时维持原判（总得领一张出去）。
+  {
+    const helping = [...proposals].filter(([, proposal]) => {
+      if (proposal.cards.length !== 1) return false;
+      const suit = suitOf(proposal.cards[0], ctx);
+      if (suit === 'TRUMP') return false;
+      return opponentAskOpen(view, ctx, suit) && !suitThrowAmbition(view, ctx, suit, tuning);
+    });
+    if (helping.length < proposals.size) {
+      for (const [key] of helping) proposals.delete(key);
+    }
+  }
 
   // 【不想求件，就别打出会被读成求件的那张牌】—— Glen 实战反馈第 1 条。
   // 判据在 straySignal 上面，豁免两种「真心在求」的情形。
