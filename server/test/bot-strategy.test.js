@@ -1397,6 +1397,69 @@ test('甩尾手：计划挂起时宁可垫低主也不拆长门（垫一张就�
   assert.equal(played[0].suit, 'D', '该垫的是那门中性副牌');
 });
 
+// ============ 不帮对手吊主 ============
+//
+// Glen：「吊主也一样，如果对方要吊主吊大牌出来让自己保底，或是吊短主牌可以让
+//   自己的甩牌别人毙不到，那我方记着不能帮对方吊主；当然也有例外，就是自己的
+//   主牌碾压式的强，可以反吊回去。」
+//
+// 他吊主是在替自己办两件事，我跟着吊就是替他办，而且一轮下来我方也少一张。
+//
+// ⚠️ 实测这条在对局里很少真正触发：200 局里「上一次领主的是对手、我还是领主」
+// 有 296 次，但插桩一看，其中 95 次胜出的提案是 low-card-fallback 或裸
+// legal-single —— 手上只剩主牌，被规则逼的，不是主动吊。真正走「继续吊主」
+// 那条的只有 6 次。所以这条规则是【补漏】，不是热点。
+function opponentDrewTrumpsView(leadSeat) {
+  return leadView({
+    hand: [...NINE_TRUMPS, ...WEAK_SIDES],
+    declarerSeat: 0, mySeat: 0,
+    trickHistory: [{
+      trickNo: 1, leadSeat, leadSuit: 'TRUMP', winnerSeat: leadSeat, points: 0,
+      plays: [{ seat: leadSeat, playSuit: 'TRUMP', cards: [T('H', 4, 90)] }],
+    }],
+  });
+}
+
+test('不帮对手吊主：对手刚吊过主 → 转打副牌，让他自己吊', () => {
+  const lead = chooseLeadCards(opponentDrewTrumpsView(1))[0];   // 座 1 是对手
+  assert.notEqual(lead.suit, 'H',
+    `他吊主是在办自己的事，跟着吊等于替他办（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 对照：换成队友吊的主 —— 那是我方的路子，该跟着吊。
+// ⚠️ 两条用同一手牌，只换领主的座位，成对才钉得住「对手」这个判据。
+test('不帮对手吊主：换成队友吊过主 → 照常跟着吊', () => {
+  const lead = chooseLeadCards(opponentDrewTrumpsView(2))[0];   // 座 2 是队友
+  assert.equal(lead.suit, 'H',
+    `队友吊主是我方的路子，该跟着吊（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 例外：「自己的主牌碾压式的强，可以反吊回去」。按算牌落地 ——
+// 顶端在我手上，而且我的主牌比【任何单独一家】可能持有的都多。
+// 这里主牌已经出掉一大批、各家手牌只剩 4 张，摊到一家头上凑不出几张主。
+test('不帮对手吊主：例外 —— 自己主牌碾压式的强 → 反吊回去', () => {
+  const played = [];
+  for (let r = 3; r <= 12; r += 1) played.push(T('H', r, 500 + r), T('H', r, 600 + r));
+  played.push(T('H', 15, 700), T('H', 15, 701), T('S', 2, 702), T('D', 2, 703));
+  const view = leadView({
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),                     // 双大鬼 = 握着顶端
+      ...[14, 13].map((r, i) => T('H', r, i + 2)),      // 主牌只有 4 张 → 够不上 guaranteed
+      ...WEAK_SIDES,
+    ],
+    declarerSeat: 0, mySeat: 0,
+    trickHistory: [{
+      trickNo: 1, leadSeat: 1, leadSuit: 'TRUMP', winnerSeat: 1, points: 0,
+      plays: [{ seat: 1, playSuit: 'TRUMP', cards: played }],
+    }],
+  });
+  for (const p of view.players) p.handCount = 4;
+  view.round.kittyCount = 0;
+  const lead = chooseLeadCards(view)[0];
+  assert.equal(lead.suit, 'H',
+    `主牌碾压时该反吊回去把他削光（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ============ 对手在求的那门，不主动去领 ============
 //
 // Glen：「对手在求某一门牌，正常来说我们这边不能帮他们求，也就是说一般不主动

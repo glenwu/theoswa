@@ -1303,6 +1303,21 @@ function leadRole(view) {
 // 某个座位最近一次领牌走的是主牌还是副牌 —— 「他在走什么路子」的唯一判据。
 // 两个用处：跟庄家的路子（declarerSeat），以及本局策略的惯性（自己的座位）。
 // ⚠️ 原来这是两个一模一样、只差看哪个座位的函数（declarerLeadStyle / myLeadStyle）。
+// 「对手正在吊主」—— 最近一次领主牌是不是对手领的。
+// Glen：「如果对方要吊主吊大牌出来让自己保底，或是吊短主牌可以让自己的甩牌
+//   别人毙不到，那我方记着不能帮对方吊主；当然也有例外，就是自己的主牌
+//   碾压式的强，可以反吊回去。」
+// 他吊主是在替自己办两件事（把顶端逼出来做保底 / 把主削光让自己的甩牌毙不到），
+// 我跟着吊就是替他办 —— 而且一轮吊下来我方也少一张。让他自己吊。
+function opponentDrawingTrumps(view) {
+  const history = view.round?.trickHistory ?? [];
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i].leadSuit !== 'TRUMP') continue;
+    return history[i].leadSeat % 2 !== view.you.team;
+  }
+  return false;
+}
+
 function lastLeadStyle(view, seat) {
   if (seat === null || seat === undefined) return null;
   const leads = (view.round?.trickHistory ?? []).filter(trick => trick.leadSeat === seat);
@@ -1877,7 +1892,12 @@ export function chooseLeadCards(view) {
   //   run-side / run-and-score → 「以跑副牌为主」（Glen 对这两种策略的原话）
   //   points-first             → 「核心是打别人不想自己打的牌，多找机会吃分」
   const strategy = roundStrategy(view, ctx, control);
-  if (!opening && drawPool.length > 0 && outstandingTrumps > 0 &&
+  // 「碾压式的强」按算牌落地：顶端在我手上，而且我的主牌比【任何单独一家】
+  // 可能持有的都多 —— 那时接着吊是把他削光，不是替他削别人。
+  const crushingTrumps =
+    control.holdsTopTrump && trumps.length > maxOpponentTrumpEstimate(view, ctx);
+  const helpingOpponentDraw = opponentDrawingTrumps(view) && !crushingTrumps;
+  if (!opening && !helpingOpponentDraw && drawPool.length > 0 && outstandingTrumps > 0 &&
       !control.guaranteed && (!strongSide || planPending)) {
     const drawBonus =
       planPending ? 560                                                // 为尾巴削对手的主
