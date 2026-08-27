@@ -229,8 +229,29 @@ function quietLead(view, ctx, cards, tuning = strategyTuning(view)) {
 function opponentAskOpen(view, ctx, suit) {
   return (
     suitAskSignal(view, ctx, suit) === 'opponent' &&
-    (view.round?.piecesView?.[suit] ?? []).some(item => item.status === 'unseen')
+    (view.round?.piecesView?.[suit] ?? []).some(item => item.status === 'unseen') &&
+    !teamGavePieceIn(view, ctx, suit)   // 已经交出去了就别再躲，见下
   );
+}
+
+// 「我方在对手求件的那一墩把件交了出去」—— Glen 给的后手：
+//   「不得以或是砍大分出的话，就要再吊对手可以甩花色。」
+// 件已经喂出去了，这门他多半能甩了，再藏着不领没有意义 ——
+// 只能反过来主动领这门，一张一张把他能甩的长度压短。
+function teamGavePieceIn(view, ctx, suit) {
+  for (const trick of view.round?.trickHistory ?? []) {
+    if (trick.leadSuit !== suit) continue;
+    if (trick.leadSeat % 2 === view.you.team) continue;          // 得是对手在求
+    if (!isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) continue;
+    const gave = (trick.plays ?? []).some(play =>
+      play.seat % 2 === view.you.team &&
+      (play.cards ?? []).some(
+        card => suitOf(card, ctx) === suit && isSidePiece(card, ctx)
+      )
+    );
+    if (gave) return true;
+  }
+  return false;
 }
 
 // 「这门我方已经在求件、而且还没逼完」—— 这时候接着领小牌不是乱求，
@@ -884,6 +905,12 @@ function opponentThreatSuit(view, ctx, tuning = strategyTuning(view)) {
     if (trick.leadSeat % 2 === view.you.team || trick.leadSuit === 'TRUMP') continue;
     const amount = trick.leadType === 'throw' ? 5 : 1;
     scores.set(trick.leadSuit, (scores.get(trick.leadSuit) ?? 0) + amount);
+  }
+  // 我方在哪一门被迫把件交给了求件的对手，哪一门就直接算威胁门（Glen 的后手，
+  // 判据见 teamGavePieceIn）—— 不必再等他领够两次才反应。
+  for (const suit of SUITS.filter(item => item !== ctx.trumpSuit)) {
+    if (!teamGavePieceIn(view, ctx, suit)) continue;
+    scores.set(suit, (scores.get(suit) ?? 0) + tuning.opponentThreatThreshold);
   }
   return [...scores.entries()]
     .filter(([suit, score]) =>
@@ -1584,6 +1611,20 @@ function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
     const held = (view.round?.piecesView?.[suit] ?? [])
       .filter(item => item.status === 'mine').length;
     if (held >= 3 && stillHidden === 1) return sum;
+    // 【对手求件时到底能不能出件】—— Glen 把口径说全了：
+    //   「对手求件，一般情况下不能轻易出件，如果有两件可以砍，只有一件的话，
+    //     一般不能出，除非有大分，比如 20 分以上，或是自己没剩多少如三支甚至两支，
+    //     才能把件出给别人……如果不是这些情况，一般不把件出给对手。」
+    //
+    // 三档都【已经在这个函数里了】，不用另写（scripts/audit/loose-piece.mjs 逐条量过，
+    // 200 局里不合这套口径的只有 1 次）：
+    //   · 「有两件可以砍」→ 两件在手时接管加分本来就压得过这里的代价，
+    //     实测四张配两件、桌上 10 分就会砍。⚠️ 试过显式加一条 `held >= 2` 豁免，
+    //     任何局面都不改变结果（合规数 33 → 34，是噪声），按惯例撤掉了。
+    //   · 「有大分 20 分以上」→ 接管加分（100 + 分×10）对上 PIECE_EXPOSURE_COST(240)，
+    //     等效门槛落在 25 分上下
+    //   · 「自己没剩多少如三支甚至两支」→ 下面 PIECE_NEAR_VOID_AFTER 那条
+    //     （打完还剩 ≤2 张 = 手上原本 ≤3 张），和他的措辞正好对上
     if (strongPieceSuit(view, ctx, suit, tuning)) return sum;
     if (partnerAskedSuit === suit) return sum;
     // 「这门快断了」就不罚 —— Glen：「如果自己这门已经快断了，比如打 A 后
@@ -2010,6 +2051,14 @@ export function chooseLeadCards(view) {
   // 对手多次从某门领牌/甩牌，主动打该门来压缩他最后的甩牌张数。
   const threatSuit = opponentThreatSuit(view, ctx, tuning);
   if (threatSuit) {
+    // 「欠着的那门」单独一档 —— Glen：「不得以或是砍大分出的话，就要再吊对手
+    // 可以甩花色。」件已经喂给他了，压他的长度就成了正事，不再只是顺手为之。
+    //
+    // 400 这个数是【卡在提案分档之间】选的，不是拍的：要压得过
+    // develop-long-side-suit 的上限 360（160 + 跑副牌 200）—— 他说的是「就要」，
+    // 不能被「发展自己最长的门」盖掉；又要压不动 seek-piece(450) 和帮队友求件
+    //（480+），那两条是他反复裁过的对家约定，不该被这条挤掉。
+    const owed = teamGavePieceIn(view, ctx, threatSuit);
     addProposal(
       // 压缩对手的甩牌张数，不是在求件 —— 别顺手把信号发出去
       [quietLead(view, ctx, cardsOfSuit(hand, threatSuit, ctx), tuning)],
@@ -2018,8 +2067,8 @@ export function chooseLeadCards(view) {
       //（那是 run-side 专属），attack(250) 已经稳压 develop(160)。
       // 「打别人不想自己打的牌」这个意思，靠的是【压掉吊主之后 attack 自然胜出】，
       // 不需要第二份加分。它唯一能改变的是和求件(450) 打平，没有依据这么做。
-      250 * tuning.leadStrategyPriorWeight,
-      'attack-opponent-long-suit'
+      (owed ? 400 : 250) * tuning.leadStrategyPriorWeight,
+      owed ? 'compress-after-giving-piece' : 'attack-opponent-long-suit'
     );
   }
 

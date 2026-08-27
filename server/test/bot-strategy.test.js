@@ -1397,6 +1397,31 @@ test('甩尾手：计划挂起时宁可垫低主也不拆长门（垫一张就�
   assert.equal(played[0].suit, 'D', '该垫的是那门中性副牌');
 });
 
+// ---- 件已经喂出去了，就反过来去压他的甩牌长度 ----
+//
+// Glen：「不得以或是砍大分出的话，就要再吊对手可以甩花色。」
+// 藏是为了不让他凑齐甩牌资格；件都交出去了，藏就没有意义了，
+// 只能反过来主动领这门，一张一张把他能甩的长度压短。
+//
+// 这条和上面「不主动领对手求的那门」是同一件事的两个阶段，必须成对看：
+// 没交出去之前躲，交出去之后压。
+test('件喂出去之后：改为主动领这门，压短他能甩的长度', () => {
+  const lead = chooseLeadCards(opponentAskedView([9, 7, 4], undefined, true))[0];
+  assert.equal(lead.suit, 'S',
+    `件已经交出去了，藏没意义，该去压他的长度（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 上面那条只钉住「不再躲」。这一条钉的是【主动去压】那一半：把黑桃缩到
+// 比方块短，「发展最长副牌」会选方块，只有「压缩对手甩牌长度」那条提案
+// 才会把牌拉回黑桃 —— 而它平时要等对手领够两次，交了件就立刻算数。
+test('件喂出去之后：就算这门不是我最长的，也要回头去压它', () => {
+  const lead = chooseLeadCards(
+    opponentAskedView([9, 7, 4], undefined, true, [10, 9, 8, 6, 4])
+  )[0];
+  assert.equal(lead.suit, 'S',
+    `方块更长，但黑桃是欠着的那门，该先去压（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ============ 不帮对手吊主 ============
 //
 // Glen：「吊主也一样，如果对方要吊主吊大牌出来让自己保底，或是吊短主牌可以让
@@ -1468,13 +1493,13 @@ test('不帮对手吊主：例外 —— 自己主牌碾压式的强 → 反吊�
 // 领这门有两重亏：替他把件逼出来，还把「他先出、我方最后下」的位置优势让掉。
 // 这也是他那句「保件防对手甩牌」真正的落点 —— 防守在领牌这一侧，
 // 不是跟牌时死攥着件不放（跟牌那边他的裁定是「对方求的件一般要给他」）。
-function opponentAskedView(spades, spadePieces) {
+function opponentAskedView(spades, spadePieces, gavePiece = false, diamonds = [8, 6]) {
   return leadView({
     hand: [
       T('H', 16, 0), T('H', 16, 1),                                    // 双大鬼
       ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),   // 凑满 9 张主 → 有保底，不吊主
       ...spades.map((r, i) => T('S', r, i + 40)),
-      ...[8, 6].map((r, i) => T('D', r, i + 60)),
+      ...diamonds.map((r, i) => T('D', r, i + 60)),
     ],
     declarerSeat: 0, mySeat: 0,
     piecesView: {
@@ -1487,7 +1512,11 @@ function opponentAskedView(spades, spadePieces) {
     // 对手（座 1）第 1 墩领 ♠4 求件，件还没逼完
     trickHistory: [{
       trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0,
-      plays: [{ seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] }],
+      plays: [
+        { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },
+        // gavePiece：队友（座 2）被逼把 ♠K 交了出去 —— 件已经喂给他了
+        ...(gavePiece ? [{ seat: 2, cards: [T('S', 13, 91)] }] : []),
+      ],
     }],
   });
 }

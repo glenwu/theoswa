@@ -103,7 +103,15 @@ for (let i = 0; i < N_ROUNDS; i++) {
             for (const p2 of hist[k].plays ?? [])
               for (const x of p2.cards ?? []) if (ps(x) === suit && isPiece(x)) seenBefore += 1;
           if (seenBefore >= pieceTotal) continue;   // 件已经全现，不存在「还在求」
-          add(`★ 对手还在求这门，我把件交了出去（这墩 ${pts >= 20 ? '≥20' : pts} 分）`);
+          // Glen 的口径：两件在手可以砍；只有一件时要么 ≥20 分，要么这门只剩两三支
+          let heldHere = 0;
+          for (const x of hand) if (ps(x) === suit && isPiece(x)) heldHere += 1;
+          let lenHere = 0;
+          for (const x of hand) if (ps(x) === suit) lenHere += 1;
+          const ok = heldHere >= 2 || pts >= 20 || lenHere <= 3;
+          add(ok
+            ? `  （合规）对手求这门但${heldHere >= 2 ? '我有两件' : pts >= 20 ? '分够大' : '我这门只剩两三支'}`
+            : `★ 对手还在求这门，我把件交了出去（一件、${pts} 分、这门 ${lenHere} 支）`);
         }
         if (!followed) {
           // 垫掉件的时候，手上【别的】非件牌都是些什么？
