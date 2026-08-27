@@ -168,7 +168,10 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
   const phoneLandscape = useMediaQuery(PHONE_LANDSCAPE);
 
   const table = (
-    <div className={`table-spot relative flex min-h-0 flex-col rounded-3xl border border-white/10 ${
+    // 窄屏去掉牌桌那圈边框（Glen：「把桌面区的边框去掉吧」）——
+    // 宽屏上它是用来和左右两栏分界的，窄屏左右两栏本来就收起来了，
+    // 那圈线只是白占一圈内边距。
+    <div className={`table-spot relative flex min-h-0 flex-col rounded-3xl border border-white/10 compact:border-0 ${
       phoneLandscape ? 'w-2/5 shrink-0 p-1.5' : 'h-full p-3'
     }`}>
       {/* 出牌倒计时：牌桌右上角大号显示（与左栏卡片倒计时并存） */}
@@ -729,7 +732,11 @@ function SettlementPanel({ game, send }) {
   );
   return createPortal(
     <div className="fixed inset-0 z-40 grid place-items-center bg-black/55 p-4">
-      <div className="panel w-[min(94%,440px)] p-5">
+      {/* ⚠️ max-h-full + overflow-y-auto：手机横屏只有 390px 高，这个面板的内容
+          （三块分数 + 底牌 + 结论 + 复盘要点）远不止这么高，不给滚动就直接被裁掉，
+          底下的按钮也点不到（Glen 截图）。DominancePanel 早就是这么写的，
+          这里一直漏着。窄屏顺带把内边距收一收。 */}
+      <div className="panel max-h-full w-[min(94%,440px)] overflow-y-auto p-5 compact:p-3">
         <h2 className="text-center text-xl font-black text-amber-300">
           {game.phase === 'GAME_OVER'
             ? `🏆 ${game.gameWinnerTeam === 0 ? '金队' : '青队'}获胜！`
@@ -963,6 +970,14 @@ function KittyBacksRow({ game }) {
 // 出牌区：揭牌提示 / 本轮已打出的牌 / 上一轮停留展示 + 赢家高亮；
 // 本轮未打完时，浅绿底标记当前牌面最大的人（与最终结算同一套判定）
 function PlayZone({ player, game, side = 'top', isYou }) {
+  // 手机横屏牌桌只占 40% 宽、390px 高，xl（h-24 w-16）实在太大（Glen：
+  // 「把左边的牌给缩小 1 到 2 号吧，还是大了，仅限横屏版」）。小两档到 md。
+  // ⚠️ 叠放量要跟着牌宽一起改：-ml-12 是按 xl 的 64px 宽调的（露出 16px），
+  // 直接套到 44px 宽的 md 上会把牌盖得只剩一条缝。
+  const smallPlay = useMediaQuery(PHONE_LANDSCAPE);
+  const playSize = smallPlay ? 'md' : 'xl';
+  const overlapMany = smallPlay ? '-ml-[38px]' : '-ml-[54px]';
+  const overlapFew = smallPlay ? '-ml-8' : '-ml-12';
   const round = game.round;
   const revealing =
     game.phase === 'REVEALING' && round && round.drawnCount < 100 && !round.trumpSuit;
@@ -1121,15 +1136,19 @@ function PlayZone({ player, game, side = 'top', isYou }) {
                 key={c.id}
                 suit={c.suit}
                 rank={c.rank}
-                size="xl"
+                size={playSize}
                 className={`card-pop ${
                   i === 0
                     ? ''
                     : sideways
-                      ? `${play.cards.length > 10 ? '-ml-[54px]' : '-ml-12'} compact:ml-0 compact:-mt-[4.5rem]`
+                      // ⚠️ 竖向叠放那两个类【必须写成完整字面量】：Tailwind 是扫源码文本
+                      // 生成 CSS 的，拼出来的 `compact:${...}` 它认不出，样式根本不会生成。
+                      ? `${play.cards.length > 10 ? overlapMany : overlapFew} compact:ml-0 ${
+                          smallPlay ? 'compact:-mt-12' : 'compact:-mt-[4.5rem]'
+                        }`
                       : play.cards.length > 10
-                        ? '-ml-[54px]'
-                        : '-ml-12'
+                        ? overlapMany
+                        : overlapFew
                 }`}
               />
             ))}
@@ -1470,10 +1489,14 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
   const [avail, setAvail] = useState(0);
   // 与 CSS 的 compact: 断点保持一致（手机竖屏 + iPad 竖屏）。
   const compactPortrait = useMediaQuery(COMPACT_PORTRAIT);
-  // 手机横屏：手牌只分到 ~150px 高，最大那档（56px 宽的牌）两行就顶破了。
-  // 直接把最大档去掉，让择优逻辑从 md 起挑（Glen：「手牌区的牌也小一号试试」）。
+  // 手机横屏。
+  //
+  // ⚠️ 这里【去掉过最大那一档】（Glen 先说「手牌区的牌也小一号试试」），
+  // 看了实机之后他又要回来：「手牌区的牌可以大一号，也是仅限横屏牌」。
+  // 所以档位表和宽屏一样，三档全给 —— 手牌区在横屏拿的是剩余高度（flex-1），
+  // 空间够就该用大的，不够时择优逻辑本来就会自己降档。别再写死砍掉最大档。
   const phoneLandscapeHand = useMediaQuery(PHONE_LANDSCAPE);
-  const tiers = phoneLandscapeHand ? HAND_TIERS.slice(1) : HAND_TIERS;
+  const tiers = HAND_TIERS;
   // hasRow 依赖：手牌行是在揭牌后才挂载的，挂载时立即测量并开始观察（窗口变化实时重算）
   const hasRow = hand.length > 0;
   useEffect(() => {
