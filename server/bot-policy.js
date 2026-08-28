@@ -930,6 +930,23 @@ function pieceContributionContinuationLead(view, ctx) {
   )[0];
 }
 
+// 对手在这一门【已经甩得动了】—— Glen 裁定压缩优先级时用的判据：
+//   「如果判断对手可以甩牌了，应该先去压 ♠ 的长度，因为此时对手甩牌的威胁
+//     比你去给队友件要更大，对手可以甩的牌短一支，那就少一份威胁。」
+//
+// 判据按【最坏情况】算，两条同时成立：
+//   · 这门我手上再没有件能挡他 —— piecesView 的 'mine' 是我自己的件，
+//     'unseen' 有可能在队友手上，但那是猜。防守判断不该指望队友，只认我自己的。
+//   · 他估计还有 ≥2 张 —— 甩牌至少两张，估不到两张就谈不上威胁。
+// 注意这【不是】canThrowByStatus：那条是从「我自己甩得成吗」的角度写的，
+// 我手上的件不挡我自己，却实打实地挡对手。方向相反，别复用。
+function opponentThrowReadyIn(view, ctx, suit) {
+  const items = view.round?.piecesView?.[suit] ?? [];
+  if (items.length === 0) return false;
+  if (items.some(item => item.status === 'mine')) return false;
+  return maxOpponentSuitEstimate(view, ctx, suit) >= 2;
+}
+
 function opponentThreatSuit(view, ctx, tuning = strategyTuning(view)) {
   const scores = new Map();
   for (const trick of view.round.trickHistory ?? []) {
@@ -2040,9 +2057,6 @@ export function chooseLeadCards(view) {
   // 计划成立而时机未到（对手还有足够的主来毙）→ 压住不甩，先吊主削他们的主牌。
   // 时机一到 → 加分抬高，压过其它一切领牌意图，整门甩出去。
   const throwCards = safeSideThrow(view, ctx, tuning);
-  // 这一门【整门是一件武器】—— 要么现在甩，要么留到尾巴上甩，
-  // 反正不该一张一张漏出去。所以计划性压住不甩时它照样记在这里（见下面那段）。
-  const throwSuit = throwCards ? suitOf(throwCards[0], ctx) : null;
   if (throwCards) {
     const isPlanSuit = plan !== null && suitOf(throwCards[0], ctx) === plan.suit;
     if (!(isPlanSuit && !plan.ready)) {
@@ -2088,8 +2102,13 @@ export function chooseLeadCards(view) {
     // 400 这个数是【卡在提案分档之间】选的，不是拍的：要压得过
     // develop-long-side-suit 的上限 360（160 + 跑副牌 200）—— 他说的是「就要」，
     // 不能被「发展自己最长的门」盖掉；又要压不动 seek-piece(450) 和帮队友求件
-    //（480+），那两条是他反复裁过的对家约定，不该被这条挤掉。
+    //（480+），那两条是他反复裁过的对家约定。
+    // ⚠️ 「压不动帮队友求件」这半句【只在他还甩不动的时候成立】—— 见下面
+    // throwReady 那一档，Glen 后来把这条撞车裁给了防守。
     const owed = teamGavePieceIn(view, ctx, threatSuit);
+    // 件已经喂出去、而且他【真的甩得动了】→ 压他的长度反过来压过帮队友求件。
+    // Glen 裁定：「此时对手甩牌的威胁比你去给队友件要更大。」
+    const throwReady = owed && opponentThrowReadyIn(view, ctx, threatSuit);
     addProposal(
       // 压缩对手的甩牌张数，不是在求件 —— 别顺手把信号发出去
       [quietLead(view, ctx, cardsOfSuit(hand, threatSuit, ctx), tuning)],
@@ -2098,7 +2117,12 @@ export function chooseLeadCards(view) {
       //（那是 run-side 专属），attack(250) 已经稳压 develop(160)。
       // 「打别人不想自己打的牌」这个意思，靠的是【压掉吊主之后 attack 自然胜出】，
       // 不需要第二份加分。它唯一能改变的是和求件(450) 打平，没有依据这么做。
-      (owed ? 400 : 250) * tuning.leadStrategyPriorWeight,
+      //
+      // 580 同样是【卡在分档之间】选的：要压得过帮队友求件的上限
+      //（return-partner-suit 320 + 明求 160 + 队友做庄 80 = 560）和求件(450)，
+      // 又要压不动 safe-side-throw(620) —— 我自己能甩就甩是实打实的分，
+      // Glen 早裁过，不该被防守挤掉。
+      (throwReady ? 580 : owed ? 400 : 250) * tuning.leadStrategyPriorWeight,
       owed ? 'compress-after-giving-piece' : 'attack-opponent-long-suit'
     );
   }
@@ -2185,19 +2209,35 @@ export function chooseLeadCards(view) {
   // 计划性压住不甩的那一门（tailThrowPlan 挂起，等吊完主再甩）同样让位：
   // 那门本来就是留着整门甩的武器，一张一张漏出去正好把它拆了 —— 跟牌那边
   // 早就有「宁可垫低主也不拆长门」的护尾罚分，领牌这边不该反过来自己拆。
-  // 实测这一档把「甩得出去却一张一张领」从 26% 再压到 11%（求过件的那一栏）。
-  // ⚠️ 这一档是从 Glen 的原则推出来的，不是他直接裁定的，回头要跟他确认。
-  if (throwSuit) {
+  //
+  // 【护的是所有甩得出去的门，不只是 safeSideThrow 挑中的那一门】—— Glen 裁定：
+  //   「一般来说，还是有一手甩牌对于对手来说会更有威胁，即使现在还是在吊主阶段，
+  //     所以如果想一支支打，一般也不能打可以甩的门，这个非常浪费，因为如果吊主
+  //     把对手手中的主的数量吊到低于你手中的甩牌数量的话，手上的那门甩牌就会
+  //     非常有价值，甚至可以保底/撬底。」
+  // 这条把「不拆」的理由从【顺手别浪费】改成了【那是留着的资产】：吊主阶段拆它
+  // 恰恰拆掉了吊主的收益。所以判据用甩牌资格本身（canThrowByStatus + ≥2 张），
+  // 不能用 safeSideThrow —— 那条回答的是「现在该甩哪一门」，还带早盘 ≥4 张的
+  // 门槛，两张的门根本进不了它的候选，而实测浪费掉的 58 次里有 41 次正是两张门。
+  //
+  // ⚠️ 这里【不补甩牌提案】，只删单张领牌。Glen 说的是别拆，不是现在就甩；
+  // 早盘那道 ≥4 张的门槛照旧管着「值不值得现在暴露」，两码事。
+  const throwableSuits = SUITS.filter(suit =>
+    suit !== ctx.trumpSuit &&
+    cardsOfSuit(hand, suit, ctx).length >= 2 &&
+    canThrowByStatus(view.round?.piecesView?.[suit])
+  );
+  // 注：safeSideThrow 选中的那一门必然在这个集合里（它的候选条件就是
+  // 「≥2 张 && canThrowByStatus」再加筛选），所以不必单独并进来。
+  if (throwableSuits.length > 0) {
+    const throwSuits = new Set(throwableSuits);
     const victims = [...proposals].filter(([, proposal]) =>
-      proposal.cards.length === 1 && suitOf(proposal.cards[0], ctx) === throwSuit
+      proposal.cards.length === 1 && throwSuits.has(suitOf(proposal.cards[0], ctx))
     );
     // 兜底：全删光了就没牌可领了（chooseLeadCards 会返回空数组）。
-    // ⚠️ 现在【推得出】这一行永远为真，但它留着：
-    //   · 提了甩牌案时，那个多张提案自己不在 victims 里，必然剩一个；
-    //   · 计划性压住不甩时 plan 一定存在 → control.holdsTopTrump → 我手上
-    //     至少有一张主，主牌的单张提案花色是 TRUMP，也不在 victims 里。
-    // 第二条撑在 holdsTopTrump 的内部实现上，隔着两个函数。真塌了的代价是
-    // 电脑领牌返回空数组（真人正在打的局里直接卡死），而代价只是一次比较。
+    // ⚠️ 扩到「所有甩得出去的门」之后这一行【真的会为假】——
+    // 手上两门副牌都甩得出去、又一张主都没有时，单张提案会被删干净。
+    // 那种局面下这条规矩本来就让不出位置：总得领一张，真人也一样。
     if (victims.length < proposals.size) {
       for (const [key] of victims) proposals.delete(key);
     }

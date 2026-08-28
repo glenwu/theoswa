@@ -13,11 +13,13 @@ runMutants([
     scores.set(suit, (scores.get(suit) ?? 0) + tuning.opponentThreatThreshold);
   }`, '',
       '交出去之后也不主动去压，还得等他领够两次'],
-  [F, "      (owed ? 400 : 250) * tuning.leadStrategyPriorWeight,",
+  // ⚠️ 分档现在是三档（throwReady 580 / owed 400 / 250），Glen 2026-08-29 裁定，
+  // 见 mutants26。这里钉的仍是【欠不欠】那一刀。
+  [F, "      (throwReady ? 580 : owed ? 400 : 250) * tuning.leadStrategyPriorWeight,",
       '      250 * tuning.leadStrategyPriorWeight,',
       '欠着的那门不再单独一档 —— 被「发展自己最长的门」(360) 盖回去'],
-  [F, "      (owed ? 400 : 250) * tuning.leadStrategyPriorWeight,",
-      '      400 * tuning.leadStrategyPriorWeight,',
+  [F, "      (throwReady ? 580 : owed ? 400 : 250) * tuning.leadStrategyPriorWeight,",
+      '      (throwReady ? 580 : 400) * tuning.leadStrategyPriorWeight,',
       '不欠也照 400 打 —— 把普通的压缩提案一起抬上去'],
   [F, "    if (trick.leadSeat % 2 === view.you.team) continue;          // 得是对手在求",
       '',

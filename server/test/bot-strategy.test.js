@@ -1518,6 +1518,122 @@ test('件喂出去之后：就算这门不是我最长的，也要回头去压�
     `方块更长，但黑桃是欠着的那门，该先去压（实际领了 ${lead.suit}${lead.rank}）`);
 });
 
+// ---- 压他的长度 vs 帮队友求件：谁先 ----
+//
+// Glen 裁定（2026-08-29）：
+//   「我方刚把 ♠A 喂给对手了，同时队友在求 ♥件 —— 如果判断对手可以甩牌了，
+//     应该先去压 ♠ 的长度，因为此时对手甩牌的威胁比你去给队友件要更大，
+//     对手可以甩的牌短一支，那就少一份威胁。」
+//
+// 所以 compress 不是一个固定档位，而是【看他甩不甩得动】分两档：
+//   甩得动 → 580，压过帮队友求件的上限（320 + 明求 160 + 队友做庄 80 = 560）
+//   甩不动 → 400，照旧让位给队友
+//
+// 两条必须成对看：只留上面那条的话，「compress 永远最大」也能让它绿。
+//
+// ⚠️ fixture 的两臂【只差一支 ♠A 在不在我手上】，别的全同：
+//   · 在我手上（'mine'）→ 我挡得住他一张 → 甩不动
+//   · 不在（'unseen'）  → 挡不住 → 甩得动
+// 另一支 A 两臂都留 'unseen'，这是【故意的】：不留的话四支件全非 'unseen'，
+// canThrowByStatus 就成立了，「别拆甩牌门」那条会接管，两臂都改领方块，
+// 本条起没起作用就看不出来了。
+// 方块比黑桃长（4 vs 3），所以「发展最长副牌」指向方块 —— 把牌拉回黑桃的
+// 只可能是 compress 这一条。
+function compressVsPartnerAskView(spadeAceMine) {
+  return leadView({
+    // 队友（座 2）做庄 → 帮他求件那条拿满 560
+    declarerSeat: 2, mySeat: 0,
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),                                    // 双大鬼
+      ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),   // 凑满 9 张主 → 有保底，不吊主
+      ...(spadeAceMine ? [T('S', 14, 38)] : [T('S', 4, 38)]),
+      ...[9, 7].map((r, i) => T('S', r, i + 40)),
+      ...[9, 8, 6, 4].map((r, i) => T('D', r, i + 60)),
+    ],
+    piecesView: {
+      S: [
+        { rank: 14, status: spadeAceMine ? 'mine' : 'unseen' },
+        { rank: 14, status: 'unseen' },
+        { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' },   // 喂出去的那支
+      ],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+    trickHistory: [
+      // 第 1 墩：对手（座 1）领 ♠3 求件，队友（座 2）被逼交出 ♠K
+      {
+        trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0,
+        plays: [
+          { seat: 1, playSuit: 'S', cards: [T('S', 3, 90)] },
+          { seat: 0, cards: [T('S', 5, 91)] },
+          { seat: 3, cards: [T('S', 6, 92)] },
+          { seat: 2, cards: [T('S', 13, 93)] },
+        ],
+      },
+      // 第 2 墩：队友领 ♦4 —— 明求方块的件
+      {
+        trickNo: 2, leadSeat: 2, leadSuit: 'D', winnerSeat: 2, points: 0,
+        plays: [{ seat: 2, playSuit: 'D', cards: [T('D', 4, 94)] }],
+      },
+    ],
+  });
+}
+
+test('压他的长度 vs 帮队友求件：他甩得动 → 先去压，别管队友那门', () => {
+  const lead = chooseLeadCards(compressVsPartnerAskView(false))[0];
+  assert.equal(lead.suit, 'S',
+    `♠ 的件我一支都挡不住了，他甩牌的威胁比队友那件大（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+test('压他的长度 vs 帮队友求件：他甩不动（♠A 还在我手上）→ 还是先帮队友', () => {
+  const lead = chooseLeadCards(compressVsPartnerAskView(true))[0];
+  assert.equal(lead.suit, 'D',
+    `♠A 在我手上，他甩不干净，威胁没那么急，该回队友那门（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 第三臂：件我一支都挡不住（和「甩得动」那臂一样），但这门【已经打得差不多了】，
+// 他手上估计连两张都没有 —— 甩牌至少两张，剩一张就谈不上威胁，维持原判。
+// Glen：「对手可以甩的牌短一支，那就少一份威胁」，短到一张就没有威胁可言。
+//
+// ⚠️ 和上面两臂的差别只在【♠ 出掉了多少】：20 张已经打出、我手上 3 张，
+// 剩给别人的只有 1 张。件的状态和「甩得动」那臂一字不差。
+test('压他的长度 vs 帮队友求件：这门他只剩一张，甩不成 → 还是先帮队友', () => {
+  const spadeFlood = Array.from({ length: 16 }, (_, i) => T('S', 3 + (i % 3), 200 + i));
+  const lead = chooseLeadCards(leadView({
+    declarerSeat: 2, mySeat: 0,
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),
+      ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),
+      ...[9, 7, 4].map((r, i) => T('S', r, i + 40)),
+      ...[9, 8, 6, 4].map((r, i) => T('D', r, i + 60)),
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: 'unseen' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+    trickHistory: [
+      { trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0, plays: [
+        { seat: 1, playSuit: 'S', cards: [T('S', 3, 90)] },
+        { seat: 0, cards: [T('S', 5, 91)] },
+        { seat: 3, cards: [T('S', 6, 92)] },
+        { seat: 2, cards: [T('S', 13, 93)] },   // 队友被逼交出 ♠K
+      ] },
+      // ♠ 已经甩过一轮，桌上出得七七八八
+      { trickNo: 2, leadSeat: 3, leadSuit: 'S', winnerSeat: 3, points: 0, plays: [
+        { seat: 3, playSuit: 'S', cards: spadeFlood.slice(0, 4) },
+        { seat: 2, cards: spadeFlood.slice(4, 8) },
+        { seat: 1, cards: spadeFlood.slice(8, 12) },
+        { seat: 0, cards: spadeFlood.slice(12, 16) },
+      ] },
+      { trickNo: 3, leadSeat: 2, leadSuit: 'D', winnerSeat: 2, points: 0, plays: [
+        { seat: 2, playSuit: 'D', cards: [T('D', 4, 94)] },
+      ] },
+    ],
+  }))[0];
+  assert.equal(lead.suit, 'D',
+    `♠ 只剩一张在别人手上，甩不成，没必要抢在队友那件前面（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ============ 不帮对手吊主 ============
 //
 // Glen：「吊主也一样，如果对方要吊主吊大牌出来让自己保底，或是吊短主牌可以让
@@ -1624,16 +1740,31 @@ test('不帮对手求：他在求黑桃、件还没逼完 → 改领别门，让
 });
 
 // 例外：这门我自己也有甩牌欲望 —— 那是我的武器，领它是为了自己甩，不是帮他。
-// ⚠️ 两条成对看，不然「永远不领对手求过的门」也能让上面那条绿。
-// 躲的是【还没逼完】那件事。件全现完了，他这门再也求不出东西来，
-// 那就没有「帮他」可言，这门跟别的门一样正常参与选择。
-test('不帮对手求：这门的件已经全现 → 躲这件事了结，照常领', () => {
+// ⚠️ 「躲只针对还没逼完」这半边由上面【件喂出去之后：改为主动领这门】那条钉住
+//（teamGavePieceIn 是 opponentAskOpen 的另一个出口，件状态不动，只剩本条起作用）。
+//
+// ⚠️ 这里【原本还有一条】用「件全现完」关掉躲避的对照，已删 —— 它变得观察不到了：
+// 件全现 = opponentAskOpen 关掉，【同时】也 = canThrowByStatus 打开，两件事是
+// 同一件事。于是下面「甩得出去就别一张张领」那条必然接管，领的门由它决定，
+// 本条起没起作用看不出来。原来的 fixture 留着，改钉那条规矩（就在下面）。
+
+// Glen 裁定（第三条规矩，2026-08-29）：
+//   「一般来说，还是有一手甩牌对于对手来说会更有威胁，即使现在还是在吊主阶段，
+//     所以如果想一支支打，一般也不能打可以甩的门，这个非常浪费，因为如果吊主
+//     把对手手中的主的数量吊到低于你手中的甩牌数量的话，手上的那门甩牌就会
+//     非常有价值，甚至可以保底/撬底。」
+//
+// 这一手：♠ 的件全现完了 → 甩牌资格成立、我还有 3 张，这门就是【留着的资产】。
+// 但手牌 14 张（早盘），safeSideThrow 要 ≥4 张才肯暴露 → 它不提甩牌案。
+// 旧写法只护 safeSideThrow 挑中的那一门，于是这门既没被甩、也没被护，
+// 就一张张漏出去了。实测 200 局浪费的 58 次里有 41 次正是这种两三张的门。
+test('别拆甩牌门：件全现、张数够甩，但早盘还不值得暴露 → 改领别门，不一张张漏', () => {
   const lead = chooseLeadCards(opponentAskedView(
     [9, 7, 4],
     [14, 14, 13, 13].map(rank => ({ rank, status: 'seen' })),
   ))[0];
-  assert.equal(lead.suit, 'S',
-    `件都现完了还躲着不领，那是白躲（实际领了 ${lead.suit}${lead.rank}）`);
+  assert.equal(lead.suit, 'D',
+    `♠ 甩得出去，就该整门留着甩，不能一张张领（实际领了 ${lead.suit}${lead.rank}）`);
 });
 
 test('不帮对手求：但这门我自己够长（是我的武器）→ 照领不误', () => {
