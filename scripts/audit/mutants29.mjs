@@ -42,4 +42,22 @@ runMutants([
   return !!firstPartnerLead && firstPartnerLead.leadSuit !== 'TRUMP';`,
       '  return false;',
       '队友怎么表示都不算应答 —— 庄家一路吊到只剩两个鬼'],
+
+  // ---- 庄家：停吊的判据是「我的主已经不比对手长」，不是「保底不现实」 ----
+  [F, `        ? (trumpSignalAnswered(view, ctx) ||
+           trumps.length <= maxOpponentTrumpEstimate(view, ctx) ? 0 : 520)`,
+      `        ? (trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520)`,
+      '退回旧判据：保底不现实就停吊（7、8 张主也被判死）'],
+  [F, `        ? (trumpSignalAnswered(view, ctx) ||
+           trumps.length <= maxOpponentTrumpEstimate(view, ctx) ? 0 : 520)`,
+      '        ? (trumpSignalAnswered(view, ctx) ? 0 : 520)',
+      '主已经比对手短了还接着吊 —— 那是替对手削我自己'],
+
+  // ---- 该吊主时，「发展长副牌」和兜底让位 ----
+  [F, '  if (sideGroups.length > 0 && !drawWarranted) {',
+      '  if (sideGroups.length > 0) {',
+      '发展长副牌不让位 —— 叠加起来照旧压过吊主'],
+  // 注：兜底（low-card-fallback）那一半【试过让位，撤了】—— 200 局实测
+  // 76.5%→76.4%、51.1%→50.1%，是噪声，而且构造不出能钉住它的 fixture
+  //（20 分只在平局边缘起作用）。理由写在源码和测试里。
 ]);

@@ -26,7 +26,9 @@ runMutants([
   [F, `      (160 + (strategy === 'run-side' || strategy === 'run-and-score'
         ? STRATEGY_RUN_SIDE_BONUS : 0)) * tuning.leadStrategyPriorWeight,`,
       '      160 * tuning.leadStrategyPriorWeight,', '「以跑副牌为主」没接到领牌上'],
-  [F, "        ? (trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520)",
-      '        ? (trumpSignalAnswered(view, ctx) ? 0 : 520)',
-      '已经改跑分为主的庄家还在吊主'],
+  // ⚠️ 「已经改跑分为主的庄家还在吊主」那一条【删了】——
+  // Glen 2026-08-29 裁定 points-first 不再是停吊的理由：
+  //   「主牌只有 7、8 张、又没顶牌、副牌也弱……吊，因为你不知道队友是什么牌，
+  //     也不知道对手有多少主，对手也有可能主比你短。」
+  // 停吊的判据换成「我的主已经不比对手长」，对应的变异体在 mutants29。
 ]);

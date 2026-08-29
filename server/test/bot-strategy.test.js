@@ -411,6 +411,69 @@ test('吊主：队友先接着吊了一轮主，之后才领副牌 → 那不是
     `队友第一次拿到牌权选的是吊主，那就是「一起吊」（实际领了 ${lead.suit}${lead.rank}）`);
 });
 
+// ---- 「保底不现实」不再是停吊的理由（Glen 2026-08-29）----
+//
+//   「主牌只有 7、8 张、又没顶牌、副牌也弱的时候，到底还吊不吊？吊，因为你不知道
+//     队友是什么牌，也不知道对手有多少主，对手也有可能主比你短。」
+//
+// bottomHopeless 的主牌门槛是 9 张（BOTTOM_MIN_TRUMPS），7、8 张照样被判成
+// 「保底不现实」→ points-first → 停吊，正是他点名的那个局面。他早先那句
+// 「保底不现实就改跑分为主」说的是【拿仅剩的主牌去吊】，不是 8 张这种还很长的手。
+// 停吊的判据换成【我的主已经不比对手长】—— 算出来的，不是拍脑袋的张数门槛。
+//
+// ⚠️ 首墩吊的必须是【不带分】的主牌。第一版写了 ♥5，正好触发「带分吊主求大鬼」
+// 那条约定，队友随后领副牌就成了应答 → signalAnswered → 停吊，
+// 测的根本不是这一条（插桩才看出来）。
+const EIGHT_TRUMPS = [13, 12, 11, 10, 9, 8, 7, 6];   // 8 张，没鬼没顶牌
+const iLedPlainTrump = {
+  trickNo: 1, leadSeat: 0, leadSuit: 'TRUMP', winnerSeat: 0, points: 0,
+  plays: [{ seat: 0, playSuit: 'TRUMP', cards: [T('H', 4, 90)] }],
+};
+
+test('吊主：8 张主、没顶牌、副牌也弱（保底不现实）→ 照 Glen 的裁定，还是要吊', () => {
+  const view = leadView({
+    hand: [...EIGHT_TRUMPS.map((r, i) => T('H', r, i)),
+      ...[9, 7, 5].map((r, i) => T('S', r, i + 40))],
+    declarerSeat: 0, mySeat: 0, trickHistory: [iLedPlainTrump],
+  });
+  assert.equal(roundStrategy(view, S_CTX), 'points-first',
+    '前提：这手牌确实被判成「保底不现实」');
+  const lead = chooseLeadCards(view)[0];
+  assert.equal(lead.suit, 'H',
+    `8 张主还很长，对手也可能比我短，该接着吊（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// ---- 该吊主时，「发展自己最长的副牌」让位 ----
+//
+// 插桩实测 200 局：吊主提案【提了但输掉】165 次，赢它的提案 96 次含
+// develop-long-side-suit，而中位差只有 116 分。addProposal 对同一张牌是累加的，
+// develop(160~360) 叠在 return-partner-suit 上轻松过 600。
+//
+// ⚠️ 这一手的分数账（插桩量的，改动前后都核过）：
+//   吊主 H6 = 520 - 主牌保留代价 20  → 500
+//   ♠6   = 回队友那门 320 + 明求 160 → 480    ← 让位后
+//        + 发展长副牌 160 + 兜底 20  → 660    ← 不让位就是这个数，压过吊主
+// 所以这条测试【必须】让队友求的门同时是我最长的副牌，两条加分才叠在同一张牌上。
+//
+// ⚠️ 只让位 develop 这一条。兜底（low-card-fallback，20 分）【试过也让位，撤了】：
+// 200 局实测 76.5%→76.4%、51.1%→50.1%，是噪声，而且构造不出能钉住它的 fixture
+//（20 分的差距只在平局边缘起作用）。
+test('吊主：该吊的时候，「发展自己最长的副牌」让位', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [...EIGHT_TRUMPS.map((r, i) => T('H', r, i)),
+      ...[9, 8, 7, 6].map((r, i) => T('S', r, i + 40))],   // ♠ 是我最长的副牌
+    declarerSeat: 0, mySeat: 0,
+    trickHistory: [
+      iLedPlainTrump,
+      // 队友（座 2）在♠明求件 —— 回门那条会挑同一张♠6，两份加分叠在一起
+      { trickNo: 2, leadSeat: 2, leadSuit: 'S', winnerSeat: 2, points: 0,
+        plays: [{ seat: 2, playSuit: 'S', cards: [T('S', 4, 91)] }] },
+    ],
+  }))[0];
+  assert.equal(lead.suit, 'H',
+    `发展长副牌不是跳过吊主的理由（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ============ 庄家队友：没保底就该一直吊，不看庄家最近打了什么 ============
 //
 // Glen 2026-08-29：「BOT 做庄时开始吊主，后来还是容易忘记，打成副牌了，

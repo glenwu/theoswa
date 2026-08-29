@@ -2106,6 +2106,8 @@ export function chooseLeadCards(view) {
   // 吊主正是在削减对手手上的主牌，等他们凑不出足够的主，尾巴那一甩才毙不住。
   // Glen：「求到件了可以转吊主」。
   const planPending = plan !== null && !plan.ready;
+  // 这一手到底该不该吊主 —— 下面「发展长副牌」和「兜底小牌」要看它让位。
+  let drawWarranted = false;
 
   // ---- 本局策略接到领牌上（Glen：「一直跟随这个策略支持去打」）----
   //
@@ -2129,7 +2131,18 @@ export function chooseLeadCards(view) {
       // 「就可以改为跑分为主」，一个已经放弃保底的庄家再拿仅剩的主牌去吊，
       // 既削不动对手，也换不回分 —— 这就是「一直跟随这个策略去打」的意思。
       : role === 'declarer'
-        ? (trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520)
+        // ⚠️ 「策略已转跑分为主」【不再】是停吊的理由。Glen 2026-08-29 裁定：
+        //   「主牌只有 7、8 张、又没顶牌、副牌也弱的时候，到底还吊不吊？吊，
+        //     因为你不知道队友是什么牌，也不知道对手有多少主，
+        //     对手也有可能主比你短。」
+        // bottomHopeless 的主牌门槛是 9 张（BOTTOM_MIN_TRUMPS），7、8 张照样被
+        // 判成「保底不现实」→ points-first → 停吊，正是他点名的那个局面。
+        // 他早先那句「保底不现实就改跑分为主」说的是【拿仅剩的主牌去吊】，
+        // 不是 7、8 张这种还很长的手。
+        // 停吊的判据换成【我的主已经不比对手长了】—— 那时候再吊才是替对手削我自己，
+        // 而且这是算出来的，不是拍脑袋的张数门槛，正对他「对手也有可能主比你短」。
+        ? (trumpSignalAnswered(view, ctx) ||
+           trumps.length <= maxOpponentTrumpEstimate(view, ctx) ? 0 : 520)
       : role === 'declarerPartner'
         // 没保底牌就该接着吊 —— 只有【明确的「不用吊主」信号】才停（Glen）：
         //   · 庄家首出就打副牌 = 他自己够保底（declarerOpenedSide）
@@ -2139,6 +2152,7 @@ export function chooseLeadCards(view) {
         ? (declarerOpenedSide(view) ||
            (hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 0 : 480)
       : 0;                                                             // 闲家：随便
+    drawWarranted = drawBonus > 0;
     if (drawBonus > 0) {
       addProposal(
         // 只有甩尾手计划挂起时才算「明确需要」—— 那时确实要把对手的主削到毙不动
@@ -2279,7 +2293,20 @@ export function chooseLeadCards(view) {
     .map(suit => cardsOfSuit(hand, suit, ctx))
     .filter(cards => cards.length > 0)
     .sort((a, b) => b.length - a.length);
-  if (sideGroups.length > 0) {
+  // 【该吊主的时候，「发展自己最长的副牌」不是跳过吊主的理由】—— Glen 2026-08-29：
+  //   「BOT 做庄时开始吊主，后来还是容易忘记，打成副牌了……这个时候还没保底牌，
+  //     吊主还是必要的，除非副牌比较强，有可能可以保底。」
+  // 「副牌比较强」那个例外在吊主的门槛里已经管着了（!strongSide），
+  // 走到这里还成立的话，剩下的「我最长的副牌」就只是普通发展，让位。
+  //
+  // ⚠️ 为什么是【不提案】而不是【给吊主加分】：实测 200 局，吊主提了但输掉的
+  // 165 次里，赢它的提案 96 次含 develop-long-side-suit，而中位差只有 116 分。
+  // addProposal 对同一张牌是累加的，develop(160~360) 叠在 return-partner-suit
+  // 或 seek-piece 上轻松过 700，靠加分压得动就得把吊主抬到 800 上下，
+  // 那会连甩牌和续件一起盖掉。
+  // ⚠️ 只让位这一条和下面的兜底：求件 / 帮队友求件 / 压欠着的门这些【约定】
+  // 照旧凭本事和吊主竞争 —— 那些是 Glen 反复裁过的，不该被这条挤掉。
+  if (sideGroups.length > 0 && !drawWarranted) {
     const long = sideGroups[0];
     const noPoint = long.filter(card => cardPoints(card) === 0);
     addProposal(

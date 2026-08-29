@@ -6,14 +6,16 @@ import { runMutants } from './mutate.mjs';
 const F = 'server/bot-policy.js';
 runMutants([
   [F, '    if (drawBonus > 0) {', '    if (false && drawBonus > 0) {', '拿掉持续吊主（回到「只吊一轮」）'],
-  [F, "        ? (trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520)",
+  [F, `        ? (trumpSignalAnswered(view, ctx) ||
+           trumps.length <= maxOpponentTrumpEstimate(view, ctx) ? 0 : 520)`,
       '        ? 0', '庄家不再续吊'],
   // ⚠️ 判据 2026-08-29 换过：从 lastLeadStyle（庄家最近一次领什么）换成
   // declarerOpenedSide（庄家首出打的是不是副牌）。见 mutants29。
   [F, "        ? (declarerOpenedSide(view) ||\n           (hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 0 : 480)",
       '        ? 480', '队友不看庄家的表态，一律吊主'],
   [F, '!control.guaranteed && (!strongSide || planPending)', 'true', '有保底牌/副牌强也照吊不误'],
-  [F, "trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520",
+  [F, `trumpSignalAnswered(view, ctx) ||
+           trumps.length <= maxOpponentTrumpEstimate(view, ctx) ? 0 : 520`,
       '520', '庄家不看队友答没答，照旧死吊'],
   [F, 'card.rank === 15 || card.rank === 16)) return true;', 'card.rank >= 3)) return true;',
       '随便跟一张主也算「不用吊主」的应答'],

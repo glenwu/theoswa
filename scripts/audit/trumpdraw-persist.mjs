@@ -25,18 +25,25 @@ const NEW = `  const early = hand.length > 8;
         -preserveCost * 0.25 * tuning.preserveWeight -
         (hand.length > 8 ? pointValue * 8 * tuning.pointExposureWeight : 0) +
         (p.cards.length > 1 ? p.cards.length * 12 : 0);
-      return { tag: p.tag, score: p.bonus + generic, suit: suitOf(p.cards[0], ctx) };
+      // ⚠️ 提案对象上没有 tag，理由存在 reasons 数组里（addProposal 对同一张牌
+      // 是累加的，所以一张牌可能挂着好几条理由）。第一版写成 p.tag，
+      // 于是 winner 全是 null、drawScore 全是 null —— 「压根没提」的结论是假的。
+      return { tags: p.reasons ?? [], score: p.bonus + generic, suit: suitOf(p.cards[0], ctx) };
     }).sort((a, b) => b.score - a.score);
     globalThis.__draw.push({
       role, guaranteed: !!control.guaranteed, strongSide, planPending,
       outstandingTrumps, drawPool: drawPool.length, strategy,
       helpingOpponentDraw,
+      opening,
+      trumpCount: trumps.length,
+      oppTrumpEst: maxOpponentTrumpEstimate(view, ctx),
       openedSide: declarerOpenedSide(view),
       answeredSignal: hasBigJoker && declarerTrumpPointSignal(view, ctx),
       signalAnswered: role === 'declarer' && trumpSignalAnswered(view, ctx),
-      winner: ranked[0]?.tag ?? null, winnerSuit: ranked[0]?.suit ?? null,
-      drawScore: ranked.find(r => r.tag === 'continue-trump-draw')?.score ?? null,
-      runnerUp: ranked[1]?.tag ?? null,
+      winner: (ranked[0]?.tags ?? []).join('+') || null,
+      winnerSuit: ranked[0]?.suit ?? null,
+      drawScore: ranked.find(r => r.tags.includes('continue-trump-draw'))?.score ?? null,
+      winnerScore: ranked[0]?.score ?? null,
     });
   }
   return [...proposals.values()]`;
@@ -67,6 +74,20 @@ try {
   for (const r of miss) by.set(r.winner, (by.get(r.winner) ?? 0) + 1);
   for (const [k, v] of [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10))
     console.log(`  ${String(v).padStart(4)}  ${k}`);
+  const lost = miss.filter(r => r.drawScore !== null);
+  if (lost.length) {
+    console.log('\n【提了但输了】的 ' + lost.length + ' 次，差距多少：');
+    const gaps = lost.map(r => r.winnerScore - r.drawScore).sort((a, b) => a - b);
+    const q = p2 => gaps[Math.floor(gaps.length * p2)];
+    console.log(`  中位差 ${q(.5).toFixed(0)}，四分位 ${q(.25).toFixed(0)} ~ ${q(.75).toFixed(0)}，最大 ${gaps[gaps.length-1].toFixed(0)}`);
+    console.log(`  吊主提案的最终得分：中位 ${lost.map(r=>r.drawScore).sort((a,b)=>a-b)[Math.floor(lost.length/2)].toFixed(0)}`);
+    const has = tag => lost.filter(r => (r.winner ?? '').includes(tag)).length;
+    console.log('  赢它的那条提案里含有：');
+    for (const t of ['return-partner-suit','develop-long-side-suit','seek-piece',
+                     'compress-after-giving-piece','attack-opponent-long-suit',
+                     'continue-contributed-piece','safe-side-throw','tail-throw'])
+      if (has(t)) console.log(`    ${String(has(t)).padStart(4)}  ${t}`);
+  }
   console.log('\n没吊的时候，吊主提案本身有没有被提出来：');
   console.log(`  提了但输了 ${miss.filter(r => r.drawScore !== null).length}`);
   console.log(`  压根没提   ${miss.filter(r => r.drawScore === null).length}`);
@@ -92,6 +113,8 @@ try {
         : r.role === 'declarerPartner' && r.openedSide ? '庄家首出打的就是副牌'
         : r.role === 'declarerPartner' && r.answeredSignal ? '我有大鬼，转副牌就是应答'
         : r.role === 'declarer' && r.signalAnswered ? '队友已应答「不用吊主」'
+        : r.opening ? '这是开局首领（走 dealer-opening 那条）'
+        : r.role === 'declarer' && r.trumpCount <= r.oppTrumpEst ? '庄家：我的主已经不比对手长'
         : r.strategy === 'points-first' ? '策略已转跑分为主'
         : '其它';
       w.set(k, (w.get(k) ?? 0) + 1);

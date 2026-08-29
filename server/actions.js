@@ -838,7 +838,7 @@ export function handleHoldLastTrick(state, action, actorId) {
   if (r.lastTrickHolds.length === 1) {
     r.settleDeadline = Date.now() + (state.timing ? state.timing.finalHoldMs : 60000);
   }
-  pushLog(state, `${me.nickname} 想再看一会最后一墩（${r.lastTrickHolds.length} 人）`);
+  pushLog(state, `${me.nickname} 想再看一会最后一轮（${r.lastTrickHolds.length} 人）`);
   return succeed();
 }
 
@@ -849,10 +849,10 @@ export function handleReleaseLastTrick(state, action, actorId) {
   const r = state.round;
   const me = playerById(state, actorId);
   if (!(r.lastTrickHolds ?? []).includes(me.seat)) {
-    return fail(ErrorCode.ALREADY_VOTED, '你没有按住这一墩');
+    return fail(ErrorCode.ALREADY_VOTED, '你没有按住这一轮');
   }
   r.lastTrickHolds = r.lastTrickHolds.filter(seat => seat !== me.seat);
-  pushLog(state, `${me.nickname} 看完了最后一墩`);
+  pushLog(state, `${me.nickname} 看完了最后一轮`);
   // 按住的人都放开了 → 立刻收：留下来的是他们，说走也该由他们说。
   // 置成「已经到点」，afterAction 重排计时器时会马上触发 settleTrick。
   if (r.lastTrickHolds.length === 0) r.settleDeadline = Date.now();

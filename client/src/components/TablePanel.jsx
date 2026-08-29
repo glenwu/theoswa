@@ -1289,7 +1289,7 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
         .join('、');
       hints.push(
         <span key="holders" className="text-xs font-bold text-emerald-300/80">
-          {names} 还在看这一墩，等他{holds.length > 1 ? '们' : ''}按「继续」
+          {names} 还在看这一轮，等他{holds.length > 1 ? '们' : ''}按「继续」
         </span>
       );
     }
