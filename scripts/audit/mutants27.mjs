@@ -45,12 +45,18 @@ runMutants([
       '一件也算「有两件」—— 整道闸等于没有'],
 
   // ---- 「即使对方甩了也得不了多少分，那么就可以杀」 ----
-  [F, '    if (suitPointsAtLarge(view, ctx, suit) <= PIECE_COVER_MIN_POINTS) continue;',
+  // ⚠️ 判据 2026-08-29 换过：从 suitPointsAtLarge（这门还剩多少分）换成
+  // sideSuitTotalPoints（这门天生多少分）。Glen 纠正：甩牌的价值不局限在这一门，
+  // 「这门的分被打掉了」不算安全，只有打 10 / 打 K 那种结构性少分才算。
+  [F, '    if (sideSuitTotalPoints(ctx) <= PIECE_COVER_MIN_POINTS) continue;',
       '    if (false) continue;',
-      '这门刮不到分也照挡 —— 把 Glen 那条例外挡掉了'],
-  [F, '    if (suitPointsAtLarge(view, ctx, suit) <= PIECE_COVER_MIN_POINTS) continue;',
-      '    if (suitPointsAtLarge(view, ctx, suit) <= 50) continue;',
-      '门槛放到满分 —— 任何时候都算「刮不到分」'],
+      '打 K 时这门天生少 20 分也照挡 —— 把 Glen 那条例外挡掉了'],
+  [F, '    if (sideSuitTotalPoints(ctx) <= PIECE_COVER_MIN_POINTS) continue;',
+      '    if (sideSuitTotalPoints(ctx) <= 50) continue;',
+      '门槛放到满分 —— 一般局也算「天生刮不到分」'],
+  [F, '    if (sideSuitTotalPoints(ctx) <= PIECE_COVER_MIN_POINTS) continue;',
+      '    if (suitPointsAtLarge(view, ctx, suit) <= PIECE_COVER_MIN_POINTS) continue;',
+      '退回旧判据：这门的分被打掉了就算安全（Glen 说那是算漏了）'],
 
   // ---- 「或是自己没剩多少如三支甚至两支」 ----
   [F, '    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) continue;',

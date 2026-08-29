@@ -1731,13 +1731,23 @@ function pieceOwedToOpponentAsk(view, ctx, cards) {
     if (suitAskSignal(view, ctx, suit) !== 'opponent') continue;
     // 「有两件可以砍」
     if (items.filter(item => item.status === 'mine').length >= 2) continue;
-    // 「即使对方甩了也得不了多少分，那么就可以杀」—— Glen 早先给的例外，
-    // 这道闸不能把它一起挡掉。量用的是这门【外面还剩多少分】，和打分那一头的
-    // stake 同源；门槛借现成的 PIECE_COVER_MIN_POINTS（30），不另造魔数 ——
-    // 它本来的意思就是「这门还剩多少分才值得为了护件放走桌上的分」，同一件事。
-    // ⚠️ 打 10 / 打 K 时该门的 10 / K 升主，这门天生就从 50 掉到 30，
-    // 正是 Glen 举的那两个例子，一个量覆盖两种情形。
-    if (suitPointsAtLarge(view, ctx, suit) <= PIECE_COVER_MIN_POINTS) continue;
+    // 「即使对方甩了也得不了多少分，那么就可以杀」—— Glen 早先给的例外。
+    //
+    // ⚠️ 这里量的是【这门天生有多少分】，不是「这门还剩多少分」。
+    // 第一版写的是 suitPointsAtLarge（打掉的分算安全），Glen 2026-08-29 纠正了：
+    //   「甩牌之所以可怕，不仅是可以吃分，还在于它可以把本来很小的副牌升级成
+    //     可以大的牌，当然如果打 10 或 K，副牌可能能跑分的就不多，但一般的局，
+    //     如果甩的副牌足够长，还是可能吃到其它副牌的分。所以放件是需要非常
+    //     谨慎的计算，可放可不放的情况还是得选择不放。」
+    // 也就是说：甩牌的价值【不局限在这一门】—— 甩得够长，剩下的小牌升级成大牌，
+    // 还能把别人手上别的门的分逼出来。所以「这门的分被打掉了」根本不算安全，
+    // 那个量把危险算漏了一大半。
+    //
+    // 他认的是【打 10 / 打 K】那种结构性的少分：该门的 10 / K 升为主牌，
+    // 这门天生就从 50 掉到 30。sideSuitTotalPoints 算的正是这个。
+    // 一般局（打 2，满门 50 分）这条豁免【永远不成立】—— 那就是他说的
+    // 「可放可不放的情况还是得选择不放」。
+    if (sideSuitTotalPoints(ctx) <= PIECE_COVER_MIN_POINTS) continue;
     // 「或是自己没剩多少如三支甚至两支」—— 口径同 PIECE_NEAR_VOID_AFTER，
     // 按【打完这一手之后】还剩几张算，和打分那一头保持一致。
     const spentHere = cards.filter(item => suitOf(item, ctx) === suit).length;
