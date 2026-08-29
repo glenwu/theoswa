@@ -1041,6 +1041,9 @@ const PIECE_READ_NOBODY_ASKED = 0.7;
 // 打完这一手之后这门只剩几张就算「快断了」。Glen：「如果自己这门已经快断了，
 // 比如打 A 后再捅多一支或两支就断了，可以毙别人，这个时候也可以吃。」
 const PIECE_NEAR_VOID_AFTER = 2;
+// 对手在求这门时，桌上要有多少分才值得把件砍出去。
+// Glen：「除非有大分，比如 20 分以上……才能把件出给别人。」
+const PIECE_ASK_BIG_POINTS = 20;
 // 这门外面还剩多少分，才值得为了护件放走桌上的分（见 coverNeedsFirstPiece）。
 const PIECE_COVER_MIN_POINTS = 30;
 // 打完这一支之后这门至少还得剩几张 —— 顶端再大，只剩一张也压不住两张的甩牌。
@@ -1642,6 +1645,62 @@ function coverNeedsFirstPieceUncached(view, ctx) {
 function opponentThrowInProgress(view) {
   const lead = view.round?.currentTrick?.[0];
   return !!lead && (lead.cards?.length ?? 1) > 1 && lead.seat % 2 !== view.you.team;
+}
+
+// 【对手在求这门，件就不能随手砍出去】—— Glen 2026-08-29 第三次点名：
+//   「BOT 现在还是容易乱砍件，特别是有 K 的时候，不考虑是谁求的件，经常是
+//     即使对手求的件，有 A 或者 10 分 15 分就砍了，不考虑后果。」
+//
+// 口径是他早先给全的那三档：
+//   「对手求件，一般情况下不能轻易出件，如果有两件可以砍，只有一件的话，
+//     一般不能出，除非有大分，比如 20 分以上，或是自己没剩多少如三支甚至两支，
+//     才能把件出给别人……如果不是这些情况，一般不把件出给对手。」
+//
+// ⚠️ 这三档【原来就写在 pieceExposureRisk 的打分里】，而且注释信誓旦旦说
+// 「等效门槛落在 25 分上下」—— 那个推算是错的，错在拿 exposureRisk = 1 去算：
+// 它其实是 clamp(threat,0.5,2) × read × stake 三个系数【相乘】，
+// 实测（scripts/audit/piece-cost-probe.mjs，100 局 890 次）中位数只有 0.44，
+// 代价中位 106 而不是 240；而接管加分是 100 + 桌上分×10，于是
+//   桌上  0 分 → 47% 的场合加分就已经压得过代价
+//   桌上 10 分 → 80%
+//   桌上 15 分 → 91%
+// 正好就是 Glen 描述的「有 A 或者 10 分 15 分就砍了」。
+//
+// 所以这一条只能【删候选】，不能靠打分 —— 同一张牌上接管加分、送分给队友、
+// 保底加分是累加的，要罚得动就得罚成一票否决，那会顺手压垮别的打法。
+// 打分那一头照旧留着（它管的是「没人求 / 队友求」那两种更软的局面）。
+function pieceOwedToOpponentAsk(view, ctx, cards) {
+  const hand = view.you?.hand ?? [];
+  // 「除非有大分，比如 20 分以上」—— 桌上已经摆着的分，不含我自己这一手：
+  // 我那支 K 的 10 分是我【付出】的，不是奖品。
+  const tablePoints = (view.round?.currentTrick ?? [])
+    .flatMap(play => play.cards ?? [])
+    .reduce((sum, card) => sum + cardPoints(card), 0);
+  if (tablePoints >= PIECE_ASK_BIG_POINTS) return false;
+  for (const card of cards) {
+    if (!isSidePiece(card, ctx)) continue;
+    const suit = suitOf(card, ctx);
+    const items = view.round?.piecesView?.[suit] ?? [];
+    // 件全现完了，亮不亮都一样
+    if (!items.some(item => item.status === 'unseen')) continue;
+    // 只管【对手】在求的门。队友求 → Glen：「如果对家有表示，可以很没压力地出件」
+    if (suitAskSignal(view, ctx, suit) !== 'opponent') continue;
+    // 「有两件可以砍」
+    if (items.filter(item => item.status === 'mine').length >= 2) continue;
+    // 「即使对方甩了也得不了多少分，那么就可以杀」—— Glen 早先给的例外，
+    // 这道闸不能把它一起挡掉。量用的是这门【外面还剩多少分】，和打分那一头的
+    // stake 同源；门槛借现成的 PIECE_COVER_MIN_POINTS（30），不另造魔数 ——
+    // 它本来的意思就是「这门还剩多少分才值得为了护件放走桌上的分」，同一件事。
+    // ⚠️ 打 10 / 打 K 时该门的 10 / K 升主，这门天生就从 50 掉到 30，
+    // 正是 Glen 举的那两个例子，一个量覆盖两种情形。
+    if (suitPointsAtLarge(view, ctx, suit) <= PIECE_COVER_MIN_POINTS) continue;
+    // 「或是自己没剩多少如三支甚至两支」—— 口径同 PIECE_NEAR_VOID_AFTER，
+    // 按【打完这一手之后】还剩几张算，和打分那一头保持一致。
+    const spentHere = cards.filter(item => suitOf(item, ctx) === suit).length;
+    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) continue;
+    return true;
+  }
+  return false;
 }
 
 function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
@@ -2857,7 +2916,18 @@ export function chooseFollowCards(view) {
     }
   }
 
-  return choices
+  // 对手在求的那门，件让位（判据和理由见 pieceOwedToOpponentAsk）。
+  //
+  // 兜底：全部候选都得交件时维持原判 —— 那就是躲不掉，真人也躲不掉。
+  // ⚠️ 变异测试杀不掉这一行（mutants27），因为【推得出它永远为真】：
+  // 「欠着」要求这门打完还剩 >2 张，而我在这门最多只有 1 支件（≥2 支就豁免了），
+  // 所以那门至少还有 3 张非件牌 —— 跟牌时它们各自成候选，垫牌时同样进得了
+  // discards。留着的理由和领牌那边一样：真塌了的代价是电脑返回空手
+  //（真人正在打的局里直接卡死），而代价只是一次比较。
+  const sparing = choices.filter(choice => !pieceOwedToOpponentAsk(view, ctx, choice.cards));
+  const pool = sparing.length > 0 ? sparing : choices;
+
+  return pool
     .sort((a, b) =>
       (b.score + (priorBonus.get(b) ?? 0)) - (a.score + (priorBonus.get(a) ?? 0)) ||
       a.cards[0].id.localeCompare(b.cards[0].id)

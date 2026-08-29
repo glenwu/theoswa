@@ -831,6 +831,19 @@ test('亮件：这门还长、对手可能甩很长 → 5 分不值得亮 ♠A',
 // 同样落到 points-first，两边就分不出来了（第一版就栽在这）。
 // ⚠️ 显式给 pointsFirstPieceWeight —— 默认值 0.85 折得太轻，翻不动决策，
 // 那样这两条就变成「碰巧一样/碰巧不一样」，钉不住结构。量级留给训练去搜。
+//
+// ⚠️⚠️ 这一对【原来用的是「对手领 ♠4 求件、桌上 5 分」】，2026-08-29 改掉了。
+// Glen 那天的裁定把那个局面整个封死了：
+//   「即使对手求的件，有 A 或者 10 分 15 分就砍了，不考虑后果，还是需要优化一下。」
+// 5 分比 10/15 分更不该砍，所以旧断言现在是【错的行为】，不能再钉。
+// 见 pieceOwedToOpponentAsk：对手求件那一档已经是硬闸，策略权重排在它下面。
+//
+// 换成【没人求件、桌上无分】的局面。为什么不是「没人求件、桌上有分」——
+// 扫过了（scratchpad/sweep.mjs，10 档领牌 × 3 种手型 × 6 种已出 × 5 种桌面）：
+// 桌上一有分，「封住最后一家」那笔账（lastSeatPointRisk）就压过策略权重，
+// 两边都会吃，分不出来。那笔账要不要给亮件让路，Glen 还没裁过，
+// 源码里早就标注着（见上面「只钉 5 分，故意不钉 10 分」那段）。
+// 所以这一对现在钉的是：【同样一墩牌权，闲家更愿意为它亮件】。
 function strategyPieceView(declarerSeat) {
   return followView({
     seat: 2, declarerSeat,
@@ -839,10 +852,8 @@ function strategyPieceView(declarerSeat) {
       ...[14, 13, 10, 9, 8, 7, 5, 4].map((r, i) => T('D', r, i + 10)), // 方块 8 张（两件在手）
       ...[7, 5, 3].map((r, i) => T('H', r, i + 30)),                   // 3 张小主
     ],
-    currentTrick: [
-      { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },
-      { seat: 0, cards: [T('S', 5, 91)] },                             // 桌上 5 分
-    ],
+    // ♠9 不是求件牌（≤5 或 10 才是）→ 谁都没求过这门，硬闸不介入
+    currentTrick: [{ seat: 1, playSuit: 'S', cards: [T('S', 9, 90)] }],
     piecesView: {
       S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
           { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
@@ -854,13 +865,13 @@ function strategyPieceView(declarerSeat) {
   });
 }
 
-test('策略：我是闲家（吃分为主）→ 同样 5 分就把 ♠A 打出去吃回来', () => {
+test('策略：我是闲家（吃分为主）→ 为了一墩牌权就肯把 ♠A 亮出去', () => {
   const view = strategyPieceView(1);
   assert.equal(roundStrategy(view, S_CTX), 'points-first', '前提：策略确实是吃分为主');
   assert.equal(chooseFollowCards(view)[0].rank, 14);
 });
 
-test('策略：同一手牌但我在庄家一方（跑牌兼跑分）→ 5 分不值得亮 ♠A', () => {
+test('策略：同一手牌但我在庄家一方（跑牌兼跑分）→ 同样一墩不值得亮 ♠A', () => {
   const view = strategyPieceView(0);
   assert.equal(roundStrategy(view, S_CTX), 'run-and-score', '前提：策略不是吃分为主');
   assert.notEqual(chooseFollowCards(view)[0].rank, 14);
@@ -1110,6 +1121,137 @@ test('读件：谁都没在这门求过 → 对手这门多半不强，风险略
 
 // 对照：对手正在求这门（他这一墩领的就是 ♠4）→ 风险照旧，不亮。
 // 这条已经在上面「5 分不值得亮 ♠A」里钉住了，这里只标明它属于同一组三档。
+
+// ============ 对手求的件，不能随手砍出去（硬闸）============
+//
+// Glen 2026-08-29 第三次点名：
+//   「BOT 现在还是容易乱砍件，特别是有 K 的时候，不考虑是谁求的件，经常是
+//     即使对手求的件，有 A 或者 10 分 15 分就砍了，不考虑后果。」
+//
+// 口径是他早先给全的：「对手求件，一般情况下不能轻易出件，如果有两件可以砍，
+// 只有一件的话，一般不能出，除非有大分，比如 20 分以上，或是自己没剩多少如
+// 三支甚至两支，才能把件出给别人。」
+//
+// ⚠️ 这三档原本写在 pieceExposureRisk 的【打分】里，实测压根拦不住 ——
+// 200 局有 89 支件是在对手求这门时砍出去的，其中 69 支正是桌上 10/15 分那两档
+//（scripts/audit/piece-vs-ask.mjs）。原因量出来了：exposureRisk 是三个系数
+// 相乘，中位数只有 0.44，代价中位 106 而不是 240，而接管加分是 100 + 分×10，
+// 桌上 0 分就有 47% 的场合压得过代价（scripts/audit/piece-cost-probe.mjs）。
+// 所以改成【删候选】。下面五条把四道豁免和主判据分别钉住。
+// table[0] = 对手领的那张（黑桃），其余是后面两家跟的牌。
+// 元素写成 [花色, 点数] 就是【别的花色垫进来的分】—— 这一手用来把
+// 「桌上大分」和「这门刮不到分」两条豁免拆开：黑桃满分 50，桌上一有 20 分黑桃，
+// 这门外面就必然只剩 ≤30 分，两条会同时成立，分不出是哪条在起作用。
+function askedPieceView({ table, spades = [14, 9, 6, 3], pieces, trickHistory = [] }) {
+  const plays = [{ seat: 1, playSuit: 'S', cards: [T('S', table[0], 90)] }];
+  // 座次逆时针 0→3→2→1：座 1 领之后是座 0、座 3，我（座 2）最后下
+  const seats = [0, 3];
+  table.slice(1).forEach((entry, i) => {
+    const [suit, rank] = Array.isArray(entry) ? entry : ['S', entry];
+    plays.push({ seat: seats[i], cards: [T(suit, rank, 91 + i)] });
+  });
+  return followView({
+    seat: 2, declarerSeat: 1, trickHistory,
+    hand: [...spades.map((r, i) => T('S', r, i)),
+      ...Array.from({ length: 8 }, (_, i) => T('D', 12 - i, i + 10))],
+    currentTrick: plays,
+    piecesView: {
+      S: pieces ?? [
+        { rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+        { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' },
+      ],
+      D: [], C: [],
+    },
+  });
+}
+
+test('对手求件：桌上 10 分、只有一件、这门还长 → 不砍，把件留住', () => {
+  const play = chooseFollowCards(askedPieceView({ table: [4, 10] }))[0];
+  assert.notEqual(play.rank, 14,
+    `对手正求这门，为了 10 分就把 ♠A 砍出去，正是 Glen 点名的毛病（实际打了 ♠${play.rank}）`);
+});
+
+// 豁免①「有两件可以砍」
+test('对手求件：两件都在我手上 → 可以砍', () => {
+  const play = chooseFollowCards(askedPieceView({
+    spades: [14, 13, 9, 6, 3],
+    pieces: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+             { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
+    table: [4, 10],
+  }))[0];
+  assert.equal(play.suit, 'S');
+  assert.ok(play.rank === 14 || play.rank === 13,
+    `两件在手是 Glen 明说可以砍的（实际打了 ♠${play.rank}）`);
+});
+
+// 豁免②「除非有大分，比如 20 分以上」
+// ⚠️ 这条踩过两个坑，都写下来：
+//   ① 第一版桌面写成 [4,10,10]，两张 ♠10 同点先出的赢，而先出的座 0 是我队友 ——
+//      队友已经赢下这 20 分，我再压上去纯属浪费，打小牌才对。测的根本不是大分。
+//   ② 第二版改成 [4,10,♠K]，对手领先了，测试也绿了，可它是【假绿】：
+//      黑桃满分 50，桌上一有 20 分黑桃，这门外面就只剩 ≤30 分，
+//      「甩了也刮不到分」那条豁免自己就放行了。变异测试戳穿了 ——
+//      把大分那条豁免整个删掉，测试照样绿。
+// 所以这里的 20 分【来自别的花色】：两家垫了 ♦K + ♦10，黑桃一分没走，
+// 这门外面仍有 40 分，只剩「大分」这一条能放行。
+// ⚠️ 断言建在 30 分而不是 20 分上，这是有意的：Glen 的原话是「除非有大分，
+// 比如 20 分以上……【才能】把件出给别人」—— 20 分解除的是【禁令】，不是下令必砍。
+// 实测在 20 分整、这门满分 50 又长的局面里，打分那一头仍然算不过
+//（代价 312 > 接管加分 300），照样不砍，那也没错。要钉住这条豁免本身，
+// 就得挑一个「解除禁令之后确实会砍」的分位。
+// 领的是 ♠10 —— 它既是求件牌（≤5 或 10），本身又值 10 分，加两张垫进来的
+// ♦K ♦10，桌上 30 分；黑桃只走了这 10 分，外面还剩 40 分 > 30，
+// 「刮不到分」那条豁免不会插手。
+test('对手求件：桌上 30 分（这门的分没怎么走）→ 大分解除禁令，砍', () => {
+  const play = chooseFollowCards(askedPieceView({ table: [10, ['D', 13], ['D', 10]] }))[0];
+  assert.equal(play.rank, 14, `桌上 30 分早过了 Glen 给的门槛（实际打了 ♠${play.rank}）`);
+});
+
+// Glen：「特别是有 K 的时候」—— K 自己就值 10 分，最容易被凑进「桌上够不够大分」
+// 里去。⚠️ 门槛只能数【桌上已经摆着的分】：我这支 K 的 10 分是我要付出去的，
+// 不是奖品。拿自己付的钱去凑门槛，等于门槛从 20 掉到 10，正是 Glen 点名的那一档。
+test('对手求件：桌上 10 分、我手上是 ♠K → 不能拿自己 K 的 10 分去凑够 20', () => {
+  const play = chooseFollowCards(askedPieceView({
+    spades: [13, 9, 6, 3],
+    pieces: [{ rank: 14, status: 'unseen' }, { rank: 14, status: 'unseen' },
+             { rank: 13, status: 'mine' }, { rank: 13, status: 'seen' }],
+    // ⚠️ 这个 fixture 调过三次，坑都写下来：
+    //   · 我必须坐【末家】—— 不然「后面还有人可能压我」本身就劝退了 ♠K，
+    //     闸拆不拆都一样，测不出东西。
+    //   · 桌上要 15 分而不是 10 —— 15 + 我这支 K 的 10 = 25，才越得过 20 的门槛，
+    //     变异（把自己的 K 算成奖品）才有机会改判。
+    //   · 黑桃要先走掉 8 张 —— 不然对手这门估计还很长，护件的代价压过接管加分，
+    //     打分那一头自己就否了 ♠K，同样测不出闸的作用。
+    //   分都在别的花色（♦K + ♦5），黑桃一分没走，「刮不到分」那条不会插手。
+    table: [4, ['D', 13], ['D', 5]],
+    trickHistory: [{
+      trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0,
+      plays: [{ seat: 1, cards: [9, 8, 7, 6, 4, 3, 9, 8].map((r, i) => T('S', r, 700 + i)) }],
+    }],
+  }))[0];
+  assert.notEqual(play.rank, 13,
+    `桌上只有 10 分，不该把 ♠K 砍出去（实际打了 ♠${play.rank}）`);
+});
+
+// 豁免③「或是自己没剩多少如三支甚至两支」—— Glen 的原例：
+//   「对手领 ♠4 求件、桌上 5 分、我手上 ♠A ♠9 ♠6（打完 A 只剩两张）→ 肯定要打 A」
+test('对手求件：这门我只剩三支，打完就快断了 → 照 Glen 的原例，打 A', () => {
+  const play = chooseFollowCards(askedPieceView({ spades: [14, 9, 6], table: [4, 5] }))[0];
+  assert.equal(play.rank, 14, `只剩三支时他明说要打 A（实际打了 ♠${play.rank}）`);
+});
+
+// 豁免④ 是【队友】在求 —— Glen：「如果对家有表示，那是可以很没压力地出件的」。
+// ⚠️ 这条是主判据的反向对照：不看是谁求的话，「永远不砍」也能让上面那条绿。
+test('求件的是队友不是对手 → 这道闸不介入，照常贡献件', () => {
+  const view = askedPieceView({ table: [4, 10] });
+  // 把求件的那一领改成队友（座 0）领，对手（座 1）跟
+  view.round.currentTrick = [
+    { seat: 0, playSuit: 'S', cards: [T('S', 4, 90)] },
+    { seat: 3, cards: [T('S', 10, 91)] },
+  ];
+  const play = chooseFollowCards(view)[0];
+  assert.equal(play.rank, 14, `队友求的件该给他（实际打了 ♠${play.rank}）`);
+});
 
 // ---- 例外：这门的分快没了，甩了也刮不到什么（Glen）----
 //
