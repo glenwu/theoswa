@@ -243,10 +243,8 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
 
   const overlays = (
     <>
-      {/* 碾压判定面板：摊开四家剩余手牌 + 看结算按钮（不自动跳走） */}
-      {game.phase === 'DOMINANCE' && (
-        <DominancePanel game={game} onConfirm={() => send({ type: 'confirmDominance' })} />
-      )}
+      {/* 碾压判定面板：摊开四家剩余手牌 + 看结算 / 看多一会 */}
+      {game.phase === 'DOMINANCE' && <DominancePanel game={game} send={send} />}
 
       {/* 结算面板：SCORING / ROUND_END / GAME_OVER 覆盖在牌桌上 */}
       {(game.phase === 'SCORING' || game.phase === 'ROUND_END' || game.phase === 'GAME_OVER') && (
@@ -672,10 +670,19 @@ function CenterInfo({ game, send }) {
   );
 }
 
-// 碾压判定面板：摊开四家剩余手牌 + 说明 + 看结算按钮（不自动跳走）
-function DominancePanel({ game, onConfirm }) {
+// 碾压判定面板：摊开四家剩余手牌 + 说明 + 看结算 / 看多一会
+//
+// Glen：「这个时间太短了，应该只有 1 秒，至少要 5 秒，也同样加一个『看多一会』
+//   的按钮，30 秒。」原因不在这个面板 —— 是【电脑一进这个阶段就替你点了确认】，
+//   一家点就结束。两头都改了：bot-policy 里只有四家全是电脑才立刻点，
+//   服务端默认停 5 秒（DOMINANCE_MS），按了这里的按钮拉到 30 秒。
+// 倒计时不画在这里：牌桌中央那块表已经挂着 dominanceDeadline（timerSpecFor）。
+function DominancePanel({ game, send }) {
   const dom = game.round?.dominance;
   const hands = game.round?.allHandsRevealed ?? [];
+  const you = game.you;
+  const holds = game.round?.dominanceHolds ?? [];
+  const iHold = holds.includes(you?.seat);
   if (!dom) return null;
   return createPortal(
     <div className="fixed inset-0 z-40 grid place-items-center bg-black/55 p-4">
@@ -705,11 +712,25 @@ function DominancePanel({ game, onConfirm }) {
             );
           })}
         </div>
-        <div className="mt-4 text-center">
-          <button className="btn-gold" onClick={onConfirm}>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          <button className="btn-gold" onClick={() => send({ type: 'confirmDominance' })}>
             看结算
           </button>
+          <button
+            className={iHold ? 'btn-gold' : 'btn-emerald'}
+            onClick={() => send({ type: iHold ? 'releaseDominance' : 'holdDominance' })}
+          >
+            {iHold ? '继续（我看完了）' : '看多一会'}
+          </button>
         </div>
+        {holds.length > 0 && (
+          <p className="mt-2 text-center text-xs font-bold text-emerald-300/80">
+            {holds
+              .map(seat => game.players.find(p => p.seat === seat)?.nickname ?? '—')
+              .join('、')}
+            {' '}还在看，等他{holds.length > 1 ? '们' : ''}按「继续」
+          </p>
+        )}
       </div>
     </div>,
     document.body

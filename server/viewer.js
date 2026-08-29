@@ -57,6 +57,7 @@ function clipRound(round, viewerSeat) {
       : null,
     kittyDeadline: round.kittyDeadline ?? null,
     dominanceDeadline: round.dominanceDeadline ?? null,
+    dominanceHolds: [...(round.dominanceHolds ?? [])],
     leadSeat: round.leadSeat,
     turnSeat: round.turnSeat,
     playDeadline: round.playDeadline,

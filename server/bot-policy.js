@@ -3067,7 +3067,16 @@ export function decideBotAction(view) {
     return { type: 'confirmRoundEnd' };
   }
   if (view.phase === 'DOMINANCE' && round?.dominance) {
-    return { type: 'confirmDominance' };
+    // ⚠️ 【有真人在场时不能立刻点】。这个面板摊开四家手牌，是全局最该看清楚的
+    // 一屏，而任一家点确认就结束 —— 电脑一进来就点，真人连一秒都看不到。
+    // Glen 实战反馈的正是这个。停留交给服务端那 5 秒计时器，想多看按「看多一会」。
+    //
+    // 四家全是电脑时照旧立刻点：模拟跑的是同步循环，服务端的 setTimeout
+    // 根本没机会触发，不点就卡在这一阶段直到整局超时。
+    if ((view.players ?? []).every(player => player.isBot)) {
+      return { type: 'confirmDominance' };
+    }
+    return null;
   }
   return null;
 }

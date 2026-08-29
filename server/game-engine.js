@@ -344,6 +344,9 @@ export class GameEngine {
   autoConfirmDominance() {
     const s = this.state;
     if (s.phase !== 'DOMINANCE' || !s.round?.dominance) return;
+    // 有人按了「看多一会」而窗口还没到 → 不收（口径同 settleTrick 那边）
+    const r = s.round;
+    if ((r.dominanceHolds ?? []).length > 0 && Date.now() < (r.dominanceDeadline ?? 0)) return;
     const actor = playerBySeat(s, s.round.leadSeat);
     pushLog(s, '碾压收尾确认超时，自动结算本局');
     applyPureAction(s, { type: 'confirmDominance' }, actor.id);

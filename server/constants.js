@@ -84,9 +84,14 @@ export const PLAY_TIMEOUT_MS = 60000;   // 出牌限时：超时服务端自动�
 // 出牌都有 60 秒自动打，唯独换底没有，只能靠全票「新开一局」把整局作废。
 // 给得比出牌宽松得多：换底要看 33 张牌、想清楚埋哪 8 张，本来就慢。
 export const KITTY_EXCHANGE_MS = 180000;
-// 碾压收尾确认限时：任一家点确认即可推进（电脑会自动点），
-// 但四个真人全挂机时同样没人推得动，而那时四家手牌正摊开着。
-export const DOMINANCE_MS = 30000;
+// 碾压收尾停留：四家手牌正摊开着，这是全局最该看清楚的一屏。
+// ⚠️ 原来是 30 秒，可实际只停得住 1 秒 —— 电脑一进这个阶段就立刻点确认，
+// 一家点就结束了。Glen：「这个时间太短了，应该只有 1 秒，至少要 5 秒，
+// 也同样加一个『看多一会』的按钮，30 秒。」
+// 现在：默认停 5 秒；谁按了「看多一会」就拉到 30 秒，等他按「继续」才收。
+// 电脑那一侧同步改了（bot-policy 里只有四家全是电脑时才立刻点）。
+export const DOMINANCE_MS = 5000;
+export const DOMINANCE_HOLD_MS = 30000;
 export const RESET_PROPOSAL_MS = 60000; // 新开一局提案：60 秒无人响应自动取消
 export const CROSS_RIVER_DECIDE_MS = 15000; // 三主过河：发起/跳过的决定窗口（无人发起则窗口结束自动继续）
 export const CROSS_RIVER_PICK_MS = 30000;   // 三主过河：对家回 3 张副牌的超时（超时自动挑最小 3 张副牌）
@@ -116,6 +121,7 @@ export const DEFAULT_TIMINGS = Object.freeze({
   playMs: PLAY_TIMEOUT_MS,
   kittyExchangeMs: KITTY_EXCHANGE_MS,
   dominanceMs: DOMINANCE_MS,
+  dominanceHoldMs: DOMINANCE_HOLD_MS,
   resetProposalMs: RESET_PROPOSAL_MS,
   crossRiverDecideMs: CROSS_RIVER_DECIDE_MS,
   crossRiverPickMs: CROSS_RIVER_PICK_MS,
@@ -137,6 +143,7 @@ export const TIMING_ENV_KEYS = Object.freeze({
   playMs: 'PLAY_MS',
   kittyExchangeMs: 'KITTY_MS',
   dominanceMs: 'DOMINANCE_MS',
+  dominanceHoldMs: 'DOMINANCE_HOLD_MS',
   resetProposalMs: 'RESET_PROPOSAL_MS',
   crossRiverDecideMs: 'CROSS_RIVER_MS',
   crossRiverPickMs: 'CROSS_PICK_MS',

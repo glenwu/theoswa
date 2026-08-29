@@ -137,6 +137,9 @@ export function createRoundState(roundNumber, declarerSeat) {
     turnSeat: null,
     kittyDeadline: null,    // 庄家换底截止时刻（超时服务端自动埋底）
     dominanceDeadline: null,// 碾压确认截止时刻（超时服务端自动确认）
+    // 碾压收尾停留期间按了「看多一会」的座位。非空就一直等着，
+    // 直到他们都按了「继续」（清空）或 30 秒到。口径同 lastTrickHolds。
+    dominanceHolds: [],
     playDeadline: null,     // 出牌限时截止时刻（超时服务端自动出最小合法牌）
     playTurnSeat: null,     // 出牌限时对应的当前回合座位（换人时重置）
     currentTrick: [],

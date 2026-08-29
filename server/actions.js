@@ -449,6 +449,8 @@ function maybeFinishCrossRiver(state) {
   const dominance = checkDominance(state);
   if (dominance) {
     r.dominance = dominance;
+    r.dominanceHolds = [];
+    r.dominanceDeadline = null;   // 由 game-engine 按 dominanceMs 重新起算
     state.phase = 'DOMINANCE';
     pushLog(
       state,
@@ -716,6 +718,8 @@ export function handlePlay(state, action, actorId) {
   const dominance = checkDominance(state);
   if (dominance) {
     r.dominance = dominance;
+    r.dominanceHolds = [];
+    r.dominanceDeadline = null;   // 由 game-engine 按 dominanceMs 重新起算
     state.phase = 'DOMINANCE';
     pushLog(
       state,
@@ -723,6 +727,52 @@ export function handlePlay(state, action, actorId) {
         `${dominance.pointsToDefender ? '，计入闲家' : '，庄家跑掉'}${dominance.kittyGrab ? '，闲家撬底' : ''}。`
     );
   }
+  return succeed();
+}
+
+// ---- 碾压收尾停留（DOMINANCE）----
+//
+// 和最后一墩那套一模一样，理由也一样：这一屏摊开四家手牌，是全局最该看清楚的，
+// 而任一家点「看结算」就结束。默认停 5 秒，按了「看多一会」拉到 30 秒。
+// ⚠️ 电脑那一侧必须同步（bot-policy：只有四家全是电脑才立刻点），
+// 不然这里停多久都没用 —— 电脑一进来就替你点了。
+
+function inDominanceHold(state) {
+  return state.phase === 'DOMINANCE' && !!state.round?.dominance;
+}
+
+export function handleHoldDominance(state, action, actorId) {
+  if (!inDominanceHold(state)) {
+    return fail(ErrorCode.WRONG_PHASE, '现在没有可以暂留的牌面');
+  }
+  const r = state.round;
+  const me = playerById(state, actorId);
+  if ((r.dominanceHolds ?? []).includes(me.seat)) {
+    return fail(ErrorCode.ALREADY_VOTED, '你已经按过「看多一会」了');
+  }
+  r.dominanceHolds = [...(r.dominanceHolds ?? []), me.seat];
+  // 只在第一个人按下时把窗口拉到 30 秒。后面的人再按不续期 ——
+  // 否则四个人轮流按就能把全场无限拖住。
+  if (r.dominanceHolds.length === 1) {
+    r.dominanceDeadline = Date.now() + (state.timing ? state.timing.dominanceHoldMs : 30000);
+  }
+  pushLog(state, `${me.nickname} 想再看一会碾压收尾（${r.dominanceHolds.length} 人）`);
+  return succeed();
+}
+
+export function handleReleaseDominance(state, action, actorId) {
+  if (!inDominanceHold(state)) {
+    return fail(ErrorCode.WRONG_PHASE, '现在没有可以继续的牌面');
+  }
+  const r = state.round;
+  const me = playerById(state, actorId);
+  if (!(r.dominanceHolds ?? []).includes(me.seat)) {
+    return fail(ErrorCode.ALREADY_VOTED, '你没有按住这一屏');
+  }
+  r.dominanceHolds = r.dominanceHolds.filter(seat => seat !== me.seat);
+  pushLog(state, `${me.nickname} 看完了碾压收尾`);
+  // 按住的人都放开了 → 立刻收：留下来的是他们，说走也该由他们说。
+  if (r.dominanceHolds.length === 0) r.dominanceDeadline = Date.now();
   return succeed();
 }
 
@@ -953,6 +1003,8 @@ const HANDLERS = {
   confirmRoundEnd: handleConfirmRoundEnd,
   holdLastTrick: handleHoldLastTrick,
   releaseLastTrick: handleReleaseLastTrick,
+  holdDominance: handleHoldDominance,
+  releaseDominance: handleReleaseDominance,
   confirmFlip: handleConfirmFlip,
   setAutoPlay: handleSetAutoPlay,
   pause: handlePause,
