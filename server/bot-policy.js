@@ -1345,6 +1345,21 @@ function declarerTrumpPointSignal(view, ctx) {
 //   1. 在信号那一墩用鬼吃下来 —— 第一墩队友必须跟主，他能表达的只有出不出顶张
 //   2. 之后拿到牌权时【领副牌】 —— 电脑队友走的就是这条（它不肯早早交出鬼）
 // 收到应答就说明顶端有人管得住，庄家该转去跑副牌，不必再削对手的主。
+// 庄家【一上来就打副牌】= 他在说「我自己够保底，不用吊主」。
+// 这个游戏没有叫牌，领什么就是信号 —— 首出那一手是庄家唯一一次不受牌局
+// 牵着走的表达，所以只认它。
+//
+// ⚠️ 别用 lastLeadStyle(declarerSeat)：那看的是【最近一次】，庄家中途为了
+// 求件、走分、压对手长门随便打一手副牌，队友就立刻不吊了。实测 200 局里
+// 「该吊没吊」559 次，有 289 次栽在这一条上，庄家队友的吊主率只有 31.4%。
+// Glen：「特别是庄家队友，也是容易打成副牌，这个时候还没保底牌，
+//   吊主还是必要的，除非副牌比较强，有可能可以保底。」
+function declarerOpenedSide(view) {
+  const first = (view.round?.trickHistory ?? [])[0];
+  if (!first || first.leadSeat !== view.declarerSeat) return false;
+  return first.leadSuit !== 'TRUMP';
+}
+
 function trumpSignalAnswered(view, ctx) {
   if (view.you?.seat !== view.declarerSeat) return false;
   if (!declarerTrumpPointSignal(view, ctx)) return false;
@@ -1352,9 +1367,15 @@ function trumpSignalAnswered(view, ctx) {
   const history = view.round?.trickHistory ?? [];
   const answer = (history[0]?.plays ?? []).find(play => play.seat === partner);
   if ((answer?.cards ?? []).some(card => card.rank === 15 || card.rank === 16)) return true;
-  return history.slice(1).some(
-    trick => trick.leadSeat === partner && trick.leadSuit !== 'TRUMP'
-  );
+  // 「不用大鬼吃，转打副牌」= 他【第一次拿到牌权】时领的是副牌。
+  // ⚠️ 原来写的是 history.slice(1).some(...)，也就是「此后【曾经】领过副牌」——
+  // 和庄家队友那条一样脆：他后来为了求件、走分、压对手长门随便领一手副牌，
+  // 庄家就再也不吊主了。实测 200 局里庄家「该吊没吊」225 次，85 次栽在这。
+  // Glen 2026-08-29：「BOT 做庄时开始吊主，后来还是容易忘记，打成副牌了……
+  //   这个时候还没保底牌，吊主还是必要的，除非副牌比较强。」
+  // 他原话里的「表示」是【一次应答】，不是往后每一次领牌都在重复表态。
+  const firstPartnerLead = history.slice(1).find(trick => trick.leadSeat === partner);
+  return !!firstPartnerLead && firstPartnerLead.leadSuit !== 'TRUMP';
 }
 
 // ---- 本局策略（Glen 口述的「策略支持」）----
@@ -2110,10 +2131,13 @@ export function chooseLeadCards(view) {
       : role === 'declarer'
         ? (trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520)
       : role === 'declarerPartner'
-        // 收到庄家「带分吊主」的信号而自己确实有大鬼 → 转打副牌，
-        // 这本身就是「不用吊主」的表达（Glen）。否则照常跟庄家路子。
-        ? (lastLeadStyle(view, view.declarerSeat) === 'trump' &&
-           !(hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 480 : 0)
+        // 没保底牌就该接着吊 —— 只有【明确的「不用吊主」信号】才停（Glen）：
+        //   · 庄家首出就打副牌 = 他自己够保底（declarerOpenedSide）
+        //   · 庄家带分吊主而我确实有大鬼 → 我转打副牌本身就是应答（Glen 早先的裁定）
+        // 「跟着庄家的路子打」不等于「他打一手副牌我就跟着打副牌」——
+        // 判据从 lastLeadStyle（最近一次）换成首出，理由见 declarerOpenedSide。
+        ? (declarerOpenedSide(view) ||
+           (hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 0 : 480)
       : 0;                                                             // 闲家：随便
     if (drawBonus > 0) {
       addProposal(

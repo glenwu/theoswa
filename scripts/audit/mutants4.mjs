@@ -8,8 +8,10 @@ runMutants([
   [F, '    if (drawBonus > 0) {', '    if (false && drawBonus > 0) {', '拿掉持续吊主（回到「只吊一轮」）'],
   [F, "        ? (trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520)",
       '        ? 0', '庄家不再续吊'],
-  [F, "        ? (lastLeadStyle(view, view.declarerSeat) === 'trump' &&\n           !(hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 480 : 0)",
-      '        ? 480', '队友做庄时不看庄家路子，一律吊主'],
+  // ⚠️ 判据 2026-08-29 换过：从 lastLeadStyle（庄家最近一次领什么）换成
+  // declarerOpenedSide（庄家首出打的是不是副牌）。见 mutants29。
+  [F, "        ? (declarerOpenedSide(view) ||\n           (hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 0 : 480)",
+      '        ? 480', '队友不看庄家的表态，一律吊主'],
   [F, '!control.guaranteed && (!strongSide || planPending)', 'true', '有保底牌/副牌强也照吊不误'],
   [F, "trumpSignalAnswered(view, ctx) || strategy === 'points-first' ? 0 : 520",
       '520', '庄家不看队友答没答，照旧死吊'],
@@ -17,9 +19,11 @@ runMutants([
       '随便跟一张主也算「不用吊主」的应答'],
   [F, '  if (!declarerTrumpPointSignal(view, ctx)) return false;', '',
       '没发过求大鬼的信号也当成收到了应答'],
-  [F, `  return history.slice(1).some(
-    trick => trick.leadSeat === partner && trick.leadSuit !== 'TRUMP'
-  );`, '  return false;', '不认「队友吃下后转领副牌」这种应答'],
+  // ⚠️ 判据 2026-08-29 收紧了：应答是【第一次拿到牌权】那一手，不是
+  // 「此后曾经领过副牌」。见 mutants29。
+  [F, `  const firstPartnerLead = history.slice(1).find(trick => trick.leadSeat === partner);
+  return !!firstPartnerLead && firstPartnerLead.leadSuit !== 'TRUMP';`,
+      '  return false;', '不认「队友吃下后转领副牌」这种应答'],
   [F, '(!strongSide || planPending)', '(true)', '副牌再强也死吊主'],
   // ---- 清顶（Glen 纠正「永远不含鬼」之后加的） ----
   [F, 'const drawPool = clearing ? trumps : drawableTrumps;', 'const drawPool = drawableTrumps;',

@@ -391,6 +391,65 @@ test('吊主：庄家求大鬼，队友吃下后转领副牌 → 同样算应答
   assert.notEqual(lead.suit, 'H', '队友转副牌就是「不用吊主」的表达');
 });
 
+// ⚠️ 「表示」是【一次应答】，不是往后每一次领牌都在重复表态。
+// 队友吃下之后【先接着吊了一轮主】，再领副牌 —— 第一次拿到牌权时他选的是吊主，
+// 那就是「我也没保底、一起吊」，后面那手副牌只是正常打牌，不是应答。
+// Glen 2026-08-29：「BOT 做庄时开始吊主，后来还是容易忘记，打成副牌了……
+//   这个时候还没保底牌，吊主还是必要的。」
+// 原来写的是「此后【曾经】领过副牌」，队友随便打一手副牌庄家就再也不吊了。
+test('吊主：队友先接着吊了一轮主，之后才领副牌 → 那不是应答，继续吊', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [...NINE_TRUMPS, ...WEAK_SIDES],
+    declarerSeat: 0, mySeat: 0,
+    trickHistory: [
+      signalTrick([T('H', 6, 83)], 2),                                       // 队友只跟小主，吃下
+      { trickNo: 2, leadSeat: 2, leadSuit: 'TRUMP', winnerSeat: 2, points: 0, plays: [] },
+      { trickNo: 3, leadSeat: 2, leadSuit: 'C', winnerSeat: 2, points: 0, plays: [] },
+    ],
+  }))[0];
+  assert.equal(lead.suit, 'H',
+    `队友第一次拿到牌权选的是吊主，那就是「一起吊」（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// ============ 庄家队友：没保底就该一直吊，不看庄家最近打了什么 ============
+//
+// Glen 2026-08-29：「BOT 做庄时开始吊主，后来还是容易忘记，打成副牌了，
+//   特别是庄家队友，也是容易打成副牌，这个时候还没保底牌，吊主还是必要的，
+//   除非副牌比较强，有可能可以保底。」
+//
+// 原来的判据是 lastLeadStyle(庄家) === 'trump'，也就是「庄家【最近一次】领的是
+// 不是主牌」。太脆：庄家中途为了求件、走分、压对手长门随便打一手副牌，
+// 队友立刻就不吊了。插桩实测 200 局：「该吊没吊」559 次里 289 次栽在这一条，
+// 庄家队友的吊主率只有 31.4%（scripts/audit/trumpdraw-persist.mjs）。
+//
+// 改成只认【明确的「不用吊主」信号】—— 庄家【首出】就打副牌。
+// 这个游戏没有叫牌，领什么就是信号，首出是庄家唯一一次不受牌局牵着走的表达。
+const partnerDrawView = firstLeadSuit => leadView({
+  hand: [...NINE_TRUMPS, ...WEAK_SIDES],   // 没鬼 = 没保底；副牌又短又弱
+  declarerSeat: 0, mySeat: 2,              // 我是庄家队友
+  trickHistory: [
+    { trickNo: 1, leadSeat: 0, leadSuit: firstLeadSuit, winnerSeat: 0, points: 0,
+      plays: [{ seat: 0, playSuit: firstLeadSuit,
+                cards: [firstLeadSuit === 'TRUMP' ? T('H', 6, 80) : T('C', 6, 80)] }] },
+    // 庄家后来又打了一手副牌 —— 旧判据看到这一手就让队友停了
+    { trickNo: 2, leadSeat: 0, leadSuit: 'C', winnerSeat: 0, points: 0, plays: [] },
+  ],
+});
+
+test('庄家队友：庄家首出吊主、后来打了副牌 → 我没保底，接着吊', () => {
+  const lead = chooseLeadCards(partnerDrawView('TRUMP'))[0];
+  assert.equal(lead.suit, 'H',
+    `庄家中途打一手副牌不等于「不用吊主」（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照：庄家【一上来】就打副牌 = 他在说「我自己够保底」，那就别吊了。
+// ⚠️ 两条成对看，不然「队友永远吊主」也能让上面那条绿。
+test('庄家队友：庄家首出打的就是副牌（他说够保底）→ 不吊，去跑副牌', () => {
+  const lead = chooseLeadCards(partnerDrawView('C'))[0];
+  assert.notEqual(lead.suit, 'H',
+    `庄家首出副牌就是「我够保底」的表示（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // 「收手」只对【带分】那一墩负责：庄家吊了一张不带分的小主不是求大鬼，
 // 队友之后领副牌也就不是应答，该吊还得接着吊。
 test('吊主：庄家首墩吊的是不带分的小主 → 队友领副牌不算应答，继续吊', () => {
