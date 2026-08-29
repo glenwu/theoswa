@@ -947,6 +947,42 @@ function opponentThrowReadyIn(view, ctx, suit) {
   return maxOpponentSuitEstimate(view, ctx, suit) >= 2;
 }
 
+// 对手把件求出来之后【不甩、转打主】—— 他在留甩尾手（Glen 2026-08-29）：
+//   「对手已经把件求出来，然后他不甩，转打主，他就极有可能想把这门牌留最后
+//     一轮甩尾手，这时候就要打 ♠ 去捅短，让他这门和牌的威胁减少。」
+//
+// 这条是【场景乙的唯一例外】。场景乙 = 件不是我方喂出去的、是他自己逼出来的，
+// 但他照样甩得动。Glen 对场景乙的默认裁定是【不去压】：
+//   「这个时候我认为要求其它门会更好一些，因为这门牌已经挡不住了。」
+// 默认那一档不用写代码 —— 非欠门本来就只有 attack-opponent-long-suit(250)，
+// 排在求件(450) 和帮队友(480+) 后面，自然就是「去求别的门」。
+//
+// 判据按他的措辞逐条落：
+//   · 对手在这门求过件
+//   · 求完之后他【再没回来打这门】—— 回来打了就不是在留
+//   · 但他领过主牌 —— 那是「转打主」，削我方的主好让尾巴上的甩牌毙不到
+function opponentSavingTailThrow(view, ctx, suit) {
+  if (suitAskSignal(view, ctx, suit) !== 'opponent') return false;
+  const history = view.round?.trickHistory ?? [];
+  let lastAsk = -1;
+  for (let i = 0; i < history.length; i += 1) {
+    const trick = history[i];
+    if (trick.leadSuit !== suit) continue;
+    if (trick.leadSeat % 2 === view.you.team) continue;
+    if (!isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) continue;
+    lastAsk = i;
+  }
+  if (lastAsk < 0) return false;
+  let drewTrump = false;
+  for (let i = lastAsk + 1; i < history.length; i += 1) {
+    const trick = history[i];
+    if (trick.leadSeat % 2 === view.you.team) continue;   // 只看对手自己领的
+    if (trick.leadSuit === suit) return false;            // 又回来打这门 = 没在留
+    if (trick.leadSuit === 'TRUMP') drewTrump = true;
+  }
+  return drewTrump;
+}
+
 function opponentThreatSuit(view, ctx, tuning = strategyTuning(view)) {
   const scores = new Map();
   for (const trick of view.round.trickHistory ?? []) {
@@ -958,6 +994,14 @@ function opponentThreatSuit(view, ctx, tuning = strategyTuning(view)) {
   // 判据见 teamGavePieceIn）—— 不必再等他领够两次才反应。
   for (const suit of SUITS.filter(item => item !== ctx.trumpSuit)) {
     if (!teamGavePieceIn(view, ctx, suit)) continue;
+    scores.set(suit, (scores.get(suit) ?? 0) + tuning.opponentThreatThreshold);
+  }
+  // 他求出件之后转打主、把这门留着甩尾手 —— 同样直接算威胁门（Glen，见
+  // opponentSavingTailThrow）。⚠️ 这一档【必须】加在这里：他只求过一次的话
+  // 上面按领牌次数算的分只有 1，够不着门槛 2，这门压根进不了候选，
+  // 后面那个 580 的分档再对也没用武之地。
+  for (const suit of SUITS.filter(item => item !== ctx.trumpSuit)) {
+    if (!opponentSavingTailThrow(view, ctx, suit)) continue;
     scores.set(suit, (scores.get(suit) ?? 0) + tuning.opponentThreatThreshold);
   }
   return [...scores.entries()]
@@ -2165,9 +2209,18 @@ export function chooseLeadCards(view) {
     // ⚠️ 「压不动帮队友求件」这半句【只在他还甩不动的时候成立】—— 见下面
     // throwReady 那一档，Glen 后来把这条撞车裁给了防守。
     const owed = teamGavePieceIn(view, ctx, threatSuit);
-    // 件已经喂出去、而且他【真的甩得动了】→ 压他的长度反过来压过帮队友求件。
+    // 他【真的甩得动了】→ 压他的长度反过来压过帮队友求件。
     // Glen 裁定：「此时对手甩牌的威胁比你去给队友件要更大。」
-    const throwReady = owed && opponentThrowReadyIn(view, ctx, threatSuit);
+    //
+    // 两种局面才算数，都是他裁的：
+    //   · 件是我方喂出去的（owed）—— 这笔债我方欠的，「就要再吊对手可以甩花色」
+    //   · 件是他自己逼出来的，但他求完不甩、转打主（opponentSavingTailThrow）
+    //     —— 那是在留甩尾手，「就要打 ♠ 去捅短」
+    // 件是他自己逼出来的、又没有留尾巴的迹象 → 【不升档】。Glen：
+    //   「这个时候我认为要求其它门会更好一些，因为这门牌已经挡不住了。」
+    const throwReady =
+      (owed || opponentSavingTailThrow(view, ctx, threatSuit)) &&
+      opponentThrowReadyIn(view, ctx, threatSuit);
     addProposal(
       // 压缩对手的甩牌张数，不是在求件 —— 别顺手把信号发出去
       [quietLead(view, ctx, cardsOfSuit(hand, threatSuit, ctx), tuning)],

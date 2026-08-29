@@ -1776,6 +1776,107 @@ test('压他的长度 vs 帮队友求件：这门他只剩一张，甩不成 →
     `♠ 只剩一张在别人手上，甩不成，没必要抢在队友那件前面（实际领了 ${lead.suit}${lead.rank}）`);
 });
 
+// ---- 场景乙：件不是我方喂的，他自己逼出来的 ----
+//
+// Glen 2026-08-29 裁定：
+//   「这个时候我认为要求其它门会更好一些，因为这门牌已经挡不住了，但有例外，
+//     比如对手已经把件求出来，然后他不甩，转打主，他就极有可能想把这门牌留
+//     最后一轮甩尾手，这时候就要打 ♠ 去捅短，让他这门和牌的威胁减少。」
+//
+// ⚠️ fixture 里【件全现完】，这是照他的话搭的（「已经把件求出来」），
+// 顺带也绕开了两条会抢戏的规矩：
+//   · 件全现 → opponentAskOpen 关掉 → 「不领对手求的门」不介入
+//   · 我这门只有 1 张 → 「别拆甩牌门」不介入（那条要 ≥2 张才护）
+// 我这门要是有两三张，那门对我自己也是甩牌资产，该整门留着而不是一张张捅，
+// 那时候让位是对的，不该在这里测。
+// 队友（座 2）做庄并在 ♦ 明求 → 帮他求件那条拿满 560，正是要被压过的那一档。
+function savedTailThrowView(middle) {
+  return leadView({
+    declarerSeat: 2, mySeat: 0,
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),
+      ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),   // 9 张主，有保底不吊主
+      T('S', 9, 40),                                                    // 黑桃只有 1 张
+      ...[9, 8, 6, 4].map((r, i) => T('D', r, i + 60)),
+    ],
+    piecesView: {
+      S: [14, 14, 13, 13].map(rank => ({ rank, status: 'seen' })),      // 件全现完
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+    trickHistory: [
+      // 第 1 墩：对手（座 1）领 ♠3 求件，件是【另一个对手】（座 3）交出来的 ——
+      // 我方一支没喂，所以 teamGavePieceIn 不成立，这就是场景乙
+      {
+        trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 3, points: 0,
+        plays: [
+          { seat: 1, playSuit: 'S', cards: [T('S', 3, 90)] },
+          { seat: 0, cards: [T('S', 5, 91)] },
+          { seat: 3, cards: [T('S', 13, 92)] },
+          { seat: 2, cards: [T('S', 6, 93)] },
+        ],
+      },
+      ...middle,
+      // 最后一墩：队友领 ♦4 明求方块。放在最后是有讲究的 —— partnerRequest
+      // 认的是队友【最近一次】领牌，中间墩里就算队友也领过别的门也不影响这一条。
+      {
+        trickNo: 9, leadSeat: 2, leadSuit: 'D', winnerSeat: 2, points: 0,
+        plays: [{ seat: 2, playSuit: 'D', cards: [T('D', 4, 96)] }],
+      },
+    ],
+  });
+}
+
+const oppTrump = n => ({
+  trickNo: n, leadSeat: 1, leadSuit: 'TRUMP', winnerSeat: 1, points: 0,
+  plays: [{ seat: 1, playSuit: 'TRUMP', cards: [T('H', 7, 90 + n)] }],
+});
+const oppSpade = n => ({
+  trickNo: n, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0,
+  plays: [{ seat: 1, playSuit: 'S', cards: [T('S', 12, 90 + n)] }],
+});
+const partnerTrump = n => ({
+  trickNo: n, leadSeat: 2, leadSuit: 'TRUMP', winnerSeat: 2, points: 0,
+  plays: [{ seat: 2, playSuit: 'TRUMP', cards: [T('H', 6, 90 + n)] }],
+});
+const partnerAsksSpade = n => ({
+  trickNo: n, leadSeat: 2, leadSuit: 'S', winnerSeat: 2, points: 0,
+  plays: [{ seat: 2, playSuit: 'S', cards: [T('S', 4, 90 + n)] }],
+});
+
+test('场景乙：他求出件后不甩、转打主（留甩尾手）→ 去捅短这门', () => {
+  const lead = chooseLeadCards(savedTailThrowView([oppTrump(2)]))[0];
+  assert.equal(lead.suit, 'S',
+    `他把这门留着甩尾手，该去捅短（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照①：他吊了主，可【之后又回来打这门】—— 那就不是留着，是正常在打。
+// ⚠️ 顺序必须是「先吊主、再回来」：反过来的话「转打主」那一半自己就不成立了，
+// 测的就不是「回来打过」这一条。变异测试正是这么戳穿第一版的。
+test('场景乙：他吊过主但又回来打这门 → 不是留尾巴，去求别的门', () => {
+  const lead = chooseLeadCards(savedTailThrowView([oppTrump(2), oppSpade(3)]))[0];
+  assert.equal(lead.suit, 'D',
+    `他自己都回头打这门了，谈不上留尾巴（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照②：吊主的是【我方】，不是他 —— 那是我方在削他，不是他在留尾巴。
+// ⚠️ 用队友吊主而不是「谁都没吊」，一条对照顶两条：既钉住「得有转打主这个动作」，
+// 也钉住「只算他自己领的」。
+test('场景乙：吊主的是队友不是他 → 没有留尾巴的判据，去求别的门', () => {
+  const lead = chooseLeadCards(savedTailThrowView([partnerTrump(2)]))[0];
+  assert.equal(lead.suit, 'D',
+    `我方吊主不能算成他在留尾巴（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照③：这门【队友也求过】—— 按 Glen 的读牌顺序（先看对家）这门就算队友在求，
+// 件多半在自己人那边，谈不上「他留着甩尾手」。
+test('场景乙：这门队友也求过 → 算队友在求，不当成他留尾巴', () => {
+  const lead = chooseLeadCards(
+    savedTailThrowView([partnerAsksSpade(2), oppTrump(3)])
+  )[0];
+  assert.equal(lead.suit, 'D',
+    `队友也求过这门，读牌上件在自己人那边（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ============ 不帮对手吊主 ============
 //
 // Glen：「吊主也一样，如果对方要吊主吊大牌出来让自己保底，或是吊短主牌可以让
