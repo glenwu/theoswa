@@ -35,6 +35,13 @@ const NEW = `  const early = hand.length > 8;
       outstandingTrumps, drawPool: drawPool.length, strategy,
       helpingOpponentDraw,
       opening,
+      partnerLine: partnerLine(view, ctx),
+      partnerLeads: (view.round?.trickHistory ?? [])
+        .filter(t => !t.virtual && t.leadSeat === partnerSeatOf(view.you.seat))
+        .map(t => t.leadSuit + (t.winnerSeat === partnerSeatOf(view.you.seat) ? '*' : ''))
+        .join(','),
+      strongSideNow: strongSide,
+      guaranteedNow: control.guaranteed,
       trumpCount: trumps.length,
       oppTrumpEst: maxOpponentTrumpEstimate(view, ctx),
       openedSide: declarerOpenedSide(view),
@@ -67,6 +74,25 @@ try {
     if (r.winnerSuit === 'TRUMP') row.drew += 1;
     byRole.set(k, row);
   }
+  const defs = all.filter(r => r.role === 'defender');
+  const pl = defs.filter(r => r.partnerLine === 'trump');
+  console.log(`【闲家领牌 ${defs.length} 次，其中「队友走吊主这条线」${pl.length} 次】`);
+  const shapes = new Map();
+  for (const r of defs) shapes.set(r.partnerLeads, (shapes.get(r.partnerLeads) ?? 0) + 1);
+  console.log(`  队友领牌里含 TRUMP 的样本：${defs.filter(r => r.partnerLeads.includes('TRUMP')).length}`);
+  console.log(`  队友领过 >=2 次的样本：${defs.filter(r => r.partnerLeads.split(',').filter(Boolean).length >= 2).length}`);
+  console.log('  队友领牌的线路（* = 他赢下这一墩），出现最多的 12 种：');
+  for (const [k, v] of [...shapes.entries()].sort((a,b)=>b[1]-a[1]).slice(0, 12))
+    console.log(`    ${String(v).padStart(4)}  ${k === '' ? '（他还没领过牌）' : k}`);
+  if (pl.length) {
+    console.log(`  这 ${pl.length} 次里：吊了主 ${pl.filter(r => r.winnerSuit === 'TRUMP').length}`);
+    console.log(`  被外层门挡住的：够保底 ${pl.filter(r => r.guaranteedNow).length}` +
+      `，副牌强 ${pl.filter(r => r.strongSideNow && !r.planPending).length}` +
+      `，开局 ${pl.filter(r => r.opening).length}` +
+      `，不帮对手吊 ${pl.filter(r => r.helpingOpponentDraw).length}` +
+      `，没主可吊 ${pl.filter(r => r.drawPool === 0).length}`);
+  }
+  console.log('');
   console.log('【按「是不是主家」拆的领牌与吊主率】');
   for (const [k, v] of [...byRole.entries()].sort((a, b) => b[1].n - a[1].n))
     console.log(`  ${k.padEnd(24)} 领牌 ${String(v.n).padStart(5)}  吊主 ${String(v.drew).padStart(4)}  ${(v.drew*100/v.n).toFixed(1)}%`);

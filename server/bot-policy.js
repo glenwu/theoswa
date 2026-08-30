@@ -1327,6 +1327,10 @@ const TOTAL_TRUMPS = 36;
 //   「我们的主牌共有 36 张，平均 9 张，那么如果多过 9 张主就可以算是长主。」
 // 平均数就是 TOTAL_TRUMPS / 4，写成派生的，别再手抄一个 9。
 const TRUMP_AVERAGE_PER_HAND = TOTAL_TRUMPS / 4;
+// 要看几次领牌才谈得上「线路干脆分明」（partnerLine）。
+// 一次看不出线路，两次才有「一致」可言。
+// ⚠️ 这个 2 是我按 Glen 的措辞挑的，不是他给的数。
+const PARTNER_LINE_MIN_LEADS = 2;
 
 const TOTAL_PER_SIDE_SUIT = 24;
 
@@ -1561,6 +1565,33 @@ function leadRole(view) {
   if (view.you.seat === declarerSeat) return 'declarer';
   if (view.you.seat % 2 === declarerSeat % 2) return 'declarerPartner';
   return 'defender';
+}
+
+// 【队友是不是主家】—— 我看不见他的牌，只能从看得见的动作上认。
+// Glen 2026-08-30 给的正是动作：
+//   「打牌的线路非常干脆分明，吊主就是吊主，副牌很明确的知道自己要什么，
+//     牌势很强，很多机会都是他大。」
+// 三样都要：
+//   · 领过至少两次牌 —— 一次看不出线路
+//   · 线路干脆：这几次领的【全是主牌】或【全是同一门副牌】，
+//     不是这一墩主、下一墩副地来回换
+//   · 牌势强：他领的那些墩，多数是他自己赢下来的（「很多机会都是他大」）
+// 返回他走的是哪条线（'trump' / 'side'），认不出来就是 null。
+function partnerLine(view, ctx) {
+  const partner = partnerSeatOf(view.you.seat);
+  const leads = (view.round?.trickHistory ?? [])
+    .filter(trick => !trick.virtual && trick.leadSeat === partner);
+  if (leads.length < PARTNER_LINE_MIN_LEADS) return null;
+  // ⚠️ 只看他【最近】那几次领牌，不是整局。要求整局一条线的话实测【一次都不触发】：
+  // 谁开局都可能先摸一手副牌探路，之后才定线。Glen 说的「线路干脆分明」是指
+  // 他现在在走的那条线，不是整局一张副牌没碰过。
+  const recent = leads.slice(-PARTNER_LINE_MIN_LEADS);
+  const suits = new Set(recent.map(trick => trick.leadSuit));
+  if (suits.size > 1) return null;                                   // 线路不干脆
+  if (recent.filter(trick => trick.winnerSeat === partner).length * 2 <= recent.length) {
+    return null;                                                     // 牌势不强
+  }
+  return suits.has('TRUMP') ? 'trump' : 'side';
 }
 
 // 庄家最近在走什么路子（队友做庄时要跟着他打）
@@ -2330,6 +2361,11 @@ export function chooseLeadCards(view) {
       // 所以这一档该和庄家同权重 —— 他说庄家只是「最有可能」做主家，不是唯一。
       // ⚠️ 实测原来这一档是 0：200 局里「闲家 + 主家」领牌 38 次，只吊了 3 次（7.9%）。
       : strategy === 'grab-bottom' ? 520
+      // 队友是主家、而且他走的是吊主这条线 → 帮他吊。Glen 2026-08-30 说主家
+      // 那段时特地带了一句：「这时队友也需要看情况帮他做这个事。」
+      // 判据见 partnerLine —— 看的是他【干不干脆】和【赢不赢得下来】，不是猜他的牌。
+      // 权重和庄家队友那一档同级（480）：都是「跟着主家的路子打」。
+      : partnerLine(view, ctx) === 'trump' ? 480
       : 0;                                                             // 其余闲家：随便
     drawWarranted = drawBonus > 0;
     if (drawBonus > 0) {

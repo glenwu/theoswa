@@ -22,4 +22,27 @@ runMutants([
   [F, "  const bottomDone = control.guaranteed && strategy !== 'grab-bottom';",
       '  const bottomDone = false;',
       '「够保底就去跑副牌」整条没了 —— 庄家保住底也接着死吊'],
+
+  // ---- 队友是主家就帮他吊 ----
+  [F, "      : partnerLine(view, ctx) === 'trump' ? 480",
+      '      : 0 ? 480',
+      '队友在主导吊主也不跟 —— Glen：「这时队友也需要看情况帮他做这个事」'],
+  [F, "      : partnerLine(view, ctx) === 'trump' ? 480",
+      "      : partnerLine(view, ctx) !== null ? 480",
+      '队友走副牌那条线也跟着吊主（跟错了线）'],
+
+  // ---- 「线路干脆分明」+「牌势很强」两条判据 ----
+  [F, '  if (suits.size > 1) return null;                                   // 线路不干脆',
+      '',
+      '线路来回换也算干脆分明'],
+  [F, `  if (recent.filter(trick => trick.winnerSeat === partner).length * 2 <= recent.length) {
+    return null;                                                     // 牌势不强
+  }`,
+      '', '不看他赢不赢得下来 —— 硬撑着吊主也当成主家'],
+  [F, '  if (leads.length < PARTNER_LINE_MIN_LEADS) return null;',
+      '',
+      '领过一次就下结论（一次看不出线路）'],
+  [F, '  const recent = leads.slice(-PARTNER_LINE_MIN_LEADS);',
+      '  const recent = leads;',
+      '看整局而不是最近几次 —— 开局摸一手副牌探路就再也认不出线路了'],
 ]);

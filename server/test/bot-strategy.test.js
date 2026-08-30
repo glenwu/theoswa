@@ -525,6 +525,89 @@ test('主家不一定是庄家：普通闲家牌（吃分为主）→ 不为吊�
     `没有撬底策略的闲家，吊主是白削自己（实际领了 ${lead.suit}${lead.rank}）`);
 });
 
+// ---- 队友是主家，就帮他吊（Glen 2026-08-30）----
+//
+// 他说主家那段时特地带了一句「这时队友也需要看情况帮他做这个事」。
+// 我看不见队友的牌，问他是从哪认出来的，他给的是【动作】：
+//   「打牌的线路非常干脆分明，吊主就是吊主，副牌很明确的知道自己要什么，
+//     牌势很强，很多机会都是他大。」
+// 落成三条：领过 ≥2 次 + 最近这几次走的是同一条线 + 那几墩多数是他赢的。
+//
+// ⚠️ 「最近」这两个字是量出来的：第一版要求他【整局】只走一条线，
+// 200 局里【一次都不触发】—— 谁开局都可能先摸一手副牌探路，之后才定线。
+// ⚠️ 这一条即使改对了，实测在对局里也几乎碰不到（闲家本来就很少吊主，
+// 「队友连吊两轮还都赢下来」这个前提自己就很罕见）。判据是对的，覆盖窄而已。
+const partnerLed = (n, suit, winnerSeat) => ({
+  trickNo: n, leadSeat: 3, leadSuit: suit, winnerSeat, points: 0,
+  plays: [{ seat: 3, playSuit: suit, cards: [T(suit === 'TRUMP' ? 'H' : suit, 9, 90 + n)] }],
+});
+function helpPartnerView(history) {
+  return leadView({
+    // 主牌不长不短、副牌也弱 —— 自己没有任何策略可言（points-first），
+    // 这样领不领主牌就只取决于「队友是不是主家」这一条
+    hand: [
+      ...[10, 9, 8, 7, 6].map((r, i) => T('H', r, i)),
+      ...WEAK_SIDES,
+    ],
+    declarerSeat: 0, mySeat: 1,     // 座 1 和座 0 不同队 → 我是闲家，队友是座 3
+    trickHistory: history,
+  });
+}
+
+test('帮队友吊主：他连吊两轮主、还都赢下来 → 线路干脆牌势强，跟着吊', () => {
+  const lead = chooseLeadCards(helpPartnerView([
+    partnerLed(1, 'TRUMP', 3), partnerLed(2, 'TRUMP', 3),
+  ]))[0];
+  assert.equal(lead.suit, 'H',
+    `队友在主导吊主，该帮他把四家的主吊短（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照①：一主一副 —— 线路不干脆，看不出他在主导什么。
+test('帮队友吊主：他一主一副 → 线路不干脆，不跟', () => {
+  const lead = chooseLeadCards(helpPartnerView([
+    partnerLed(1, 'TRUMP', 3), partnerLed(2, 'S', 3),
+  ]))[0];
+  assert.notEqual(lead.suit, 'H',
+    `看不出他在走哪条线，别跟着削自己的主（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照②：连吊两轮但都没赢下来 —— Glen 的原话里「牌势很强，很多机会都是他大」
+// 是判据的一部分，光看线路会把「他在硬撑」也当成主家。
+test('帮队友吊主：他连吊两轮但都没赢 → 牌势不强，不跟', () => {
+  const lead = chooseLeadCards(helpPartnerView([
+    partnerLed(1, 'TRUMP', 0), partnerLed(2, 'TRUMP', 0),
+  ]))[0];
+  assert.notEqual(lead.suit, 'H',
+    `他吊了两轮都没拿下，那不是主家的牌势（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照③：他的线路很干脆，但走的是【副牌】那条 —— 跟线要跟对，
+// 他在跑副牌我却去吊主，那是自己削自己。
+test('帮队友吊主：他连打两轮同一门副牌 → 那是副牌路线，别跟着吊主', () => {
+  const lead = chooseLeadCards(helpPartnerView([
+    partnerLed(1, 'S', 3), partnerLed(2, 'S', 3),
+  ]))[0];
+  assert.notEqual(lead.suit, 'H',
+    `他走的是副牌路线，跟错线了（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照④：只领过一次 —— 一次看不出线路，谈不上「干脆分明」。
+test('帮队友吊主：他只吊过一轮 → 一次看不出线路，先不跟', () => {
+  const lead = chooseLeadCards(helpPartnerView([partnerLed(1, 'TRUMP', 3)]))[0];
+  assert.notEqual(lead.suit, 'H',
+    `一次领牌看不出他在主导什么（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 正向补充：他开局先摸了一手副牌探路，之后连吊两轮主 —— 看的是【最近】的线路，
+// 不是整局。这一条是量出来的：第一版要求整局一条线，200 局里一次都不触发。
+test('帮队友吊主：开局摸过一手副牌，之后连吊两轮主 → 看最近的线路，照样跟', () => {
+  const lead = chooseLeadCards(helpPartnerView([
+    partnerLed(1, 'D', 3), partnerLed(2, 'TRUMP', 3), partnerLed(3, 'TRUMP', 3),
+  ]))[0];
+  assert.equal(lead.suit, 'H',
+    `他现在走的就是吊主这条线（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ============ 庄家队友：没保底就该一直吊，不看庄家最近打了什么 ============
 //
 // Glen 2026-08-29：「BOT 做庄时开始吊主，后来还是容易忘记，打成副牌了，
