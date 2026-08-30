@@ -16,13 +16,13 @@ runMutants([
       '兜底删掉 —— 全部候选都得交件时返回空手（真人局里直接卡死）'],
 
   // ---- 「除非有大分，比如 20 分以上」 ----
-  // ⚠️ 2026-08-30 起门槛分了庄闲两档（Glen：庄家要保底，更严苛），
-  // 判断挪进了一个带 declarerSide 的 if。庄闲那两条变异体在 mutants30。
-  [F, '  if (tablePoints >= (declarerSide ? PIECE_ASK_BIG_POINTS_DECLARER : PIECE_ASK_BIG_POINTS)) {',
-      '  if (tablePoints >= 10) {',
+  // ⚠️ 2026-08-30 起门槛不再是常数，按【角色 × 要不要吊主 × 这门还剩多少】查表
+  // （Glen 给的），判断也挪进了按门循环。那张表的变异体在 mutants30。
+  [F, '    if (tablePoints >= pieceAskPointsFor(view, ctx, suit)) continue;',
+      '    if (tablePoints >= 10) continue;',
       '门槛降到 10 分 —— 正是 Glen 点名的那一档'],
-  [F, '  if (tablePoints >= (declarerSide ? PIECE_ASK_BIG_POINTS_DECLARER : PIECE_ASK_BIG_POINTS)) {',
-      '  if (false) {',
+  [F, '    if (tablePoints >= pieceAskPointsFor(view, ctx, suit)) continue;',
+      '',
       '大分也不许砍 —— 把 Glen 给的例外挡掉了'],
   [F, `  const tablePoints = (view.round?.currentTrick ?? [])
     .flatMap(play => play.cards ?? [])

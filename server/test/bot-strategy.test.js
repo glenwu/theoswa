@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assessBottomControl, chooseFollowCards, chooseKittyCards, chooseLeadCards,
-  evaluateFollowChoices, roundStrategy, suitAskSignal,
+  evaluateFollowChoices, roundStrategy, suitAskSignal, pieceAskPointsFor,
 } from '../bot-policy.js';
 import { cardPoints as cardPointsOf } from '../cards.js';
 import { buildDeck, playSuitOf } from '../cards.js';
@@ -1394,6 +1394,89 @@ test('对手求件：两件都在我手上 → 可以砍', () => {
 test('对手求件：桌上 30 分（这门的分没怎么走）→ 大分解除禁令，砍', () => {
   const play = chooseFollowCards(askedPieceView({ table: [10, ['D', 13], ['D', 10]] }))[0];
   assert.equal(play.rank, 14, `桌上 30 分早过了 Glen 给的门槛（实际打了 ♠${play.rank}）`);
+});
+
+// ============ 放件门槛：Glen 给的那张表 ============
+//
+//   「这个实际上还要结合其它条件，如果判断这门给甩了威胁不大，那 20 分也是可以吃的，
+//     如果威胁大，那就需要到 30 分，是一个综合评判的过程。
+//     1，如果自己做庄，需要吊主，这个的放行条件要比较高我想 30 没有问题，最少 25，
+//        因为如果给别人甩牌，就相当于帮别人跑掉副牌，更不容易把别人的大主吊出来；
+//     2，如果是庄家的队友，如果是要吊主，那也是一样，如果是不用吊主，可以放宽到
+//        20-25，如果那门牌牌快完了可以放宽到 15-20；
+//     3，如果是闲家，无论需不需要吊主，可以放宽到 20-25，如果那门牌快完了可以到 15-20；
+//     4，还有到牌局的中后期的时候，如果牌剩的不多，比如已经出了 16-18 支
+//        （一共 24 支副牌）可以再放宽吃分，甚至 10-15。」
+//
+// 门槛直接钉在 pieceAskPointsFor 上，不隔着 chooseFollowCards 猜 ——
+// 这张表是他逐档给的，每一档都该有一条。
+function askPointsView({ declarerSeat, hand, spadesPlayed = 0 }) {
+  const junk = Array.from({ length: spadesPlayed }, (_, i) => T('S', 3 + (i % 4), 700 + i));
+  return leadView({
+    hand, declarerSeat, mySeat: 2,
+    // ⚠️ 这一墩领的是主牌，黑桃是别人断门垫下来的 —— 黑桃要是被领过，
+    // 别处的求件判据会跟着变，这里只想动「这门出了多少张」这一个维度。
+    trickHistory: junk.length ? [{
+      trickNo: 1, leadSeat: 1, leadSuit: 'TRUMP', winnerSeat: 1, points: 0,
+      plays: [
+        { seat: 1, playSuit: 'TRUMP', cards: [T('H', 4, 690)] },
+        { seat: 0, cards: junk },
+      ],
+    }] : [],
+  });
+}
+// 没主没鬼 → 保底无从谈起 → 「还要吊主」
+const NO_BOTTOM = [
+  ...[9, 7, 5].map((r, i) => T('S', r, i)),
+  ...[8, 6].map((r, i) => T('D', r, i + 10)),
+];
+// 双大鬼 + 9 张主 → 够保底 → 不用死吊
+const HAS_BOTTOM = [
+  T('H', 16, 0), T('H', 16, 1),
+  ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),
+  ...[9, 7, 5].map((r, i) => T('S', r, i + 40)),
+];
+
+test('放件门槛：闲家、牌还满 → 20 分', () => {
+  assert.equal(pieceAskPointsFor(askPointsView({ declarerSeat: 1, hand: NO_BOTTOM }), S_CTX, 'S'), 20);
+});
+
+// 第 1 / 2 条：庄家一方还要吊主 → 30。他给的理由是「给别人甩牌就相当于帮别人
+// 跑掉副牌，更不容易把别人的大主吊出来」。
+test('放件门槛：庄家一方、还没保底（要吊主）→ 30 分', () => {
+  assert.equal(pieceAskPointsFor(askPointsView({ declarerSeat: 0, hand: NO_BOTTOM }), S_CTX, 'S'), 30);
+});
+
+// 反向对照：同样是庄家一方，但已经够保底 → 不用死吊，回到 20。
+// ⚠️ 少了这条，「庄家一律 30」也能让上面那条绿。
+test('放件门槛：庄家一方但已经够保底 → 不用死吊，回到 20 分', () => {
+  assert.equal(pieceAskPointsFor(askPointsView({ declarerSeat: 0, hand: HAS_BOTTOM }), S_CTX, 'S'), 20);
+});
+
+// 第 2 / 3 条的「那门牌快完了」
+test('放件门槛：这门已经出了 12 张（快完了）→ 放宽到 15 分', () => {
+  assert.equal(
+    pieceAskPointsFor(askPointsView({ declarerSeat: 1, hand: NO_BOTTOM, spadesPlayed: 12 }), S_CTX, 'S'),
+    15
+  );
+});
+
+// 第 4 条：24 支里出了 16 支 —— 他给的数
+test('放件门槛：这门已经出了 16 张（剩的不多）→ 放宽到 10 分', () => {
+  assert.equal(
+    pieceAskPointsFor(askPointsView({ declarerSeat: 1, hand: NO_BOTTOM, spadesPlayed: 16 }), S_CTX, 'S'),
+    10
+  );
+});
+
+// 第 4 条是【横切】的：他说「还有到牌局的中后期的时候」，没有限定角色。
+// 所以牌快走光时，连「庄家还要吊主」那一档也跟着放宽 —— 那门都没牌可跑了，
+// 甩出来也威胁不到谁。
+test('放件门槛：牌快走光时，连庄家要吊主那一档也一起放宽', () => {
+  assert.equal(
+    pieceAskPointsFor(askPointsView({ declarerSeat: 0, hand: NO_BOTTOM, spadesPlayed: 16 }), S_CTX, 'S'),
+    10
+  );
 });
 
 // ---- 庄家一方的门槛更高（Glen 2026-08-30）----

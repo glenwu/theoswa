@@ -1107,16 +1107,46 @@ const PIECE_NEAR_VOID_AFTER = 2;
 // 一门副牌两副共 24 张，这里取三分之一：出掉 8 张以内都还算「没怎么打」。
 // ⚠️ 这个 8 是我按他的措辞挑的，不是他给的数，回头要跟他确认。
 const TAIL_ENTRY_SUIT_PLAYED_MAX = 8;
-// 桌上要有多少分才值得把件砍出去。
-// Glen：「除非有大分，比如 20 分以上……才能把件出给别人。」
-const PIECE_ASK_BIG_POINTS = 20;
-// 庄家一方的门槛更高 —— Glen 2026-08-30：
-//   「闲家吃分为主更愿意亮件，我认为还是要遵守『件不能乱出』，
-//     只是庄家还要更严苛，因为庄家需要保底，类似于『防守』。」
-// 所以两边【都】守这道闸，差别只在门槛：庄家一方要 30 分才松口。
-// 30 也是他给的数：「如果一个件可以砍 30 分或以上，砍的机率要大大上升，
-// 30 分是非常多了」。
-const PIECE_ASK_BIG_POINTS_DECLARER = 30;
+// 桌上要有多少分才值得把件砍出去 —— Glen 2026-08-30 给了整张表：
+//
+//   「这个实际上还要结合其它条件，如果判断这门给甩了威胁不大，那 20 分也是可以吃的，
+//     如果威胁大，那就需要到 30 分，是一个综合评判的过程，只是一开始 BOT 经常乱出，
+//     我才需要把这个限制死。
+//     1，如果自己做庄，需要吊主，这个的放行条件要比较高我想 30 没有问题，最少 25，
+//        因为如果给别人甩牌，就相当于帮别人跑掉副牌，更不容易把别人的大主吊出来；
+//     2，如果是庄家的队友，如果是要吊主，那也是一样，如果是不用吊主，
+//        可以放宽到 20-25，如果那门牌牌快完了可以放宽到 15-20；
+//     3，如果是闲家，无论需不需要吊主，可以放宽到 20-25，如果那门牌快完了可以到 15-20；
+//     4，还有到牌局的中后期的时候，如果牌剩的不多，比如已经出了 16-18 支
+//        （一共 24 支副牌）可以再放宽吃分，甚至 10-15。」
+//
+// 落成三档基线 + 一档按【这门还剩多少】往下压。
+// ⚠️ 每档都取他给的区间的【下沿】（30 / 20 / 15 / 10），只有第一档用 30 ——
+// 他明说「30 没有问题」。取下沿是为了别把闸收得比他说的还紧。
+const PIECE_ASK_POINTS_DRAWING = 30;   // 庄家一方 + 还要吊主（帮对手跑副牌 = 帮他保住大主）
+const PIECE_ASK_POINTS_BASE = 20;      // 闲家，或庄家一方已经够保底、不用死吊
+// 这门快打完了 → 他就算甩出来也没多少牌可跑，威胁小，可以放宽
+const PIECE_ASK_POINTS_SUIT_THIN = 15;
+const PIECE_ASK_POINTS_SUIT_GONE = 10;
+// 「快完了」和「剩的不多」的分界。后者是他给的数（24 支里出了 16-18 支）；
+// ⚠️ 前者他只说「快完了」没给数，这里取一半（12 支），回头要跟他确认。
+const PIECE_SUIT_THIN_PLAYED = 12;
+const PIECE_SUIT_GONE_PLAYED = 16;
+
+// 这一手【现在】的放行门槛。
+export function pieceAskPointsFor(view, ctx, suit) {
+  const declarerSide =
+    view.declarerSeat !== null && view.declarerSeat !== undefined &&
+    view.you?.seat % 2 === view.declarerSeat % 2;
+  // 「需要吊主」= 还没保底。Glen 给的理由正是这个：没保底才要把对手的大主吊出来，
+  // 这时候放件等于帮他把副牌跑掉、大主留着。够保底了就不必死守。
+  const needsDraw = declarerSide && !bottomControlOf(view, ctx).guaranteed;
+  const base = needsDraw ? PIECE_ASK_POINTS_DRAWING : PIECE_ASK_POINTS_BASE;
+  const gone = playedCardsOf(view).filter(card => suitOf(card, ctx) === suit).length;
+  if (gone >= PIECE_SUIT_GONE_PLAYED) return Math.min(base, PIECE_ASK_POINTS_SUIT_GONE);
+  if (gone >= PIECE_SUIT_THIN_PLAYED) return Math.min(base, PIECE_ASK_POINTS_SUIT_THIN);
+  return base;
+}
 // 这门外面还剩多少分，才值得为了护件放走桌上的分（见 coverNeedsFirstPiece）。
 const PIECE_COVER_MIN_POINTS = 30;
 // 打完这一支之后这门至少还得剩几张 —— 顶端再大，只剩一张也压不住两张的甩牌。
@@ -1787,18 +1817,13 @@ function opponentThrowInProgress(view) {
 // 打分那一头照旧留着（它管的是「没人求 / 队友求」那两种更软的局面）。
 function pieceOwedToOpponentAsk(view, ctx, cards) {
   const hand = view.you?.hand ?? [];
-  // 「除非有大分，比如 20 分以上」—— 桌上已经摆着的分，不含我自己这一手：
+  // 「除非有大分」—— 桌上已经摆着的分，不含我自己这一手：
   // 我那支 K 的 10 分是我【付出】的，不是奖品。
+  // ⚠️ 门槛不再是一个常数，按【角色 × 要不要吊主 × 这门还剩多少】查（Glen 给的表，
+  // 见 pieceAskPointsFor）。所以它要挪进下面按门循环里算。
   const tablePoints = (view.round?.currentTrick ?? [])
     .flatMap(play => play.cards ?? [])
     .reduce((sum, card) => sum + cardPoints(card), 0);
-  // 庄家一方更严苛（Glen）：他要保底，放件是「防守」上的漏洞。
-  const declarerSide =
-    view.declarerSeat !== null && view.declarerSeat !== undefined &&
-    view.you?.seat % 2 === view.declarerSeat % 2;
-  if (tablePoints >= (declarerSide ? PIECE_ASK_BIG_POINTS_DECLARER : PIECE_ASK_BIG_POINTS)) {
-    return false;
-  }
   for (const card of cards) {
     if (!isSidePiece(card, ctx)) continue;
     const suit = suitOf(card, ctx);
@@ -1812,6 +1837,8 @@ function pieceOwedToOpponentAsk(view, ctx, cards) {
     // 「情况不明」正是没人求的那种状态 —— 谁手上有件全靠猜，那就不能出。
     // 队友求 → Glen 早先裁过：「如果对家有表示，可以很没压力地出件」，放行。
     if (suitAskSignal(view, ctx, suit) === 'partner') continue;
+    // 「除非有大分」—— 门槛按这一门的局面算（Glen 给的那张表）
+    if (tablePoints >= pieceAskPointsFor(view, ctx, suit)) continue;
     // 「有两件可以砍」
     if (items.filter(item => item.status === 'mine').length >= 2) continue;
     // 「即使对方甩了也得不了多少分，那么就可以杀」—— Glen 早先给的例外。

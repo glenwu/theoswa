@@ -32,6 +32,15 @@ for (let i = 0; i < N_ROUNDS; i++) {
   const isPiece = c => ps(c) !== 'TRUMP' && (c.rank === 14 || c.rank === 13) && c.rank !== rankCard;
   const pieceTotal = [14, 13].filter(r => r !== rankCard).length * 2;
 
+  // 到第 ti 墩为止，这门出了多少张
+  const playedInSuit = (suit, ti) => {
+    let n = 0;
+    for (let k = 0; k < ti; k++)
+      for (const p of hist[k].plays ?? [])
+        for (const x of p.cards ?? []) if (ps(x) === suit) n += 1;
+    return n;
+  };
+
   const handOf = (seat, ti) => {
     const out = [];
     for (let k = ti; k < hist.length; k++)
@@ -93,11 +102,27 @@ for (let i = 0; i < N_ROUNDS; i++) {
         const lenHere = hand.filter(x => ps(x) === suit).length;
         // 这门【天生】多少分：打 10 / 打 K 时该门的 10 / K 升主，从 50 掉到 30
         const suitMax = 50 - (rankCard === 5 ? 10 : (rankCard === 10 || rankCard === 13) ? 20 : 0);
-        const ok = heldHere >= 2 || pts >= 20 || lenHere <= 3 || suitMax <= 30;
+        // 放行门槛按 Glen 2026-08-30 给的那张表算（源码里的 pieceAskPointsFor）：
+        //   庄家一方且还没保底（要吊主）→ 30，其余 → 20；
+        //   这门已出 ≥12 → 压到 15，≥16 → 压到 10。
+        // ⚠️ 「还没保底」这里用近似：那一家整局没打出过鬼/主级牌就当成没保底。
+        // 审计只是对口径，不用跟源码的 assessBottomControl 逐位对齐。
+        const isDeclarerSide = (play.seat % 2) === (round.declarerSeat % 2);
+        let topSeen = false;
+        for (const h of hist)
+          for (const p2 of h.plays ?? [])
+            if (p2.seat === play.seat)
+              for (const x of p2.cards ?? [])
+                if (x.rank === 16 || x.rank === 15) topSeen = true;
+        const goneHere = playedInSuit(suit, ti);
+        const base = isDeclarerSide && !topSeen ? 30 : 20;
+        const bar = goneHere >= 16 ? Math.min(base, 10)
+          : goneHere >= 12 ? Math.min(base, 15) : base;
+        const ok = heldHere >= 2 || pts >= bar || lenHere <= 3 || suitMax <= 30;
         byTablePoints.set(pts, byTablePoints.get(pts) ?? { killed: 0, spared: 0 });
         const won = t.winnerSeat === play.seat;
         if (ok) {
-          add(`对手在求 · 合规（${label}）· ${heldHere >= 2 ? '我有两件' : pts >= 20 ? '≥20 分' : lenHere <= 3 ? '只剩两三支' : '这门天生就少分'}`);
+          add(`对手在求 · 合规（${label}）· ${heldHere >= 2 ? '我有两件' : pts >= bar ? `到线（${bar} 分）` : lenHere <= 3 ? '只剩两三支' : '这门天生就少分'}`);
         } else {
           add(`★ 对手在求 · 违规（${label}）· 桌上 ${pts} 分 · 这门 ${lenHere} 支 · ${won ? '自己赢下' : '没赢'}`);
         }
