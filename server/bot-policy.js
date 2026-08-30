@@ -1029,6 +1029,13 @@ function confirmedFullKillThreat(view, throwCount) {
 }
 
 function safeSideThrow(view, ctx, tuning = strategyTuning(view)) {
+  // ⚠️ 这里【故意不看对手还剩多少主】。Glen 2026-08-30 那句「数量看场上的主
+  // 数量而定」说的是【甩尾手】这套打法的时机，不是「所有甩牌都要等」——
+  // 他早先裁过「求完件要甩」「能甩就甩是实打实的分」。
+  // 试过在这里直接卡「对手估计的主 < 我要甩的张数」，四条他裁过的测试当场变红
+  //（副牌够强转副牌 / 一手小牌照甩 / 求完件要甩 / 两张不算尾巴）。
+  // 时机由 tailThrowPlan 那条路管：计划成立而时机未到就挂起（planPending），
+  // 下面的提案会压住不甩、先去吊主。这才是他描述的那套操作。
   const candidates = [];
   for (const suit of SUITS.filter(s => s !== ctx.trumpSuit)) {
     const cards = cardsOfSuit(view.you.hand, suit, ctx);
@@ -1096,6 +1103,10 @@ const PIECE_READ_NOBODY_ASKED = 0.7;
 const PIECE_NEAR_VOID_AFTER = 2;
 // 对手在求这门时，桌上要有多少分才值得把件砍出去。
 // Glen：「除非有大分，比如 20 分以上……才能把件出给别人。」
+// 副牌 A 能不能当甩尾手的起手牌 —— Glen 的条件是「这门牌没怎么打，大家都还有」。
+// 一门副牌两副共 24 张，这里取三分之一：出掉 8 张以内都还算「没怎么打」。
+// ⚠️ 这个 8 是我按他的措辞挑的，不是他给的数，回头要跟他确认。
+const TAIL_ENTRY_SUIT_PLAYED_MAX = 8;
 const PIECE_ASK_BIG_POINTS = 20;
 // 这门外面还剩多少分，才值得为了护件放走桌上的分（见 coverNeedsFirstPiece）。
 const PIECE_COVER_MIN_POINTS = 30;
@@ -1876,14 +1887,48 @@ function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
   }, 0);
 }
 
+// 甩尾手的【起手牌】—— Glen 2026-08-30：
+//   「需要有起手牌，就是甩牌的前一轮需要保证大，通常大鬼是比较好的，
+//     其次可以毙别人，也可以是副牌的 A（前提是这门牌没怎么打，大家都还有）。」
+//
+// ⚠️ 关键是「前一轮」：起手牌要赢下【甩牌之前】的那一墩，所以它必须在
+// 要甩的那一门【之外】—— 大牌就在那门里的话，它是甩牌的一部分，赢不了前一轮。
+// 原来只认第一档（control.holdsTopTrump），把 Glen 说的后两档整个丢了。
+//
+// ⚠️ 第二档「其次可以毙别人」【暂时没实现】。判据难落：拿一张小主去毙谈不上
+// 「保证大」，而收紧到「毙得住」又基本退化成第一档。试过写成「断门 + 手上有主」
+// 就算数，结果把他认过的两条裁定顶红了（「副牌够强就转打副牌」、
+// 「件都现完了就整门甩出去」）—— 那两手都是主牌又短又弱、根本削不动对手的局面。
+// 等他给一个更具体的判据再补。
+function tailThrowEntry(view, ctx, control, throwSuit) {
+  // ① 顶端主牌在我手上（大鬼那一档）
+  if (control.holdsTopTrump) return true;
+  // ③ 副牌 A，而且【这门没怎么打，大家都还有】—— 没人断门，A 就毙不到。
+  //    必须是【别的门】的 A，理由见上面那段。
+  const hand = view.you?.hand ?? [];
+  const played = playedCardsOf(view);
+  return SUITS.some(suit => {
+    if (suit === ctx.trumpSuit || suit === throwSuit) return false;
+    const cards = cardsOfSuit(hand, suit, ctx);
+    if (!cards.some(card => card.rank === 14 && card.rank !== ctx.rankCard)) return false;
+    const gone = played.filter(card => suitOf(card, ctx) === suit).length;
+    return gone <= TAIL_ENTRY_SUIT_PLAYED_MAX;
+  });
+}
+
 function tailThrowPlan(view, ctx, control) {
-  if (!control.holdsTopTrump) return null; // 没有起手牌，这个计划无从谈起
+  // ⚠️ Glen 的条件②「场面上一般得有比较长的吊主行为，这个是此消彼长的」
+  // 【没有单独写成门槛】—— 它已经被下面的 ready 隐含了：对手的主少于我要甩的
+  // 张数，正是靠吊主吊出来的。试过两种写法当硬门槛（「已经吊过两轮主」、
+  // 「吊过主或我主够长」），一种顶红 6 条他认过的测试、净账从 +475 退回 −265，
+  // 另一种顶红 3 条，两种都没让数据更好。要不要独立成条，回头问他。
   const hand = view.you?.hand ?? [];
   let best = null;
   for (const suit of SUITS.filter(item => item !== ctx.trumpSuit)) {
     const cards = cardsOfSuit(hand, suit, ctx);
     if (cards.length < 3) continue; // 太短甩了没意义
     if (!canThrowByStatus(view.round?.piecesView?.[suit])) continue;
+    if (!tailThrowEntry(view, ctx, control, suit)) continue;  // 条件③：起手牌
     if (!best || cards.length > best.cards.length) best = { suit, cards };
   }
   if (!best) return null;

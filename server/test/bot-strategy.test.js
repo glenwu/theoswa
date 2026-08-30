@@ -2453,6 +2453,67 @@ test('求完件要甩：计划留着尾巴甩的那一门，也不许一张一�
   assert.equal(cards[0].suit, 'H', '这时候该去吊主，把对手的主削下来');
 });
 
+// ---- 起手牌：不止「顶端主牌在我手上」那一档（Glen 2026-08-30）----
+//
+//   「需要有起手牌，就是甩牌的前一轮需要保证大，通常大鬼是比较好的，其次可以毙
+//     别人，也可以是副牌的 A（前提是这门牌没怎么打，大家都还有）。」
+//
+// 原来只认第一档（control.holdsTopTrump），没有顶端主牌整个甩尾手计划就不成立。
+//
+// ⚠️ 关键在「前一轮」：起手牌要赢下【甩牌之前】那一墩，所以它必须在要甩的那门
+// 【之外】—— 大牌就在那门里的话，它是甩牌的一部分，赢不了前一轮。
+// ⚠️ 观察点是【吊主的开关】：计划挂起会让电脑压住不甩、先去削对手的主。
+// 所以「计划成立」表现为领主牌，「不成立」表现为不领主牌。
+function tailEntryView({ diamonds, dPieces, diamondsPlayed = 0 }) {
+  const junk = Array.from({ length: diamondsPlayed }, (_, i) => T('D', 3 + (i % 4), 700 + i));
+  return leadView({
+    hand: [
+      ...[9, 8, 7, 6, 5, 4].map((r, i) => T('H', r, i)),   // 6 张弱主，没有顶端主牌
+      ...[9, 7, 5].map((r, i) => T('S', r, i + 40)),       // 3 张黑桃，件全现 → 能甩
+      ...diamonds.map((r, i) => T('D', r, i + 60)),
+    ],
+    declarerSeat: 0, mySeat: 0,
+    // 黑桃四件全现 → canThrowByStatus 成立，这门能甩
+    piecesView: {
+      S: [14, 14, 13, 13].map(rank => ({ rank, status: 'seen' })),
+      D: dPieces,
+      C: [14, 14, 13, 13].map(rank => ({ rank, status: 'seen' })),
+    },
+    trickHistory: [{
+      trickNo: 1, leadSeat: 1, leadSuit: 'C', winnerSeat: 1, points: 0,
+      plays: junk.length ? [{ seat: 1, cards: junk }] : [],
+    }],
+  });
+}
+const D_ACE_MINE = [
+  { rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+  { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' },
+];
+const D_NO_ACE = [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' }));
+
+test('甩尾手：没有顶端主牌，但别的门有副 A 且那门没怎么打 → 起手牌成立，压住不甩去吊主', () => {
+  const lead = chooseLeadCards(tailEntryView({ diamonds: [14, 8], dPieces: D_ACE_MINE }))[0];
+  assert.equal(lead.suit, 'H',
+    `♦A 就是「甩牌前一轮保证大」的那张牌，计划成立（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照①：连这张 A 都没有 → 没有起手牌，不构成计划，也就没理由去吊主。
+test('甩尾手：没有起手牌 → 计划不成立，不为它去吊主', () => {
+  const lead = chooseLeadCards(tailEntryView({ diamonds: [9, 8], dPieces: D_NO_ACE }))[0];
+  assert.notEqual(lead.suit, 'H',
+    `手上没有能赢下前一轮的牌，谈不上甩尾手（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照②：Glen 的前提「这门牌没怎么打，大家都还有」——
+// 这门都打掉一半了，别人早断门了，♦A 随时被毙，算不上「保证大」。
+test('甩尾手：副 A 那门已经打掉一半 → A 保不住，起手牌不成立', () => {
+  const lead = chooseLeadCards(
+    tailEntryView({ diamonds: [14, 8], dPieces: D_ACE_MINE, diamondsPlayed: 12 })
+  )[0];
+  assert.notEqual(lead.suit, 'H',
+    `这门都走了一半，♦A 随时被毙，不是「保证大」（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ---- 计划成立的两个前置条件 ----
 //
 // 观察点都放在【吊主的开关】上：计划挂起（planPending）会让电脑
