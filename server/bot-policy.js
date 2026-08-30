@@ -1133,14 +1133,39 @@ const PIECE_ASK_POINTS_SUIT_GONE = 10;
 const PIECE_SUIT_THIN_PLAYED = 12;
 const PIECE_SUIT_GONE_PLAYED = 16;
 
+// 【需要吊主】—— Glen 2026-08-30 纠正过一次：
+//   「『还没保底』是『需要吊主』的充分非必要条件，有很多情况也是需要吊主的，
+//     比如说，你有一门副牌可以甩，但有对手已经断了，可以把你毙了，那你就吃不到分了，
+//     这时也可以吊主……另外甩尾手的情况，也是需要吊主，而且要抓好吊主的时机。
+//     归根结底，吊主就是把四家的主都吊短，达到自己目的的一个行为。」
+//
+// 所以两种都算：
+//   ① 还没保底 —— 得把对手的大主逼出来（这是他给的第一条，也是原来唯一写了的）
+//   ② 有能甩的副牌，但对手的主还够毙 —— 甩出去也吃不到分，先把他的主吊短。
+//      甩尾手就是这一条加上起手牌，所以不用另写。
+function needsTrumpDraw(view, ctx, control) {
+  if (!control.guaranteed) return true;
+  const hand = view.you?.hand ?? [];
+  const opponentTrumps = maxOpponentTrumpEstimate(view, ctx);
+  return SUITS.some(suit => {
+    if (suit === ctx.trumpSuit) return false;
+    const cards = cardsOfSuit(hand, suit, ctx);
+    return (
+      cards.length >= 2 &&
+      canThrowByStatus(view.round?.piecesView?.[suit]) &&
+      opponentTrumps >= cards.length
+    );
+  });
+}
+
 // 这一手【现在】的放行门槛。
 export function pieceAskPointsFor(view, ctx, suit) {
   const declarerSide =
     view.declarerSeat !== null && view.declarerSeat !== undefined &&
     view.you?.seat % 2 === view.declarerSeat % 2;
-  // 「需要吊主」= 还没保底。Glen 给的理由正是这个：没保底才要把对手的大主吊出来，
-  // 这时候放件等于帮他把副牌跑掉、大主留着。够保底了就不必死守。
-  const needsDraw = declarerSide && !bottomControlOf(view, ctx).guaranteed;
+  // 「需要吊主」的判据见 needsTrumpDraw —— ⚠️ 不是「还没保底」那一个条件，
+  // Glen 纠正过：那只是充分条件。放件在这时候等于帮对手把副牌跑掉、大主留着。
+  const needsDraw = declarerSide && needsTrumpDraw(view, ctx, bottomControlOf(view, ctx));
   const base = needsDraw ? PIECE_ASK_POINTS_DRAWING : PIECE_ASK_POINTS_BASE;
   const gone = playedCardsOf(view).filter(card => suitOf(card, ctx) === suit).length;
   if (gone >= PIECE_SUIT_GONE_PLAYED) return Math.min(base, PIECE_ASK_POINTS_SUIT_GONE);

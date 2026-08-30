@@ -1410,10 +1410,10 @@ test('对手求件：桌上 30 分（这门的分没怎么走）→ 大分解除
 //
 // 门槛直接钉在 pieceAskPointsFor 上，不隔着 chooseFollowCards 猜 ——
 // 这张表是他逐档给的，每一档都该有一条。
-function askPointsView({ declarerSeat, hand, spadesPlayed = 0 }) {
+function askPointsView({ declarerSeat, hand, spadesPlayed = 0, piecesView, handCount }) {
   const junk = Array.from({ length: spadesPlayed }, (_, i) => T('S', 3 + (i % 4), 700 + i));
-  return leadView({
-    hand, declarerSeat, mySeat: 2,
+  const view = leadView({
+    hand, declarerSeat, mySeat: 2, piecesView,
     // ⚠️ 这一墩领的是主牌，黑桃是别人断门垫下来的 —— 黑桃要是被领过，
     // 别处的求件判据会跟着变，这里只想动「这门出了多少张」这一个维度。
     trickHistory: junk.length ? [{
@@ -1424,6 +1424,8 @@ function askPointsView({ declarerSeat, hand, spadesPlayed = 0 }) {
       ],
     }] : [],
   });
+  if (handCount !== undefined) for (const p of view.players) p.handCount = handCount;
+  return view;
 }
 // 没主没鬼 → 保底无从谈起 → 「还要吊主」
 const NO_BOTTOM = [
@@ -1451,6 +1453,33 @@ test('放件门槛：庄家一方、还没保底（要吊主）→ 30 分', () =
 // ⚠️ 少了这条，「庄家一律 30」也能让上面那条绿。
 test('放件门槛：庄家一方但已经够保底 → 不用死吊，回到 20 分', () => {
   assert.equal(pieceAskPointsFor(askPointsView({ declarerSeat: 0, hand: HAS_BOTTOM }), S_CTX, 'S'), 20);
+});
+
+// ⚠️「需要吊主」【不等于】「还没保底」—— Glen 2026-08-30 纠正过：
+//   「『还没保底』是『需要吊主』的充分非必要条件，有很多情况也是需要吊主的，
+//     比如说，你有一门副牌可以甩，但有对手已经断了，可以把你毙了，那你就吃不到分了，
+//     这时也可以吊主……归根结底，吊主就是把四家的主都吊短，达到自己目的的一个行为。」
+// 所以这一对：手上够保底，但有一门能甩的副牌而对手的主还够毙 → 仍然要吊主 → 30。
+const SPADES_CAN_THROW = {
+  S: [14, 14, 13, 13].map(rank => ({ rank, status: 'seen' })),
+  D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+};
+
+test('放件门槛：够保底，但能甩的那门会被对手毙 → 仍然要吊主 → 30 分', () => {
+  const view = askPointsView({
+    declarerSeat: 0, hand: HAS_BOTTOM, piecesView: SPADES_CAN_THROW,
+  });
+  assert.equal(pieceAskPointsFor(view, S_CTX, 'S'), 30);
+});
+
+// 反向对照：同一手牌、同样能甩，但对手手上已经凑不出主来毙了 ——
+// 那就没有「先吊短他」的必要，回到 20。
+// ⚠️ 少了这条，「有能甩的门就一律 30」也能让上面那条绿。
+test('放件门槛：够保底，且对手已经毙不动我这门 → 不必吊主，回到 20 分', () => {
+  const view = askPointsView({
+    declarerSeat: 0, hand: HAS_BOTTOM, piecesView: SPADES_CAN_THROW, handCount: 1,
+  });
+  assert.equal(pieceAskPointsFor(view, S_CTX, 'S'), 20);
 });
 
 // 第 2 / 3 条的「那门牌快完了」

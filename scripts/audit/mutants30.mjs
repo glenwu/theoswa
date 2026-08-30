@@ -48,12 +48,33 @@ runMutants([
       '不看那门断没断 —— 没断也当成能毙别人'],
 
   // ---- 放件门槛那张表（Glen 2026-08-30 逐档给的）----
-  [F, '  const needsDraw = declarerSide && !bottomControlOf(view, ctx).guaranteed;',
+  [F, '  const needsDraw = declarerSide && needsTrumpDraw(view, ctx, bottomControlOf(view, ctx));',
       '  const needsDraw = declarerSide;',
-      '庄家一方一律 30 —— 够保底了也死守（他说的是「需要吊主」才 30）'],
-  [F, '  const needsDraw = declarerSide && !bottomControlOf(view, ctx).guaranteed;',
+      '庄家一方一律 30 —— 不看要不要吊主'],
+  [F, '  const needsDraw = declarerSide && needsTrumpDraw(view, ctx, bottomControlOf(view, ctx));',
       '  const needsDraw = false;',
       '不分庄闲，一律 20 —— 庄家要保底那一条没了'],
+
+  // ---- 「需要吊主」不止「还没保底」（Glen 纠正过）----
+  [F, `  const hand = view.you?.hand ?? [];
+  const opponentTrumps = maxOpponentTrumpEstimate(view, ctx);
+  return SUITS.some(suit => {
+    if (suit === ctx.trumpSuit) return false;
+    const cards = cardsOfSuit(hand, suit, ctx);
+    return (
+      cards.length >= 2 &&
+      canThrowByStatus(view.round?.piecesView?.[suit]) &&
+      opponentTrumps >= cards.length
+    );
+  });`,
+      '  return false;',
+      '退回旧判据：只认「还没保底」，能甩的门会被毙也不算需要吊主'],
+  [F, '      opponentTrumps >= cards.length',
+      '      true',
+      '不看对手毙不毙得动 —— 有能甩的门就一律算需要吊主'],
+  [F, '      canThrowByStatus(view.round?.piecesView?.[suit]) &&',
+      '',
+      '不看这门甩不甩得出去 —— 任何两张以上的副牌都算'],
   [F, '  const base = needsDraw ? PIECE_ASK_POINTS_DRAWING : PIECE_ASK_POINTS_BASE;',
       '  const base = PIECE_ASK_POINTS_DRAWING;',
       '闲家也用 30 那条线（闲家吃分为主，不该一样严）'],
