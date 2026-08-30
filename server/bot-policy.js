@@ -1331,6 +1331,9 @@ const TRUMP_AVERAGE_PER_HAND = TOTAL_TRUMPS / 4;
 // 一次看不出线路，两次才有「一致」可言。
 // ⚠️ 这个 2 是我按 Glen 的措辞挑的，不是他给的数。
 const PARTNER_LINE_MIN_LEADS = 2;
+// 「用件去碰件」的张数前提 —— Glen：「外边还有 8 张 10 张左右的样子」。
+// 取上沿 10：再多他就有别的牌可垫，碰不出来。
+const PIECE_BUMP_MAX_OUTSTANDING = 10;
 
 const TOTAL_PER_SIDE_SUIT = 24;
 
@@ -2171,6 +2174,31 @@ function strongPieceSuit(view, ctx, suit, tuning = strategyTuning(view)) {
   return false;
 }
 
+// 这门【外面】还剩几张（不含我手上的、也不含已经打出的）。
+function outstandingInSuit(view, ctx, suit) {
+  const played = playedCardsOf(view).filter(card => suitOf(card, ctx) === suit).length;
+  const mine = cardsOfSuit(view.you?.hand ?? [], suit, ctx).length;
+  return Math.max(0, TOTAL_PER_SIDE_SUIT - played - mine);
+}
+
+// 对手在这门【赔过分】—— 打出了分牌，而那一墩不是他那方赢的。
+// Glen：「突然看到他赔一个 10 出来」。手上还有牌可打却往里送分，
+// 说明他这门已经没有能挡的牌了（或者正死攥着件不放）。
+function opponentDumpedPointsIn(view, ctx, suit) {
+  for (const trick of view.round?.trickHistory ?? []) {
+    if (trick.virtual) continue;
+    const winnerTeam = trick.winnerSeat % 2;
+    for (const play of trick.plays ?? []) {
+      if (play.seat % 2 === view.you.team) continue;   // 只看对手
+      if (play.seat % 2 === winnerTeam) continue;      // 他那方赢下了，那不叫赔分
+      if ((play.cards ?? []).some(
+        card => suitOf(card, ctx) === suit && cardPoints(card) > 0
+      )) return true;
+    }
+  }
+  return false;
+}
+
 function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
   const options = [];
   for (const suit of SUITS.filter(s => s !== ctx.trumpSuit)) {
@@ -2196,6 +2224,31 @@ function pieceSeekingLead(view, ctx, tuning = strategyTuning(view)) {
       if (probe) {
         options.push({ card: probe, score: 300 + cards.length });
         continue; // 这门已有确定打法，不再让通用探件插一脚
+      }
+    }
+
+    // 【用自己的件去碰对手的件】—— Glen 2026-08-30 给的一条高级打法：
+    //   「如果求那门牌已经出到没剩几张，外边还有 8 张 10 张左右的样子，如果被求的
+    //     对手赔分，5 分 10 分等，这个时候可以用自己手里的件去碰他的件。比如对方
+    //     还有一个 K，在求的过程突然看到他赔一个 10 出来，计算出局外部的这门牌
+    //     也不多了，这时候比如自己有 A，可以用 A 去把 K 碰出来。」
+    //
+    // 机制在【张数】上：这门外面剩得越少，攥着 K 的那家就越可能只剩这一张，
+    // 我领 A 他就非跟不可 —— 件一现，这门对我就成了可甩的门。
+    // 所以两个前提缺一不可：外面剩得少（他没别的牌垫）+ 他赔过分（他这门确实没牌了）。
+    //
+    // ⚠️ 这一档【故意打件本身】，和下面的「探件」正好相反 —— 探件是领小牌，
+    // 这里是领 A 去把 K 撞出来。分数压过探件（那条最多 150 上下），
+    // 因为它的凭据更硬：不是「我这门强」，是【看见他赔分 + 数出来牌不多了】。
+    if (
+      mine >= 1 && unseen >= 1 &&
+      outstandingInSuit(view, ctx, suit) <= PIECE_BUMP_MAX_OUTSTANDING &&
+      opponentDumpedPointsIn(view, ctx, suit)
+    ) {
+      const piece = cards.find(card => isSidePiece(card, ctx));
+      if (piece) {
+        options.push({ card: piece, score: 320 + cards.length });
+        continue;   // 这门已有确定打法
       }
     }
 
@@ -2460,8 +2513,16 @@ export function chooseLeadCards(view) {
   }
 
   // 对手多次从某门领牌/甩牌，主动打该门来压缩他最后的甩牌张数。
+  //
+  // ⚠️ 如果 seekPiece 挑中的是【这一门的件】（「用件去碰件」或三件求一），
+  // 就不再提这条 —— 两条本来就是同一个意图（逼这门），而那一条知道该打哪一张。
+  // 同时提的话，compress(400) 会和 develop-long-side-suit(160) 叠在同一张小牌上
+  // 凑成 560，把知道打哪张的那条（450）盖掉。这个处理和「已经有续打贡献件时
+  // 不再提回队友那门」是同一套，理由也一样。
   const threatSuit = opponentThreatSuit(view, ctx, tuning);
-  if (threatSuit) {
+  const seekingPieceSuit =
+    seekPiece && isSidePiece(seekPiece, ctx) ? suitOf(seekPiece, ctx) : null;
+  if (threatSuit && threatSuit !== seekingPieceSuit) {
     // 「欠着的那门」单独一档 —— Glen：「不得以或是砍大分出的话，就要再吊对手
     // 可以甩花色。」件已经喂给他了，压他的长度就成了正事，不再只是顺手为之。
     //

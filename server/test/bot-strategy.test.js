@@ -1355,6 +1355,96 @@ test('读件：谁都没在这门求过 → 情况不明，件不能乱出', () 
 // 对照：对手正在求这门（他这一墩领的就是 ♠4）→ 风险照旧，不亮。
 // 这条已经在上面「5 分不值得亮 ♠A」里钉住了，这里只标明它属于同一组三档。
 
+// ============ 用自己的件去碰对手的件（Glen 2026-08-30 的高级打法）============
+//
+//   「如果求那门牌已经出到没剩几张，外边还有 8 张 10 张左右的样子，如果被求的对手
+//     赔分，5 分 10 分等，这个时候可以用自己手里的件去碰他的件。比如对方还有一个 K，
+//     在求的过程突然看到他赔一个 10 出来，计算出局外部的这门牌也不多了，
+//     这时候比如自己有 A，可以用 A 去把 K 碰出来。」
+//
+// 机制在【张数】上：这门外面剩得越少，攥着 K 的那家越可能只剩这一张，
+// 我领 A 他就非跟不可。所以两个前提缺一不可 ——
+//   ① 外面剩得少（他没别的牌可垫）
+//   ② 他在这门赔过分（说明他这门确实没能挡的牌了）
+//
+// ⚠️ fixture 里【队友用 ♠K 拿下那一墩】是关键，两个作用：
+//   · 座 3（对手）那张 ♠10 才算「赔分」—— 第一版让对手自己那方赢了，
+//     那叫送分给队友，不是赔分，判据当场不成立；
+//   · 我方在对手求的门上交过件（teamGavePieceIn）→「不领对手求的门」那条不介入。
+function bumpPieceView({ dumped, spadesPlayed, weDumped = false }) {
+  const junk = Array.from({ length: spadesPlayed }, (_, i) => T('S', 3 + (i % 5), 700 + i));
+  const history = [];
+  if (junk.length) history.push({
+    trickNo: 1, leadSeat: 1, leadSuit: 'TRUMP', winnerSeat: 1, points: 0,
+    plays: [{ seat: 1, playSuit: 'TRUMP', cards: [T('H', 4, 80)] }, { seat: 3, cards: junk }],
+  });
+  history.push({
+    trickNo: history.length + 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 2,
+    points: dumped ? 20 : 10,
+    plays: [
+      { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },   // 对手求件
+      { seat: 0, cards: [T('S', 5, 91)] },
+      { seat: 3, cards: dumped ? [T('S', 10, 92)] : [T('S', 6, 92)] },
+      { seat: 2, cards: [T('S', 13, 93)] },                 // 队友用 ♠K 拿下
+    ],
+  });
+  // 我方自己往这门赔分（对手拿走）—— 用来钉「只看对手赔的分」那一条
+  if (weDumped) history.push({
+    trickNo: history.length + 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 10,
+    plays: [
+      { seat: 1, playSuit: 'S', cards: [T('S', 12, 94)] },
+      { seat: 0, cards: [T('S', 10, 95)] },                 // 我赔了 10 分
+    ],
+  });
+  return leadView({
+    hand: [
+      ...[10, 9, 8, 7, 6].map((r, i) => T('H', r, i)),
+      T('S', 14, 40), T('S', 9, 41), T('S', 7, 42),         // ♠A + 两张小的
+      ...[8, 6].map((r, i) => T('D', r, i + 50)),
+    ],
+    declarerSeat: 0, mySeat: 0,
+    piecesView: {
+      // 另一支 ♠K 还没现身 —— 那就是要碰出来的那一张
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'seen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'unseen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+    trickHistory: history,
+  });
+}
+
+test('碰件：他赔过分、这门也快出完了 → 用 ♠A 去把他的 ♠K 碰出来', () => {
+  const lead = chooseLeadCards(bumpPieceView({ dumped: true, spadesPlayed: 14 }))[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 14,
+    `他这门没牌了、外面也剩不多，正是拿 ♠A 撞 ♠K 的时候（实际领了 ♠${lead.rank}）`);
+});
+
+// 反向对照①：他没赔过分 —— 看不出他这门已经空了，凭什么认定 ♠K 撞得出来。
+test('碰件：他没赔过分 → 没有凭据，不拿 ♠A 去碰', () => {
+  const lead = chooseLeadCards(bumpPieceView({ dumped: false, spadesPlayed: 14 }))[0];
+  assert.notEqual(lead.rank, 14,
+    `没看见他赔分，这一碰是白送件（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照②：他赔过分，但这门才出了两张 —— 外面还一大把，他随便垫一张就躲过去了。
+// ⚠️ 两条对照缺一不可：少了任何一条，「有件就去碰」也能让上面那条绿。
+test('碰件：这门才出了两张 → 外面还一大把，碰不出来', () => {
+  const lead = chooseLeadCards(bumpPieceView({ dumped: true, spadesPlayed: 2 }))[0];
+  assert.notEqual(lead.rank, 14,
+    `这门外面还有一大把，他垫一张就过去了（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照③：这门赔过分的是【我方】，对手一分没赔 ——
+// 那说明空掉的是我这边，不是他，凭什么认定他的 ♠K 撞得出来。
+test('碰件：赔分的是我方不是对手 → 不是凭据，不拿 ♠A 去碰', () => {
+  const lead = chooseLeadCards(bumpPieceView({
+    dumped: false, spadesPlayed: 12, weDumped: true,
+  }))[0];
+  assert.notEqual(lead.rank, 14,
+    `赔分的是我自己，看不出他这门空了（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ============ 求件只算一门牌【第一次】被领的那一手 ============
 //
 // Glen 2026-08-29：
