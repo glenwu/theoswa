@@ -56,6 +56,22 @@ try {
   const N = Number(process.env.N ?? 200);
   for (let i = 0; i < N; i++) await simulateRound({ seed: 4200 + i * 977, difficulty: 'expert' });
 
+  // 主家 = 有明确可行的保底/撬底策略的一家（Glen 2026-08-30）——
+  // 对上代码里的 roundStrategy：不是 points-first 就算有策略。
+  const all = globalThis.__draw;
+  const byRole = new Map();
+  for (const r of all) {
+    const k = `${r.role}｜${r.strategy === 'points-first' ? '不是主家' : '主家'}`;
+    const row = byRole.get(k) ?? { n: 0, drew: 0 };
+    row.n += 1;
+    if (r.winnerSuit === 'TRUMP') row.drew += 1;
+    byRole.set(k, row);
+  }
+  console.log('【按「是不是主家」拆的领牌与吊主率】');
+  for (const [k, v] of [...byRole.entries()].sort((a, b) => b[1].n - a[1].n))
+    console.log(`  ${k.padEnd(24)} 领牌 ${String(v.n).padStart(5)}  吊主 ${String(v.drew).padStart(4)}  ${(v.drew*100/v.n).toFixed(1)}%`);
+  console.log('');
+
   const rows = globalThis.__draw.filter(r =>
     (r.role === 'declarer' || r.role === 'declarerPartner') &&
     !r.guaranteed && !r.strongSide && r.outstandingTrumps > 0 && r.drawPool > 0

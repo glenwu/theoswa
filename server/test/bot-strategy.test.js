@@ -474,6 +474,57 @@ test('吊主：该吊的时候，「发展自己最长的副牌」让位', () =>
     `发展长副牌不是跳过吊主的理由（实际领了 ${lead.suit}${lead.rank}）`);
 });
 
+// ============ 主家不一定是庄家 ============
+//
+// Glen 2026-08-30：
+//   「主家一般来说就是需要有明确可行保底/撬底策略，比如说，没有保底牌，但主副牌
+//     都比较硬，主长牌大，也有可能可以甩，吊主也通常是主导，副牌求件也非常顺利。
+//     或者是有机会做甩尾手，或者干脆就是保底牌，但副牌比较差，就把副牌想办法跑掉
+//     就行……有时候主家不一定是庄家，通常庄家有 8 个底，是最有可能做主家的，
+//     但也有可能没 8 张底的人也有好牌，只是概率低。」
+//
+// 「有明确可行的保底/撬底策略」正好对上 roundStrategy 不是 points-first。
+// 闲家这边就是 grab-bottom（主又长又大 → 走撬底）。
+//
+// ⚠️ 这里有个【互相咬住】的坑：guaranteed 的判据（顶端在手 + 主 ≥9）和
+// grab-bottom 一模一样，而吊主那道门上写着「够保底就别再吊了」——
+// 于是撬底那手牌必然被挡死，光加分永远够不着（实测加了分纹丝不动，
+// 「闲家 + 主家」的吊主率还是 7.9%）。要开这个口子才行：
+// 对庄家「保住底就去跑副牌」是对的，对走撬底的闲家，那副又长又大的主
+// 【就是】撬底的武器，吊主正是在用它。开了之后 7.9% → 81.5%。
+function defenderStrategistView(trumpRanks) {
+  return leadView({
+    hand: [
+      ...trumpRanks.map((r, i) => T('H', r, i)),
+      ...WEAK_SIDES,
+    ],
+    declarerSeat: 0, mySeat: 1,          // 座 1 和座 0 不同队 → 我是闲家
+    trickHistory: [{
+      trickNo: 1, leadSeat: 0, leadSuit: 'S', winnerSeat: 0, points: 0,
+      plays: [{ seat: 0, playSuit: 'S', cards: [T('S', 9, 90)] }],
+    }],
+  });
+}
+const GRAB_BOTTOM_TRUMPS = [16, 16, 14, 13, 12, 11, 10, 9, 8];   // 双大鬼 + 7 张 → 9 张主
+
+test('主家不一定是庄家：闲家主又长又大（走撬底）→ 也该吊主', () => {
+  const view = defenderStrategistView(GRAB_BOTTOM_TRUMPS);
+  assert.equal(roundStrategy(view, S_CTX), 'grab-bottom', '前提：这手牌确实走撬底');
+  const lead = chooseLeadCards(view)[0];
+  assert.equal(lead.suit, 'H',
+    `撬底靠的就是把四家的主吊短，不该在这里跑副牌（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反向对照：同样是闲家，但牌一般（吃分为主）→ 吊不吊主无所谓，别乱吊。
+// ⚠️ 少了这条，「闲家一律吊主」也能让上面那条绿。
+test('主家不一定是庄家：普通闲家牌（吃分为主）→ 不为吊主而吊', () => {
+  const view = defenderStrategistView([9, 8, 7, 6]);
+  assert.equal(roundStrategy(view, S_CTX), 'points-first', '前提：这手牌是吃分为主');
+  const lead = chooseLeadCards(view)[0];
+  assert.notEqual(lead.suit, 'H',
+    `没有撬底策略的闲家，吊主是白削自己（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
 // ============ 庄家队友：没保底就该一直吊，不看庄家最近打了什么 ============
 //
 // Glen 2026-08-29：「BOT 做庄时开始吊主，后来还是容易忘记，打成副牌了，

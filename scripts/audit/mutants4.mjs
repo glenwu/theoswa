@@ -13,7 +13,9 @@ runMutants([
   // declarerOpenedSide（庄家首出打的是不是副牌）。见 mutants29。
   [F, "        ? (declarerOpenedSide(view) ||\n           (hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 0 : 480)",
       '        ? 480', '队友不看庄家的表态，一律吊主'],
-  [F, '!control.guaranteed && (!strongSide || planPending)', 'true', '有保底牌/副牌强也照吊不误'],
+  // ⚠️ 「够保底就别再吊」2026-08-30 起走 bottomDone —— 走撬底的闲家是例外
+  // （那副长而大的主就是撬底的武器）。见 mutants31。
+  [F, '!bottomDone && (!strongSide || planPending)', 'true', '有保底牌/副牌强也照吊不误'],
   [F, `trumpSignalAnswered(view, ctx) ||
            trumps.length <= maxOpponentTrumpEstimate(view, ctx) ? 0 : 520`,
       '520', '庄家不看队友答没答，照旧死吊'],

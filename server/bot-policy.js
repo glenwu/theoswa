@@ -2286,8 +2286,14 @@ export function chooseLeadCards(view) {
   const crushingTrumps =
     control.holdsTopTrump && trumps.length > maxOpponentTrumpEstimate(view, ctx);
   const helpingOpponentDraw = opponentDrawingTrumps(view) && !crushingTrumps;
+  // ⚠️ 「够保底就别再吊主」对【庄家】成立（保住底就该去跑副牌），但对走撬底的
+  // 闲家正好相反：guaranteed 的判据（顶端在手 + 主 ≥9）和 grab-bottom 一模一样，
+  // 那副又长又大的主【就是】撬底的武器，吊主正是在用它。
+  // 不开这个口子的话，下面那档「闲家里自己是主家」的加分永远够不着 ——
+  // 实测 200 局「闲家 + 主家」领牌 38 次只吊了 3 次，加了分也纹丝不动。
+  const bottomDone = control.guaranteed && strategy !== 'grab-bottom';
   if (!opening && !helpingOpponentDraw && drawPool.length > 0 && outstandingTrumps > 0 &&
-      !control.guaranteed && (!strongSide || planPending)) {
+      !bottomDone && (!strongSide || planPending)) {
     const drawBonus =
       planPending ? 560                                                // 为尾巴削对手的主
       // 队友已经应了「不用吊主」→ 转去跑副牌保底，别再削对手的主。
@@ -2315,7 +2321,16 @@ export function chooseLeadCards(view) {
         // 判据从 lastLeadStyle（最近一次）换成首出，理由见 declarerOpenedSide。
         ? (declarerOpenedSide(view) ||
            (hasBigJoker && declarerTrumpPointSignal(view, ctx)) ? 0 : 480)
-      : 0;                                                             // 闲家：随便
+      // 闲家里【自己就是主家】的那一档 —— Glen 2026-08-30：
+      //   「主家一般来说就是需要有明确可行保底/撬底策略……有时候主家不一定是庄家，
+      //     其实就是牌比较好、有充分的策略可以实施的一家，通常庄家有 8 个底，
+      //     是最有可能做主家的，但也有可能没 8 张底的人也有好牌，只是概率低。」
+      // 「有明确可行的策略」正好就是 roundStrategy 不是 points-first；闲家这边
+      // 那就是 grab-bottom（主又长又大 → 走撬底）。撬底靠的就是把四家的主吊短，
+      // 所以这一档该和庄家同权重 —— 他说庄家只是「最有可能」做主家，不是唯一。
+      // ⚠️ 实测原来这一档是 0：200 局里「闲家 + 主家」领牌 38 次，只吊了 3 次（7.9%）。
+      : strategy === 'grab-bottom' ? 520
+      : 0;                                                             // 其余闲家：随便
     drawWarranted = drawBonus > 0;
     if (drawBonus > 0) {
       addProposal(
