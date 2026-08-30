@@ -27,6 +27,34 @@ runMutants([
       'const TAIL_ENTRY_SUIT_PLAYED_MAX = 24;',
       '门槛放到满门（等于这个前提失效）'],
 
+  // ---- 第二档「可以毙别人」：断门 + 那门场上还有 + 长主 ----
+  [F, `  if (
+    cardsOfSuit(hand, 'TRUMP', ctx).length > TRUMP_AVERAGE_PER_HAND &&
+    SUITS.some(suit =>
+      suit !== ctx.trumpSuit &&
+      cardsOfSuit(hand, suit, ctx).length === 0 &&
+      played.filter(card => suitOf(card, ctx) === suit).length < TOTAL_PER_SIDE_SUIT
+    )
+  ) return true;`, '',
+      '「可以毙别人」这一档整个删掉'],
+  [F, "    cardsOfSuit(hand, 'TRUMP', ctx).length > TRUMP_AVERAGE_PER_HAND &&",
+      "    cardsOfSuit(hand, 'TRUMP', ctx).length > 0 &&",
+      '不看是不是长主 —— 手上有一张主就算能毙别人（Glen 的线是「多过 9 张」）'],
+  [F, 'const TRUMP_AVERAGE_PER_HAND = TOTAL_TRUMPS / 4;',
+      'const TRUMP_AVERAGE_PER_HAND = 8;',
+      '长主线降到 8（Glen 给的是 36/4 = 9，多过 9 才算）'],
+  [F, "      cardsOfSuit(hand, suit, ctx).length === 0 &&",
+      "      cardsOfSuit(hand, suit, ctx).length >= 0 &&",
+      '不看那门断没断 —— 没断也当成能毙别人'],
+
+  // ---- 庄家一方的门槛更高 ----
+  [F, '  if (tablePoints >= (declarerSide ? PIECE_ASK_BIG_POINTS_DECLARER : PIECE_ASK_BIG_POINTS)) {',
+      '  if (tablePoints >= PIECE_ASK_BIG_POINTS) {',
+      '庄家和闲家同一个门槛 —— Glen：庄家要保底，得更严苛'],
+  [F, '  if (tablePoints >= (declarerSide ? PIECE_ASK_BIG_POINTS_DECLARER : PIECE_ASK_BIG_POINTS)) {',
+      '  if (tablePoints >= PIECE_ASK_BIG_POINTS_DECLARER) {',
+      '闲家也用庄家那条更高的线（闲家吃分为主，不该一样严）'],
+
   // ---- 得真的是 A ----
   [F, '    if (!cards.some(card => card.rank === 14 && card.rank !== ctx.rankCard)) return false;',
       '    if (cards.length === 0) return false;',

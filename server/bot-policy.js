@@ -1107,7 +1107,16 @@ const PIECE_NEAR_VOID_AFTER = 2;
 // 一门副牌两副共 24 张，这里取三分之一：出掉 8 张以内都还算「没怎么打」。
 // ⚠️ 这个 8 是我按他的措辞挑的，不是他给的数，回头要跟他确认。
 const TAIL_ENTRY_SUIT_PLAYED_MAX = 8;
+// 桌上要有多少分才值得把件砍出去。
+// Glen：「除非有大分，比如 20 分以上……才能把件出给别人。」
 const PIECE_ASK_BIG_POINTS = 20;
+// 庄家一方的门槛更高 —— Glen 2026-08-30：
+//   「闲家吃分为主更愿意亮件，我认为还是要遵守『件不能乱出』，
+//     只是庄家还要更严苛，因为庄家需要保底，类似于『防守』。」
+// 所以两边【都】守这道闸，差别只在门槛：庄家一方要 30 分才松口。
+// 30 也是他给的数：「如果一个件可以砍 30 分或以上，砍的机率要大大上升，
+// 30 分是非常多了」。
+const PIECE_ASK_BIG_POINTS_DECLARER = 30;
 // 这门外面还剩多少分，才值得为了护件放走桌上的分（见 coverNeedsFirstPiece）。
 const PIECE_COVER_MIN_POINTS = 30;
 // 打完这一支之后这门至少还得剩几张 —— 顶端再大，只剩一张也压不住两张的甩牌。
@@ -1259,6 +1268,11 @@ function bottomControlAfter(view, ctx, cards) {
 // ⚠️ 原来这几处各自 buildDeck() 再 filter 一遍来数这个常数 ——
 // 5 局要造一百多万张临时牌，纯属浪费，而且把「这是个常数」这件事藏起来了。
 const TOTAL_TRUMPS = 36;
+// 「长主」的线 —— Glen 2026-08-30 直接给了算法：
+//   「我们的主牌共有 36 张，平均 9 张，那么如果多过 9 张主就可以算是长主。」
+// 平均数就是 TOTAL_TRUMPS / 4，写成派生的，别再手抄一个 9。
+const TRUMP_AVERAGE_PER_HAND = TOTAL_TRUMPS / 4;
+
 const TOTAL_PER_SIDE_SUIT = 24;
 
 // 场上还有多少张主牌没露面（不含我手上的；底牌里的仍算未知，故偏高）
@@ -1778,7 +1792,13 @@ function pieceOwedToOpponentAsk(view, ctx, cards) {
   const tablePoints = (view.round?.currentTrick ?? [])
     .flatMap(play => play.cards ?? [])
     .reduce((sum, card) => sum + cardPoints(card), 0);
-  if (tablePoints >= PIECE_ASK_BIG_POINTS) return false;
+  // 庄家一方更严苛（Glen）：他要保底，放件是「防守」上的漏洞。
+  const declarerSide =
+    view.declarerSeat !== null && view.declarerSeat !== undefined &&
+    view.you?.seat % 2 === view.declarerSeat % 2;
+  if (tablePoints >= (declarerSide ? PIECE_ASK_BIG_POINTS_DECLARER : PIECE_ASK_BIG_POINTS)) {
+    return false;
+  }
   for (const card of cards) {
     if (!isSidePiece(card, ctx)) continue;
     const suit = suitOf(card, ctx);
@@ -1895,18 +1915,34 @@ function pieceExposureRisk(view, ctx, cards, partnerAskedSuit, tuning) {
 // 要甩的那一门【之外】—— 大牌就在那门里的话，它是甩牌的一部分，赢不了前一轮。
 // 原来只认第一档（control.holdsTopTrump），把 Glen 说的后两档整个丢了。
 //
-// ⚠️ 第二档「其次可以毙别人」【暂时没实现】。判据难落：拿一张小主去毙谈不上
-// 「保证大」，而收紧到「毙得住」又基本退化成第一档。试过写成「断门 + 手上有主」
-// 就算数，结果把他认过的两条裁定顶红了（「副牌够强就转打副牌」、
-// 「件都现完了就整门甩出去」）—— 那两手都是主牌又短又弱、根本削不动对手的局面。
-// 等他给一个更具体的判据再补。
+// ⚠️ 第二档「其次可以毙别人」—— Glen 2026-08-30 把它说清楚了：
+//   「一般来说，如果有一手可以甩尾手，证明这门牌够强，经常会发生在庄家身上
+//     （闲家的话，牌好也是可以实现的，可能有门副牌非常短），那极有可能已经
+//     可以把一门牌甚至两门都压断，那这个时候这门副牌场上还有，
+//     就有机会用主去毙别人起手。」
+// 三条同时成立才算：我在某门已经断了 + 那门场上还有牌（别人还会领）+ 我是长主。
+// 「长主」用他给的数：36 张主、平均 9 张，多过 9 张才算。
+// ⚠️ 长主这一条【不能省】：第一版写成「断门 + 手上有主」就算数，
+// 当场顶红他早先两条裁定（「副牌够强就转打副牌」、「件都现完了就整门甩出去」）——
+// 那两手一个 9 张主、一个 6 张弱主，都不到长主线，削不动对手，
+// 留着尾巴纯属空等，该甩就甩。
 function tailThrowEntry(view, ctx, control, throwSuit) {
   // ① 顶端主牌在我手上（大鬼那一档）
   if (control.holdsTopTrump) return true;
-  // ③ 副牌 A，而且【这门没怎么打，大家都还有】—— 没人断门，A 就毙不到。
-  //    必须是【别的门】的 A，理由见上面那段。
   const hand = view.you?.hand ?? [];
   const played = playedCardsOf(view);
+  // ② 可以毙别人起手：我在某门已经断了、那门场上还有牌、而且我是长主。
+  // ⚠️ 不用再排除 throwSuit —— 要甩的那门我手上至少 3 张，断不了。
+  if (
+    cardsOfSuit(hand, 'TRUMP', ctx).length > TRUMP_AVERAGE_PER_HAND &&
+    SUITS.some(suit =>
+      suit !== ctx.trumpSuit &&
+      cardsOfSuit(hand, suit, ctx).length === 0 &&
+      played.filter(card => suitOf(card, ctx) === suit).length < TOTAL_PER_SIDE_SUIT
+    )
+  ) return true;
+  // ③ 副牌 A，而且【这门没怎么打，大家都还有】—— 没人断门，A 就毙不到。
+  //    必须是【别的门】的 A，理由见上面那段。
   return SUITS.some(suit => {
     if (suit === ctx.trumpSuit || suit === throwSuit) return false;
     const cards = cardsOfSuit(hand, suit, ctx);
