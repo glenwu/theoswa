@@ -19,13 +19,18 @@ runMutants([
       '对家求过这门也照罚（读了等于没读）'],
   [F, 'const PIECE_READ_NOBODY_ASKED = 0.7;', 'const PIECE_READ_NOBODY_ASKED = 1;',
       '谁都没求过也照罚'],
-  [F, '    ...(current ? [{ seat: current.seat, suit: current.playSuit, cards: current.cards ?? [] }] : []),', '',
+  // ⚠️ 求件判据 2026-08-29 改过：只算一门牌【第一次】被领的那一手（Glen）。
+  // 下面这几条锚点跟着换到了新写法上。
+  [F, `  const current = (view.round?.currentTrick ?? [])[0];
+  if (current && current.playSuit === suit) {
+    return { seat: current.seat, cards: current.cards ?? [], plays: view.round.currentTrick };
+  }`, '',
       '只扫历史墩，看不见对手正在这一墩求件'],
-  [F, "  if (partnerAsked) return 'partner';   // 对家在要这门 —— 件多半在他那", '',
+  [F, "  if (first.seat === partnerSeatOf(view.you.seat)) return 'partner'; // 件多半在他那", '',
       '对家求过也当成没人求'],
-  [F, "  if (partnerAsked) return 'partner';   // 对家在要这门 —— 件多半在他那\n  if (opponentAsked) return 'opponent'; // 只有对手在要 —— 风险照旧，别亮",
-      "  if (opponentAsked) return 'opponent';\n  if (partnerAsked) return 'partner';",
-      '优先级反过来（对手在前，对家那条永远轮不到）'],
+  // ⚠️ 「优先级反过来（对手在前，对家那条永远轮不到）」那一条【删了】：
+  // 求件收紧成「只算这门第一次被领的那一手」之后，第一次领牌只有一个人，
+  // 不存在「两边都求过」要排序的局面，那个变异体已经无从表达。
   // ---- 亮件的代价（Glen：「对家没表示就别随便出，这是冒险的行为」）----
   [F, '  if (exposureRisk > 0) {', '  if (false) {', '亮件完全没有代价'],
   [F, 'const PIECE_EXPOSURE_COST = 240;', 'const PIECE_EXPOSURE_COST = 40;', '亮件的代价小到可以忽略'],

@@ -36,9 +36,12 @@ runMutants([
   [F, '  if (suitThrowAmbition(view, ctx, suit, tuning)) return false;  // 真心在求，该喊',
       '',
       '有甩牌欲望也不许喊（长门求件被一并封死）'],
-  [F, '  return !helpingTeamAsk(view, ctx, suit);                      // 帮队友逼件，该喊',
-      '  return true;',
-      '帮队友逼件也当成乱求（把 Glen 第 2 条压掉）'],
+  // ⚠️ 「帮队友逼件也当成乱求」那一条【删了】：2026-08-29 求件收紧成「只算这门
+  // 第一次被领的那一手」之后，helpingTeamAsk 恒为假（我方求过 ⇒ 这门被领过，
+  // 而上面已经要求这门没被领过），函数本身也删了。那条打法没丢，
+  // 换成由下面「这门已经被领过就不会被误读」那条表达。
+  [F, '  if (suitLedBefore(view, suit)) return false;', '',
+      '这门已经被领过也照样当成求件信号（Glen 裁定这是错的）'],
   [F, "  if (suit === 'TRUMP') return false;                    // 领主牌不是求件信号",
       '',
       '领主牌也当成求件信号'],

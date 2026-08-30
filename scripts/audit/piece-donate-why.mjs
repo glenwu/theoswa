@@ -18,8 +18,10 @@ const OLD = `  return choices
     )[0].cards;
 }`;
 const SHIM = `
-const __asked = (v, c, su, tm) =>
-  typeof teamAskedPieceBefore === 'function' ? teamAskedPieceBefore(v, c, su, tm) : false;
+// teamAskedPieceBefore 已删（2026-08-29：求件只算这门第一次被领的那一手，
+// 那个判断变成恒为假）。这里改用同源的新判据。
+const __asked = (v, c, su) =>
+  typeof suitLedBefore === 'function' ? suitLedBefore(v, su) : false;
 `;
 const NEW = `  const __ranked = choices
     .sort((a, b) =>

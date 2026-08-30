@@ -32,12 +32,15 @@ runMutants([
       '把我自己这支 K 的 10 分也算成奖品 —— 拿自己付的钱凑门槛'],
 
   // ---- 「只管对手在求的门」 ----
-  [F, "    if (suitAskSignal(view, ctx, suit) !== 'opponent') continue;",
-      "    if (suitAskSignal(view, ctx, suit) === null) continue;",
-      '队友求的件也一起挡 —— Glen：对家有表示可以很没压力地出件'],
-  [F, "    if (suitAskSignal(view, ctx, suit) !== 'opponent') continue;",
+  // ⚠️ 2026-08-29 闸扩到了【除队友求以外的所有门】（Glen：「不管对手有没有求，
+  // 件还是不能乱出……件在情况不明的状态不能乱出」），条件从 !== 'opponent'
+  // 变成 === 'partner'。
+  [F, "    if (suitAskSignal(view, ctx, suit) === 'partner') continue;",
       '    if (false) continue;',
-      '不看是谁求的，谁求都挡'],
+      '队友求的件也一起挡 —— Glen：对家有表示可以很没压力地出件'],
+  [F, "    if (suitAskSignal(view, ctx, suit) === 'partner') continue;",
+      "    if (suitAskSignal(view, ctx, suit) !== 'opponent') continue;",
+      '退回旧范围：只挡对手求的门，情况不明的门照旧乱出'],
 
   // ---- 「有两件可以砍」 ----
   [F, "    if (items.filter(item => item.status === 'mine').length >= 2) continue;",

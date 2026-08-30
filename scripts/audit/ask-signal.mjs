@@ -33,19 +33,19 @@ for (let i = 0; i < N; i++) {
     const c = cards[0];
     const suit = ps(c);
     if (suit === 'TRUMP' || piece(c)) return;
-    if (!(c.rank <= 5 || c.rank === 10)) return;   // 不是求件信号
+    if (!(c.rank <= 5 || c.rank === 10)) return;   // 牌形上就不是求件信号
+    // Glen 2026-08-29：「每门牌第一次打的时候打 ≤5 是求件，同一门再打就是自己
+    //   还没可以甩牌，继续捅。」这门先前被领过的话，真人也不会读成求件。
+    if (hist.slice(0, ti).some(h => !h.virtual && h.leadSuit === suit)) return;
     signals += 1;
 
     // 队友先前在这门求过件、且还有件没现完 → 这是「帮队友逼件」（Glen 第 2 条），
     // 不算乱求：这时候本来就该领这门，我这门有多短都不影响。
-    const mate = (lead.seat + 2) % 4;
-    let assisting = false;
-    for (let k = 0; k < ti; k++) {
-      const h = hist[k], hl = h.plays?.[0];
-      if (!hl || h.leadSeat !== mate || ps(hl.cards?.[0] ?? {}) !== suit) continue;
-      const a = hl.cards ?? [];
-      if (a.length === 1 && !piece(a[0]) && (a[0].rank <= 5 || a[0].rank === 10)) assisting = true;
-    }
+    // ⚠️ 这一段现在【推得出恒为假】：上面已经要求这门在此之前没被领过，
+    // 而「队友先前在这门求过」必然意味着这门被领过。留着只会让人以为它还在起作用。
+    // 「帮队友逼件不算乱求」这条打法没丢 —— 那种局面下这一领本来就不再算求件信号，
+    // 在上面那一行就 return 了。
+    const assisting = false;
     if (assisting) { helping += 1; return; }
 
     // 还原领牌那一刻，他手上这门有几张、其中几支件

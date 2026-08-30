@@ -208,6 +208,11 @@ function quietLead(view, ctx, cards, tuning = strategyTuning(view)) {
     return (
       suit !== 'TRUMP' &&                                  // 领主牌不是求件信号
       isPieceRequestLead([card], ctx) &&
+      // ⚠️ 这里【故意不加】「这门领过了就不算求件」那条（Glen 2026-08-29）——
+      // 他那条说的是【怎么读】别人的信号，不是「可以随便打小牌」。
+      // 加上之后 quietLead 不再躲开小牌，于是「回队友那门」和「发展长副牌」
+      // 撞到同一张牌上叠成 940，把 Glen 明令要压过它的 compress(580) 盖掉了。
+      // 判别那一头由 straySignal 负责，那里加了。
       !suitThrowAmbition(view, ctx, suit, tuning)
     );
   };
@@ -239,30 +244,22 @@ function opponentAskOpen(view, ctx, suit) {
 // 件已经喂出去了，这门他多半能甩了，再藏着不领没有意义 ——
 // 只能反过来主动领这门，一张一张把他能甩的长度压短。
 function teamGavePieceIn(view, ctx, suit) {
-  for (const trick of view.round?.trickHistory ?? []) {
-    if (trick.leadSuit !== suit) continue;
-    if (trick.leadSeat % 2 === view.you.team) continue;          // 得是对手在求
-    if (!isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) continue;
-    const gave = (trick.plays ?? []).some(play =>
-      play.seat % 2 === view.you.team &&
-      (play.cards ?? []).some(
-        card => suitOf(card, ctx) === suit && isSidePiece(card, ctx)
-      )
-    );
-    if (gave) return true;
-  }
-  return false;
+  // 求件只算这门第一次被领的那一手（Glen），所以「被迫喂件」也只可能发生在那一墩。
+  const first = firstLeadInSuit(view, suit);
+  if (!first) return false;
+  if (first.seat % 2 === view.you.team) return false;             // 得是对手在求
+  if (!isPieceRequestLead(first.cards, ctx)) return false;
+  return (first.plays ?? []).some(play =>
+    play.seat % 2 === view.you.team &&
+    (play.cards ?? []).some(
+      card => suitOf(card, ctx) === suit && isSidePiece(card, ctx)
+    )
+  );
 }
 
 // 「这门我方已经在求件、而且还没逼完」—— 这时候接着领小牌不是乱求，
 // 正是 Glen 第 2 条要的【帮队友把别人的件逼出来】，一分都不该罚。
 // 判据和 partnerRequest ① 那段一致：我方有人在这门求过 + 还有件没现身。
-function helpingTeamAsk(view, ctx, suit) {
-  return (
-    teamAskedPieceBefore(view, ctx, suit, view.you.seat % 2) &&
-    (view.round?.piecesView?.[suit] ?? []).some(item => item.status === 'unseen')
-  );
-}
 
 // 「这一手打出去会被读成求件，可我并没有这个意思」。
 //
@@ -274,9 +271,16 @@ function straySignal(view, ctx, cards, tuning) {
   const card = cards[0];
   const suit = suitOf(card, ctx);
   if (suit === 'TRUMP') return false;                    // 领主牌不是求件信号
-  if (!isPieceRequestLead([card], ctx)) return false;    // 本来就不会被读成求件
+  if (!isPieceRequestLead([card], ctx)) return false;    // 牌形上就不会被读成求件
+  // 这门【已经被领过】了 —— 再领小牌是捅短，不是求件，不会被误读（Glen）
+  if (suitLedBefore(view, suit)) return false;
   if (suitThrowAmbition(view, ctx, suit, tuning)) return false;  // 真心在求，该喊
-  return !helpingTeamAsk(view, ctx, suit);                      // 帮队友逼件，该喊
+  // ⚠️ 这里【原来还有一条豁免】：「我方在这门的求件还没逼完 → 接着领小牌逼件，
+  // 不算乱求」（helpingTeamAsk）。2026-08-29 求件收紧成「只算这门第一次被领的
+  // 那一手」之后，它【推得出恒为假】：上面已经要求这门没被领过，
+  // 而「我方在这门求过」必然意味着这门被领过。变异测试也证实了 ——
+  // 把它删掉一条测试都不红。那条打法本身没丢，换成由 suitLedBefore 表达。
+  return true;
 }
 
 function uniqueCardSets(sets) {
@@ -748,7 +752,10 @@ function partnerSideProtocolChoice(view, choices, ctx) {
   // 再叠上一次性规则：我方在这门已经求过，就不存在新的求件。
   const asksForPiece =
     isPieceAskLead(lead.cards, ctx) &&
-    !teamAskedPieceBefore(view, ctx, lead.playSuit, view.you.seat % 2);
+    // 这门之前被领过了 → 这一领是捅短不是求件（Glen 2026-08-29）。
+    // ⚠️ 这条同时把「我方在这门已经求过一次」那条老规矩吸收掉了 ——
+    // 求过就意味着这门被领过，所以那个判断在这里恒为假，已删。
+    !suitLedBefore(view, lead.playSuit);
   const pieceContributions = asksForPiece
     ? sameSuitChoices.filter(choice => isSidePiece(choice.cards[0], ctx))
     : [];
@@ -879,10 +886,10 @@ function partnerRequest(view, ctx) {
   // 停止条件是「一支未现的件都没有了」：件已经逼完，接下来该甩而不是接着领。
   const items = view.round?.piecesView?.[suit] ?? [];
   if (items.some(item => item.status === 'unseen')) {
-    for (let i = lastIndex; i >= 0; i -= 1) {
-      const trick = history[i];
-      if (trick.leadSeat !== partnerSeat || trick.leadSuit !== suit) continue;
-      if (!isPieceAskLead(trick.plays?.[0]?.cards ?? [], ctx)) continue;
+    // 求件只算这门【第一次】被领的那一手（Glen 2026-08-29）——
+    // 原来是往回扫「队友在这门求过没有」，同一门第二次领小牌也算数。
+    const first = firstLeadInSuit(view, suit);
+    if (first && first.seat === partnerSeat && isPieceAskLead(first.cards, ctx)) {
       return { suit, seeking: true, partnerIsDeclarer };
     }
   }
@@ -895,7 +902,9 @@ function partnerRequest(view, ctx) {
     // 他贡献完件再领一张小牌，那不是在求件，是牌权到手随手往回打。
     seeking:
       cards.length > 0 && cards.every(card => card.rank <= 5) &&
-      !teamAskedPieceBefore(view, ctx, suit, view.you.seat % 2, lastIndex),
+      // 求件只算这门【第一次】被领的那一手（Glen）——
+      // 他这一领之前这门就被领过的话，那不是求件。
+      !suitLedBeforeIndex(view, suit, lastIndex),
     partnerIsDeclarer,
   };
 }
@@ -914,7 +923,12 @@ function pieceContributionContinuationLead(view, ctx) {
     !mine
   ) return null;
 
-  const askedForPiece = isPieceAskLead(lead.cards, ctx);
+  const askedForPiece =
+    isPieceAskLead(lead.cards, ctx) &&
+    // ⚠️ last 是【历史里的最后一墩】，下标是 history.length - 1 ——
+    // 用 suitLedBefore（等于传 history.length）会把这一墩自己算进去，
+    // 于是这条约定永远不成立。
+    !suitLedBeforeIndex(view, last.leadSuit, history.length - 1);
   const contributedPiece = mine.cards.some(card =>
     suitOf(card, ctx) === last.leadSuit && isSidePiece(card, ctx)
   );
@@ -964,14 +978,9 @@ function opponentThrowReadyIn(view, ctx, suit) {
 function opponentSavingTailThrow(view, ctx, suit) {
   if (suitAskSignal(view, ctx, suit) !== 'opponent') return false;
   const history = view.round?.trickHistory ?? [];
-  let lastAsk = -1;
-  for (let i = 0; i < history.length; i += 1) {
-    const trick = history[i];
-    if (trick.leadSuit !== suit) continue;
-    if (trick.leadSeat % 2 === view.you.team) continue;
-    if (!isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) continue;
-    lastAsk = i;
-  }
+  // 求件只算这门第一次被领的那一手（Glen），所以这里找的就是它的下标。
+  // suitAskSignal 上面已经确认过那一手是对手求的了。
+  const lastAsk = history.findIndex(trick => !trick.virtual && trick.leadSuit === suit);
   if (lastAsk < 0) return false;
   let drewTrump = false;
   for (let i = lastAsk + 1; i < history.length; i += 1) {
@@ -1290,16 +1299,6 @@ function unbeatableTrumpPlay(view, ctx, cards) {
 // 两个人来回互贡献，等于替【攥着这门长牌的那家】凑齐甩牌资格，而三家里两家是对手。
 //
 // 实测 400 局：第 2 次求件贡献了 185 次，第 3 次及以后又贡献 21 次。
-function teamAskedPieceBefore(view, ctx, suit, team, beforeIndex = Infinity) {
-  const history = view.round?.trickHistory ?? [];
-  const limit = Math.min(history.length, beforeIndex);
-  for (let i = 0; i < limit; i += 1) {
-    const trick = history[i];
-    if (trick.leadSuit !== suit || trick.leadSeat % 2 !== team) continue;
-    if (isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) return true;
-  }
-  return false;
-}
 
 // 「队友这一领是不是在求件」—— 全项目唯一的判据，别再各写一份。
 // 两种形态：
@@ -1316,6 +1315,48 @@ function isPieceAskLead(cards, ctx) {
     isPieceRequestLead(cards, ctx) ||
     (isSidePiece(card, ctx) && cardPoints(card) > 0)
   );
+}
+
+// 【求件只在一门牌第一次被领的时候成立】—— Glen 2026-08-29：
+//   「每门牌第一次打的时候打 ≤5 是求件，同一门再打就是自己还没可以甩牌，
+//     继续捅，如果换一门第一次打 ≤5 也是求件。」
+//
+// 也就是说「≤5 或 10」只是【牌形】，够不够得上求件还要看位置：同一门第二次
+// 领小牌是在捅短对手的长度，不是在求件。原来全项目只看牌形，任何时候领 ≤5
+// 都当成求件，于是「求件」这个信号被无限次重复读出来。
+//
+// 返回这门【第一次被领】的那一手（含当前墩），没被领过则 null。
+// ⚠️ 当前墩必须算进来 —— 对手这一墩刚领了张小牌来求这门，只扫历史的话
+// 我会读成「谁都没求过」，正好读反。
+// ⚠️ virtual 墩（碾压收尾补的那一手）不算领牌。
+function firstLeadInSuit(view, suit) {
+  for (const trick of view.round?.trickHistory ?? []) {
+    if (trick.virtual || trick.leadSuit !== suit) continue;
+    return { seat: trick.leadSeat, cards: trick.plays?.[0]?.cards ?? [], plays: trick.plays ?? [] };
+  }
+  const current = (view.round?.currentTrick ?? [])[0];
+  if (current && current.playSuit === suit) {
+    return { seat: current.seat, cards: current.cards ?? [], plays: view.round.currentTrick };
+  }
+  return null;
+}
+
+// 这门在【第 index 墩之前】被领过吗。
+// 用来判断「某一领还算不算求件」：这门先前被领过就不算（Glen）。
+// ⚠️ index 必须传对：判断【当前墩】的领牌用 history.length（当前墩不在历史里）；
+// 判断【历史上某一墩】的领牌要传那一墩自己的下标，否则它会把自己算进去，
+// 于是任何历史上的求件都判不出来 —— 踩过一次，续打贡献件整条失效。
+function suitLedBeforeIndex(view, suit, index) {
+  const history = view.round?.trickHistory ?? [];
+  for (let i = 0; i < Math.min(index, history.length); i += 1) {
+    if (!history[i].virtual && history[i].leadSuit === suit) return true;
+  }
+  return false;
+}
+
+// 当前这一墩的领牌之前，这门被领过吗。
+function suitLedBefore(view, suit) {
+  return suitLedBeforeIndex(view, suit, (view.round?.trickHistory ?? []).length);
 }
 
 function isPieceRequestLead(cards, ctx) {
@@ -1568,32 +1609,17 @@ function suitPointsAtLarge(view, ctx, suit) {
 // ⚠️ 他自己点明了这不是 100%，所以只做【强先验】—— 缩放亮件的风险，
 // 不做一票豁免。「打这门牌的欲望」落成可观测行为：谁在这门领过求件牌
 //（5 以下的小牌或 10，判据复用 isPieceRequestLead）。
-function suitAskSignal(view, ctx, suit) {
-  const partner = partnerSeatOf(view.you.seat);
-  // ⚠️ 必须把【当前这一墩】也算进来 —— 眼前正在发生的求件才是最相关的信号。
-  // 只扫历史墩的话，对手这一墩刚领了张小牌来求这门，我却读成「谁都没求过」，
-  // 反而把风险调低了，正好读反。
-  const current = (view.round?.currentTrick ?? [])[0];
-  const leads = [
-    ...(view.round?.trickHistory ?? []).map(trick => ({
-      seat: trick.leadSeat, suit: trick.leadSuit, cards: trick.plays?.[0]?.cards ?? [],
-    })),
-    ...(current ? [{ seat: current.seat, suit: current.playSuit, cards: current.cards ?? [] }] : []),
-  ];
-  let partnerAsked = false;
-  let opponentAsked = false;
-  for (const lead of leads) {
-    if (lead.suit !== suit) continue;
-    if (!isPieceRequestLead(lead.cards, ctx)) continue;
-    if (lead.seat === partner) partnerAsked = true;
-    else if (lead.seat % 2 !== view.you.team) opponentAsked = true;
-  }
-  // ⚠️ 顺序按 Glen 的原话：「【首先】看对家有没有求牌，如果有，一般情况下就在对家；
-  // 【其次】看对手两个人有没有求牌」。两边都求过时以对家为准 ——
-  // 第一版把对手判在前面，结果队友那条信号永远没机会生效。
-  if (partnerAsked) return 'partner';   // 对家在要这门 —— 件多半在他那
-  if (opponentAsked) return 'opponent'; // 只有对手在要 —— 风险照旧，别亮
-  return null;                          // 谁都没求过
+export function suitAskSignal(view, ctx, suit) {
+  // ⚠️ 只看这门【第一次】被领的那一手（Glen 2026-08-29，见 firstLeadInSuit）。
+  // 原来扫的是这门的【每一次】领牌，于是同一门反复领小牌会被反复读成求件，
+  // 「谁在求这门」这个判断也就永远停不下来。
+  // 顺带：Glen 那句「【首先】看对家有没有求牌，其次看对手」现在自动成立 ——
+  // 第一次领牌只有一个人，不存在两边都求过要排序的问题。
+  const first = firstLeadInSuit(view, suit);
+  if (!first || !isPieceRequestLead(first.cards, ctx)) return null;
+  if (first.seat === partnerSeatOf(view.you.seat)) return 'partner'; // 件多半在他那
+  if (first.seat % 2 !== view.you.team) return 'opponent';           // 别亮
+  return null;                                                       // 我自己求的
 }
 
 // 「逼件」的资格 —— Glen 的「第三家 10 分要不要打 A 封」里的第 2 种情况：
@@ -1748,8 +1774,13 @@ function pieceOwedToOpponentAsk(view, ctx, cards) {
     const items = view.round?.piecesView?.[suit] ?? [];
     // 件全现完了，亮不亮都一样
     if (!items.some(item => item.status === 'unseen')) continue;
-    // 只管【对手】在求的门。队友求 → Glen：「如果对家有表示，可以很没压力地出件」
-    if (suitAskSignal(view, ctx, suit) !== 'opponent') continue;
+    // 【谁在求都一样，只有队友求才放行】—— Glen 2026-08-29：
+    //   「不管对手有没有求，件还是不能乱出……件在情况不明的状态不能乱出。」
+    // 原来这道闸只管「对手在求」的门，没人求的门走软判（打分），
+    // 实测 200 局里在【没人求】的门上打出件 K 238 支、A 204 支。
+    // 「情况不明」正是没人求的那种状态 —— 谁手上有件全靠猜，那就不能出。
+    // 队友求 → Glen 早先裁过：「如果对家有表示，可以很没压力地出件」，放行。
+    if (suitAskSignal(view, ctx, suit) === 'partner') continue;
     // 「有两件可以砍」
     if (items.filter(item => item.status === 'mine').length >= 2) continue;
     // 「即使对方甩了也得不了多少分，那么就可以杀」—— Glen 早先给的例外。
@@ -2740,8 +2771,9 @@ function scoreFollow(view, cards, ctx) {
   const partnerProbe =
     lead.seat === partnerSeatOf(you.seat) &&
     isPieceRequestLead(lead.cards, ctx) &&
-    // 我方在这门已经求过一次了 —— 这一张小牌不是新的求件（Glen）
-    !teamAskedPieceBefore(view, ctx, lead.playSuit, you.team);
+    // 这门之前被领过了 → 这一领是捅短不是求件（Glen 2026-08-29）。
+    // 「我方求过一次就不再是新的求件」那条被它吸收了，理由同 asksForPiece。
+    !suitLedBefore(view, lead.playSuit);
   if (partnerProbe && donatedPieces > 0) {
     // unseenPieces = 我看不见的件（在队友或对手手上）。我打出【自己】的件，
     // 对队友而言就是把一张「未现」变成「已现」，他离甩牌条件更近一步。

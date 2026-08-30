@@ -21,13 +21,15 @@ runMutants([
   [F, "      (throwReady ? 580 : owed ? 400 : 250) * tuning.leadStrategyPriorWeight,",
       '      (throwReady ? 580 : 400) * tuning.leadStrategyPriorWeight,',
       '不欠也照 400 打 —— 把普通的压缩提案一起抬上去'],
-  [F, "    if (trick.leadSeat % 2 === view.you.team) continue;          // 得是对手在求",
+  // ⚠️ teamGavePieceIn 2026-08-29 重写了：求件只算这门第一次被领的那一手（Glen），
+  // 所以「被迫喂件」也只可能发生在那一墩，不再逐墩扫。
+  [F, "  if (first.seat % 2 === view.you.team) return false;             // 得是对手在求",
       '',
       '队友求件、我方贡献件也算「被迫喂给对手」'],
-  [F, '    if (!isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) continue;\n    const gave = (trick.plays ?? []).some(play =>',
-      '    const gave = (trick.plays ?? []).some(play =>',
+  [F, '  if (!isPieceRequestLead(first.cards, ctx)) return false;',
+      '',
       '对手随便领这门、我方出了件也算（不限于他在求件）'],
-  [F, '      play.seat % 2 === view.you.team &&',
-      '      play.seat % 2 !== view.you.team &&',
+  [F, '    play.seat % 2 === view.you.team &&',
+      '    play.seat % 2 !== view.you.team &&',
       '判反：看的是对手自己出了件'],
 ]);

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   assessBottomControl, chooseFollowCards, chooseKittyCards, chooseLeadCards,
-  evaluateFollowChoices, roundStrategy,
+  evaluateFollowChoices, roundStrategy, suitAskSignal,
 } from '../bot-policy.js';
 import { cardPoints as cardPointsOf } from '../cards.js';
 import { buildDeck, playSuitOf } from '../cards.js';
@@ -951,53 +951,23 @@ test('亮件：这门还长、对手可能甩很长 → 5 分不值得亮 ♠A',
 // ⚠️ 两条必须成对：【同一手牌、同一墩】，只把庄家换个座位。
 // 手上给了 3 张主 + 一门有威胁的副牌，否则庄家那边会因为「保底已经不现实」
 // 同样落到 points-first，两边就分不出来了（第一版就栽在这）。
-// ⚠️ 显式给 pointsFirstPieceWeight —— 默认值 0.85 折得太轻，翻不动决策，
-// 那样这两条就变成「碰巧一样/碰巧不一样」，钉不住结构。量级留给训练去搜。
+// ⚠️⚠️ 这里【原来有一对测试】，钉的是 Glen 早先那句「像刚才的第三家有 10 分吃不吃 A
+// 的问题，如果是闲家，吃的概率应该得更大，因为自己的策略就以吃分为主」——
+// 同一手牌、同一墩，只换庄家座位，闲家更愿意亮件。2026-08-29 删掉了，理由记下来：
 //
-// ⚠️⚠️ 这一对【原来用的是「对手领 ♠4 求件、桌上 5 分」】，2026-08-29 改掉了。
-// Glen 那天的裁定把那个局面整个封死了：
-//   「即使对手求的件，有 A 或者 10 分 15 分就砍了，不考虑后果，还是需要优化一下。」
-// 5 分比 10/15 分更不该砍，所以旧断言现在是【错的行为】，不能再钉。
-// 见 pieceOwedToOpponentAsk：对手求件那一档已经是硬闸，策略权重排在它下面。
+// 这一对被他后来的两条裁定连续挤没了空间：
+//   ① 「即使对手求的件，有 A 或者 10 分 15 分就砍了，不考虑后果」→ 对手求件那档
+//      变成硬闸，原来的 fixture（对手领 ♠4 求件、桌上 5 分）整个作废；
+//   ② 「不管对手有没有求，件还是不能乱出……件在情况不明的状态不能乱出」→ 闸又扩到
+//      【除队友求以外的所有门】，第二版改用的「没人求件、桌上无分」也被盖住。
 //
-// 换成【没人求件、桌上无分】的局面。为什么不是「没人求件、桌上有分」——
-// 扫过了（scratchpad/sweep.mjs，10 档领牌 × 3 种手型 × 6 种已出 × 5 种桌面）：
-// 桌上一有分，「封住最后一家」那笔账（lastSeatPointRisk）就压过策略权重，
-// 两边都会吃，分不出来。那笔账要不要给亮件让路，Glen 还没裁过，
-// 源码里早就标注着（见上面「只钉 5 分，故意不钉 10 分」那段）。
-// 所以这一对现在钉的是：【同样一墩牌权，闲家更愿意为它亮件】。
-function strategyPieceView(declarerSeat) {
-  return followView({
-    seat: 2, declarerSeat,
-    hand: [
-      ...[14, 9, 6, 3].map((r, i) => T('S', r, i)),                   // 黑桃 4 张，握 ♠A
-      ...[14, 13, 10, 9, 8, 7, 5, 4].map((r, i) => T('D', r, i + 10)), // 方块 8 张（两件在手）
-      ...[7, 5, 3].map((r, i) => T('H', r, i + 30)),                   // 3 张小主
-    ],
-    // ♠9 不是求件牌（≤5 或 10 才是）→ 谁都没求过这门，硬闸不介入
-    currentTrick: [{ seat: 1, playSuit: 'S', cards: [T('S', 9, 90)] }],
-    piecesView: {
-      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
-          { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
-      D: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
-          { rank: 13, status: 'mine' }, { rank: 13, status: 'unseen' }],
-      C: [],
-    },
-    botTuning: { pointsFirstPieceWeight: 0.5 },
-  });
-}
-
-test('策略：我是闲家（吃分为主）→ 为了一墩牌权就肯把 ♠A 亮出去', () => {
-  const view = strategyPieceView(1);
-  assert.equal(roundStrategy(view, S_CTX), 'points-first', '前提：策略确实是吃分为主');
-  assert.equal(chooseFollowCards(view)[0].rank, 14);
-});
-
-test('策略：同一手牌但我在庄家一方（跑牌兼跑分）→ 同样一墩不值得亮 ♠A', () => {
-  const view = strategyPieceView(0);
-  assert.equal(roundStrategy(view, S_CTX), 'run-and-score', '前提：策略不是吃分为主');
-  assert.notEqual(chooseFollowCards(view)[0].rank, 14);
-});
+// 剩下能让策略权重说话的只有闸的四道豁免，而那四道里：
+//   件全现 / 只剩两三支 / 两件在手 → 护件代价本来就是 0，无从缩放；
+//   桌上 ≥20 分 / 打 10 打 K → 扫过（scratchpad/probeE.mjs），两边都会吃，分不出来。
+// 也就是说 pointsFirstPieceWeight 这个权重在【件】这条路径上已经观察不到了。
+// 权重本身留着（它还在缩放豁免局面里的代价，训练器也在搜它），
+// 但不再拿一对钉不住的测试假装它有覆盖。
+// 要恢复这条打法，需要 Glen 给一个和「件不能乱出」不冲突的具体场景。
 
 // 例外：这门的件已经全现了 —— 我这张 ♠A 亮不亮，对手的甩牌资格都不会因此变化，
 // 那就没有「冒险」可言，该吃分就吃分。
@@ -1236,13 +1206,110 @@ test('读件：对家早先求过这门（后来改打别门）→ 件多半仍�
   assert.equal(chooseFollowCards(view)[0].rank, 14);
 });
 
-test('读件：谁都没在这门求过 → 对手这门多半不强，风险略降', () => {
+// ⚠️ 这条【翻过来了】（2026-08-29）。原来断言「谁都没求过 → 风险略降 → 可以亮 ♠A」，
+// 靠的是 PIECE_READ_NOBODY_ASKED（0.7）那一档折扣。Glen 那天把护件的硬闸
+// 从「对手在求的门」扩到了【除队友求以外的所有门】：
+//   「不管对手有没有求，件还是不能乱出……件在情况不明的状态不能乱出。」
+// 「谁都没求过」正是他说的「情况不明」—— 谁手上有件全靠猜，那就不能出。
+// 那一档 0.7 的折扣还留着，但现在只在闸的四道豁免里才够得着。
+test('读件：谁都没在这门求过 → 情况不明，件不能乱出', () => {
   const view = opponentProbeView([9, 5]);   // 对手领 ♠9，不是求件牌
-  assert.equal(chooseFollowCards(view)[0].rank, 14);
+  assert.notEqual(chooseFollowCards(view)[0].rank, 14,
+    '没人求过 = 件在谁手上全靠猜，这时候更不能把 ♠A 交出去');
 });
 
 // 对照：对手正在求这门（他这一墩领的就是 ♠4）→ 风险照旧，不亮。
 // 这条已经在上面「5 分不值得亮 ♠A」里钉住了，这里只标明它属于同一组三档。
+
+// ============ 求件只算一门牌【第一次】被领的那一手 ============
+//
+// Glen 2026-08-29：
+//   「每门牌第一次打的时候打 ≤5 是求件，同一门再打就是自己还没可以甩牌，继续捅，
+//     如果换一门第一次打 ≤5 也是求件。如果没有小于等于 5 的，可以打 10，也是求件。」
+//
+// 原来全项目只看【牌形】（单张、非件、≤5 或 10），任何时候领小牌都当成求件，
+// 于是同一门反复领小牌会被反复读成「他又在求了」。现在牌形之外还要看位置。
+//
+// ⚠️ 这条判据被 8 处逻辑共用（求件应答 / 保件 / 不帮对手求 / 压欠着的门 /
+// 续打贡献件 / 帮队友求件 / 留甩尾手 / 别乱发求件信号），所以下面三条
+// 直接钉 suitAskSignal 本身，别只靠上层行为间接覆盖。
+const askSignalView = history => leadView({
+  hand: [...NINE_TRUMPS, ...WEAK_SIDES],
+  declarerSeat: 0, mySeat: 0, trickHistory: history,
+});
+const oppLeadS = (n, rank) => ({
+  trickNo: n, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0,
+  plays: [{ seat: 1, playSuit: 'S', cards: [T('S', rank, 800 + n)] }],
+});
+
+test('求件判据：这门第一次被领打的是 ♠4 → 算求件', () => {
+  assert.equal(suitAskSignal(askSignalView([oppLeadS(1, 4)]), S_CTX, 'S'), 'opponent');
+});
+
+// Glen：「如果没有小于等于 5 的，可以打 10，也是求件。」
+test('求件判据：第一次领打的是 ♠10 → 也算求件', () => {
+  assert.equal(suitAskSignal(askSignalView([oppLeadS(1, 10)]), S_CTX, 'S'), 'opponent');
+});
+
+// 核心那一条：第一次领的不是求件牌，之后再领小牌也【不是】求件。
+test('求件判据：第一次领的是 ♠9，第二次才领 ♠4 → 不算求件，那是继续捅', () => {
+  assert.equal(
+    suitAskSignal(askSignalView([oppLeadS(1, 9), oppLeadS(2, 4)]), S_CTX, 'S'), null,
+    '同一门第二次领小牌是在捅短，不是求件'
+  );
+});
+
+// 换一门第一次打 ≤5 照样算求件 —— 不然「第一次」会被误实现成「整局第一墩」。
+test('求件判据：换一门第一次领 ♦3 → 照样算求件', () => {
+  const view = askSignalView([
+    oppLeadS(1, 9),
+    { trickNo: 2, leadSeat: 1, leadSuit: 'D', winnerSeat: 1, points: 0,
+      plays: [{ seat: 1, playSuit: 'D', cards: [T('D', 3, 810)] }] },
+  ]);
+  assert.equal(suitAskSignal(view, S_CTX, 'S'), null, '黑桃第一次领的是 ♠9，不是求件');
+  assert.equal(suitAskSignal(view, S_CTX, 'D'), 'opponent', '方块第一次领的是 ♦3，是求件');
+});
+
+// 这门是【对手】先求的，队友后来才领它 —— 那不是队友在求件，
+// 我回这门就不该走「逼件」的路子（领最小的那张去逼）。
+// ⚠️ fixture 要同时让另外两条规矩站开，不然看不到这一条：
+//   · 队友在第 1 墩被逼交出了 ♠K → teamGavePieceIn 成立 → 「不领对手求的门」不介入
+//   · ♠ 还有 A 没现身 → canThrowByStatus 不成立 → 「别拆甩牌门」不介入
+// 于是两种写法都会领 ♠，差别只在【领哪一张】：当成求件就领最小的 ♠3（逼件），
+// 不当成求件就走 quietLead 的中性牌 ♠7。
+test('帮队友求：这门是对手先求的，队友后来才领 → 不当成队友在求件', () => {
+  const lead = chooseLeadCards(leadView({
+    hand: [
+      T('H', 16, 0), T('H', 16, 1),
+      ...[14, 13, 12, 11, 10, 9, 8].map((r, i) => T('H', r, i + 2)),
+      ...[9, 7, 3].map((r, i) => T('S', r, i + 40)),
+      ...[8, 6].map((r, i) => T('D', r, i + 60)),
+    ],
+    declarerSeat: 0, mySeat: 0,
+    piecesView: {
+      S: [{ rank: 14, status: 'unseen' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+    trickHistory: [
+      { trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0, plays: [
+        { seat: 1, playSuit: 'S', cards: [T('S', 4, 90)] },   // 对手先求这门
+        { seat: 0, cards: [T('S', 5, 91)] },
+        { seat: 3, cards: [T('S', 6, 92)] },
+        { seat: 2, cards: [T('S', 13, 93)] },                 // 队友被逼交出 ♠K
+      ] },
+      { trickNo: 2, leadSeat: 2, leadSuit: 'S', winnerSeat: 2, points: 0,
+        plays: [{ seat: 2, playSuit: 'S', cards: [T('S', 9, 94)] }] },
+    ],
+  }))[0];
+  assert.equal(lead.suit, 'S');
+  // ⚠️ 老实说：这条【隔离不出 partnerRequest 那一层】—— 这个局面里
+  // compress（580）和「回队友那门」（480）挑的是同一张 quietLead 中性牌，
+  // 就算 partnerRequest 判错也是同样的结果。它钉住的是【最终别去逼件】这个行为，
+  // 判据本身由 suitAskSignal 那几条直接钉。变异测试的记录在 mutants17。
+  assert.notEqual(lead.rank, 3,
+    `这门是对手先求的，别当成队友在求而去领最小的逼件（实际领了 ♠${lead.rank}）`);
+});
 
 // ============ 对手求的件，不能随手砍出去（硬闸）============
 //
@@ -1346,9 +1413,14 @@ test('对手求件：桌上 10 分、我手上是 ♠K → 不能拿自己 K 的
     //     打分那一头自己就否了 ♠K，同样测不出闸的作用。
     //   分都在别的花色（♦K + ♦5），黑桃一分没走，「刮不到分」那条不会插手。
     table: [4, ['D', 13], ['D', 5]],
+    // ⚠️ 这一墩领的是【主牌】，黑桃是别人断门垫下来的 —— 黑桃要是先被领过，
+    // 后面那手 ♠4 就不算求件了（Glen：求件只算这门第一次被领）。
     trickHistory: [{
-      trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0,
-      plays: [{ seat: 1, cards: [9, 8, 7, 6, 4, 3, 9, 8].map((r, i) => T('S', r, 700 + i)) }],
+      trickNo: 1, leadSeat: 1, leadSuit: 'TRUMP', winnerSeat: 1, points: 0,
+      plays: [
+        { seat: 1, playSuit: 'TRUMP', cards: [T('H', 4, 699)] },
+        { seat: 0, cards: [9, 8, 7, 6, 4, 3, 9, 8].map((r, i) => T('S', r, 700 + i)) },
+      ],
     }],
   }))[0];
   assert.notEqual(play.rank, 13,
@@ -1387,9 +1459,17 @@ test('求件的是队友不是对手 → 这道闸不介入，照常贡献件', 
 // ⚠️ 两边【打掉同样张数】的黑桃，只差是不是分牌 ——
 // 否则张数一变，maxOpponentSuitEstimate（按张数算的威胁）也跟着变，
 // 就分不清是哪个维度在起作用了。
+// ⚠️ 这一墩【不能领黑桃】。Glen 2026-08-29：「每门牌第一次打的时候打 ≤5 是求件……
+// 同一门再打就是自己还没可以甩牌，继续捅」—— 黑桃要是先被领过，
+// 后面那手 ♠4 就不再算求件，整组测试测的东西就没了。
+// 所以让它领主牌，黑桃是别人断门垫下来的：牌照样出掉（分和张数都算进去了），
+// 但这门还没「被领过」。
 const spadesPlayed = ranks => ([{
-  trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 1, points: 0,
-  plays: [{ seat: 1, cards: ranks.map((r, i) => T('S', r, 700 + i)) }],
+  trickNo: 1, leadSeat: 1, leadSuit: 'TRUMP', winnerSeat: 1, points: 0,
+  plays: [
+    { seat: 1, playSuit: 'TRUMP', cards: [T('H', 4, 699)] },
+    { seat: 0, cards: ranks.map((r, i) => T('S', r, 700 + i)) },
+  ],
 }]);
 
 // ⚠️ 只打【两张】。第一版两边各打 5 张，结果不管是不是分牌都会亮 ♠A ——
@@ -1922,7 +2002,7 @@ test('压他的长度 vs 帮队友求件：这门他只剩一张，甩不成 →
 // 我这门要是有两三张，那门对我自己也是甩牌资产，该整门留着而不是一张张捅，
 // 那时候让位是对的，不该在这里测。
 // 队友（座 2）做庄并在 ♦ 明求 → 帮他求件那条拿满 560，正是要被压过的那一档。
-function savedTailThrowView(middle) {
+function savedTailThrowView(middle, firstAskSeat = 1) {
   return leadView({
     declarerSeat: 2, mySeat: 0,
     hand: [
@@ -1939,9 +2019,9 @@ function savedTailThrowView(middle) {
       // 第 1 墩：对手（座 1）领 ♠3 求件，件是【另一个对手】（座 3）交出来的 ——
       // 我方一支没喂，所以 teamGavePieceIn 不成立，这就是场景乙
       {
-        trickNo: 1, leadSeat: 1, leadSuit: 'S', winnerSeat: 3, points: 0,
+        trickNo: 1, leadSeat: firstAskSeat, leadSuit: 'S', winnerSeat: 3, points: 0,
         plays: [
-          { seat: 1, playSuit: 'S', cards: [T('S', 3, 90)] },
+          { seat: firstAskSeat, playSuit: 'S', cards: [T('S', 3, 90)] },
           { seat: 0, cards: [T('S', 5, 91)] },
           { seat: 3, cards: [T('S', 13, 92)] },
           { seat: 2, cards: [T('S', 6, 93)] },
@@ -1970,10 +2050,6 @@ const partnerTrump = n => ({
   trickNo: n, leadSeat: 2, leadSuit: 'TRUMP', winnerSeat: 2, points: 0,
   plays: [{ seat: 2, playSuit: 'TRUMP', cards: [T('H', 6, 90 + n)] }],
 });
-const partnerAsksSpade = n => ({
-  trickNo: n, leadSeat: 2, leadSuit: 'S', winnerSeat: 2, points: 0,
-  plays: [{ seat: 2, playSuit: 'S', cards: [T('S', 4, 90 + n)] }],
-});
 
 test('场景乙：他求出件后不甩、转打主（留甩尾手）→ 去捅短这门', () => {
   const lead = chooseLeadCards(savedTailThrowView([oppTrump(2)]))[0];
@@ -1999,14 +2075,17 @@ test('场景乙：吊主的是队友不是他 → 没有留尾巴的判据，去
     `我方吊主不能算成他在留尾巴（实际领了 ${lead.suit}${lead.rank}）`);
 });
 
-// 反向对照③：这门【队友也求过】—— 按 Glen 的读牌顺序（先看对家）这门就算队友在求，
-// 件多半在自己人那边，谈不上「他留着甩尾手」。
-test('场景乙：这门队友也求过 → 算队友在求，不当成他留尾巴', () => {
+// 反向对照③：这门【是队友先求的】—— 件多半在自己人那边，谈不上「他留着甩尾手」。
+// ⚠️ 原来这条写的是「对手先求、队友后来也求」，靠的是旧判据里
+// 「两边都求过时以对家为准」那条排序。Glen 2026-08-29 把求件收紧成
+// 【只算这门第一次被领的那一手】之后，第一次领牌只有一个人，
+// 那条排序自然消失了 —— 要让这门算队友在求，就得是队友【先】领的。
+test('场景乙：这门是队友先求的 → 件在自己人那边，不当成他留尾巴', () => {
   const lead = chooseLeadCards(
-    savedTailThrowView([partnerAsksSpade(2), oppTrump(3)])
+    savedTailThrowView([oppTrump(2)], 2)   // 首领这门的是队友（座 2）
   )[0];
   assert.equal(lead.suit, 'D',
-    `队友也求过这门，读牌上件在自己人那边（实际领了 ${lead.suit}${lead.rank}）`);
+    `这门是队友先求的，件在自己人那边（实际领了 ${lead.suit}${lead.rank}）`);
 });
 
 // ============ 不帮对手吊主 ============

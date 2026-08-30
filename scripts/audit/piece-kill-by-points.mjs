@@ -42,14 +42,14 @@ for (let i = 0; i < N_ROUNDS; i++) {
 
     for (const play of (t.plays ?? []).slice(1)) {
       const myTeam = play.seat % 2;
-      // 对手在这门求过件？
+      // 对手在这门求过件？口径同源码：只算这门【第一次】被领的那一手（Glen）
       let asked = false;
-      for (let k = 0; k <= ti && !asked; k++) {
-        const hl = hist[k].plays?.[0];
-        if (!hl || (hl.seat % 2) === myTeam) continue;
-        const a = hl.cards ?? [];
-        if (a.length === 1 && ps(a[0]) === suit && !isPiece(a[0]) &&
-            (a[0].rank <= 5 || a[0].rank === 10)) asked = true;
+      for (let k = 0; k <= ti; k++) {
+        if (hist[k].leadSuit !== suit) continue;
+        const a = hist[k].plays?.[0]?.cards ?? [];
+        asked = (hist[k].leadSeat % 2) !== myTeam && a.length === 1 &&
+          !isPiece(a[0]) && (a[0].rank <= 5 || a[0].rank === 10);
+        break;
       }
       if (!asked) continue;
       let seenBefore = 0;

@@ -66,14 +66,16 @@ for (let i = 0; i < N_ROUNDS; i++) {
 
       for (const piece of pieces) {
         const suit = ps(piece);
-        // 这门此刻是谁在求：扫历史上的求件领牌（≤5 或 10 的非件单张）
+        // 这门是谁在求 —— Glen 2026-08-29：求件只算这门【第一次】被领的那一手。
+        // 「同一门再打就是自己还没可以甩牌，继续捅」，不是新的求件。
         let askerTeam = null;
         for (let k = 0; k <= ti; k++) {
-          const hl = hist[k].plays?.[0];
-          if (!hl) continue;
-          const a = hl.cards ?? [];
-          if (a.length === 1 && ps(a[0]) === suit && !isPiece(a[0]) &&
-              (a[0].rank <= 5 || a[0].rank === 10)) askerTeam = hl.seat % 2;
+          if (hist[k].leadSuit !== suit) continue;
+          const a = hist[k].plays?.[0]?.cards ?? [];
+          if (a.length === 1 && !isPiece(a[0]) && (a[0].rank <= 5 || a[0].rank === 10)) {
+            askerTeam = hist[k].leadSeat % 2;
+          }
+          break;   // 第一次被领的那一手就定了，后面再领都不算
         }
         let seenBefore = 0;
         for (let k = 0; k < ti; k++)

@@ -20,18 +20,22 @@ runMutants([
       '垫牌形状里又加回 highCards'],
 
   // ---- ①求件是一次性的表态 ----
-  [F, '    if (isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) return true;',
-      '    if (isPieceRequestLead(trick.plays?.[0]?.cards ?? [], ctx)) return false;',
-      '「我方在这门求过没有」永远答否 —— 求件信号不再过期'],
-  [F, '    !teamAskedPieceBefore(view, ctx, lead.playSuit, you.team);',
-      '    true;', '跟牌的贡献加分不看我方求过没有'],
-  [F, '    !teamAskedPieceBefore(view, ctx, lead.playSuit, view.you.seat % 2);',
-      '    true;', '第三家的约定贡献不看我方求过没有'],
-  [F, '    isPieceAskLead(lead.cards, ctx) &&\n    !teamAskedPieceBefore(view, ctx, lead.playSuit, view.you.seat % 2);',
+  // ⚠️ 这一组【原来有 5 条，删到 2 条】。Glen 2026-08-29 把求件收紧成
+  // 「只算这门第一次被领的那一手」之后，原来那条独立的「我方在这门求过没有」
+  // （teamAskedPieceBefore）就【推得出恒为假】了：求过就意味着这门被领过，
+  // 而调用点都已经先要求「这门没被领过」。变异测试当场证实 —— 那几条全变成存活。
+  // 于是那个函数连同 helpingTeamAsk 一起删了，一次性表态改由 suitLedBefore 表达。
+  [F, `    isPieceAskLead(lead.cards, ctx) &&
+    // 这门之前被领过了 → 这一领是捅短不是求件（Glen 2026-08-29）。
+    // ⚠️ 这条同时把「我方在这门已经求过一次」那条老规矩吸收掉了 ——
+    // 求过就意味着这门被领过，所以那个判断在这里恒为假，已删。
+    !suitLedBefore(view, lead.playSuit);`,
       '    cardPoints(leadCard) > 0 || !isSidePiece(leadCard, ctx);',
       '回到旧口径：队友单张领这门、只要不是副 A 就算求件'],
-  [F, "      !teamAskedPieceBefore(view, ctx, suit, view.you.seat % 2, lastIndex),",
-      '      true,', '「回队友这门」的求件加成不看我方求过没有'],
+  [F, `      // 求件只算这门【第一次】被领的那一手（Glen）——
+      // 他这一领之前这门就被领过的话，那不是求件。
+      !suitLedBeforeIndex(view, suit, lastIndex),`,
+      '      true,', '「回队友这门」的求件加成不看这门先前被领过没有'],
 
   // ---- ③毙牌阶梯 + 「外面没有更大的主牌了」----
   [F, '    if (suitOf(card, ctx) !== \'TRUMP\') return false; // 不是满手主牌，谈不上压不压',
