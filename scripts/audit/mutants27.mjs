@@ -64,11 +64,13 @@ runMutants([
       '退回旧判据：这门的分被打掉了就算安全（Glen 说那是算漏了）'],
 
   // ---- 「或是自己没剩多少如三支甚至两支」 ----
-  [F, '    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) continue;',
-      '    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= 4) continue;',
+  // ⚠️ 「快断门」那条例外 2026-08-30 加了前提（毙得动 / 队友领先），判断挪进了
+  // 一个多行的 if。那两个前提的变异体在 mutants33。
+  [F, '      cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER &&',
+      '      cardsOfSuit(hand, suit, ctx).length - spentHere <= 4 &&',
       '「快断了」放宽到剩 4 张 —— 长门也算快断'],
-  [F, '    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) continue;',
-      '    if (false) continue;',
+  [F, '      cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER &&',
+      '      false &&',
       '快断门也照挡 —— Glen 的原例（♠A ♠9 ♠6 打 A）会打不出来'],
 
   // ---- 件全现了就没有风险可言 ----
