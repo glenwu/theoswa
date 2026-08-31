@@ -1334,6 +1334,12 @@ const PARTNER_LINE_MIN_LEADS = 2;
 // 「用件去碰件」的张数前提 —— Glen：「外边还有 8 张 10 张左右的样子」。
 // 取上沿 10：再多他就有别的牌可垫，碰不出来。
 const PIECE_BUMP_MAX_OUTSTANDING = 10;
+// 保底的鬼要留到最后几轮 —— Glen 说的是「最后两轮」。
+const JOKER_HOLD_LAST_TRICKS = 2;
+// 还没到最后两轮就把保底的鬼交出去，罚多少。
+// ⚠️ 和 OVER_KILL_PENALTY 是两笔账：那条罚的是「这一下把顶端丢了」，
+// 这条罚的是「顶端还在、但兑现得太早」。
+const JOKER_EARLY_SPEND_PENALTY = 420;
 
 const TOTAL_PER_SIDE_SUIT = 24;
 
@@ -3214,6 +3220,38 @@ function scoreFollow(view, cards, ctx) {
     !bottomControlAfter(view, ctx, cards).holdsTopTrump
   ) {
     score -= OVER_KILL_PENALTY * bottomWeight * tuning.bottomControlWeight;
+  }
+
+  // 【保底的鬼留到最后两轮】—— Glen 2026-08-30：
+  //   「BOT 有大小鬼，对手只有小鬼，但没在最后两轮打，倒数三轮二轮就把大小鬼
+  //     打出来了，导致给对手撬底。」
+  //
+  // 上面那条管的是「这一下会不会把顶端丢掉」，这一条管的是【时机】：顶端还在
+  // 我手上就意味着最后一墩是我的，而保底/撬底比的就是最后一墩。牌局还没走到
+  // 最后两轮就把鬼交出去，等于提前把那个保证兑现掉 —— 换回来的分再多，底还是要丢。
+  //
+  // ⚠️ 前提和上面那条【共用同一个】：这一墩的分到不了移庄线才罚。到得了就
+  // 无所谓底了，该砍就砍 —— 第一版把它写成独立的一条罚分、漏了这个前提，
+  // 当场把他早先三条裁定顶红（「闲家已有 60 分，让掉就到 90 过线，必须砍」
+  // 「杀下去到 90 爆底，照杀」「收下这 20 分正好到移庄线，该砍就砍」）。
+  //
+  // 实测 200 局（scripts/audit/joker-timing.mjs）：大小鬼都在手上的 140 次里，
+  // 55.7% 在倒数第三轮或更早就动了鬼；那些局的撬底率 20.5%，晚动鬼的只有 8.1%。
+  // 再往里一层：早动的 78 次里 47.4% 是「手上只剩鬼了」（真被逼，管不了），
+  // 37.2% 是「手上还有小主却掏了鬼」，15.4% 是自己领出去的 —— 后两类才是这条管的。
+  // 手上只剩鬼时评分器没有别的候选，这条罚多少都卡不死。
+  if (
+    afterDefenderPoints < DEFENDER_TARGET_POINTS &&
+    cards.some(card => card.rank === 15 || card.rank === 16) &&
+    // ⚠️ 判据是【手上的鬼组合】，不是 holdsTopTrump。Glen 说的那个牌型
+    //（我有大小鬼、对手只有小鬼）恰恰判不出 holdsTopTrump：assessBottomControl
+    // 把底牌里的牌一律当成还在对手手上（偏保守），于是「大鬼 1 张在我手、
+    // 1 张在外」这一档就卡在 threats < mineAtOrAbove 上过不去。
+    // 他原话点的就是牌型：「有保底/撬底的鬼组合（如大小鬼）」。
+    you.hand.filter(card => card.rank === 15 || card.rank === 16).length >= 2 &&
+    you.hand.length > JOKER_HOLD_LAST_TRICKS
+  ) {
+    score -= JOKER_EARLY_SPEND_PENALTY * bottomWeight * tuning.bottomControlWeight;
   }
 
   // 垫完一门短牌可以制造缺门，之后才有杀牌机会。
