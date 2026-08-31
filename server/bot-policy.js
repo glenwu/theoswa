@@ -1660,6 +1660,22 @@ function maxOpponentTrumpEstimate(view, ctx) {
 // 某一门副牌，【单独一家对手】最多可能握着多少张 —— 和 maxOpponentTrumpEstimate
 // 同一套算法（未现牌按各家手牌数摊分，底牌那份摊出去正好扣掉）。
 // 用来衡量「我亮这支件之后，他能甩多长」。
+// 单独一家【最多】可能有这门的几张 —— 拿来做「我扛不扛得住他一甩」这种
+// 风险判断。⚠️ 别用 maxOpponentSuitEstimate：那是按平均分布算的【期望值】，
+// 而真要甩的那一家恰恰是攥着这门不放的那个。实测「用 A 砍 K」那些场合，
+// 期望值中位 2.6、最大 5.6，可实战真甩出来到 9 张 —— 期望值系统性地低估。
+// 上界就两条：外面总共还剩这么多，以及他手上一共就这么多牌。
+function worstOpponentSuitLen(view, ctx, suit) {
+  const outstanding = outstandingInSuit(view, ctx, suit);
+  let worst = 0;
+  for (const player of view.players ?? []) {
+    if (player.seat === view.you.seat) continue;
+    if (player.seat % 2 === view.you.team) continue;   // 队友甩这门不是威胁
+    worst = Math.max(worst, Math.min(outstanding, player.handCount ?? 0));
+  }
+  return worst;
+}
+
 function maxOpponentSuitEstimate(view, ctx, suit) {
   const total = TOTAL_PER_SIDE_SUIT;
   const played = playedCardsOf(view).filter(card => suitOf(card, ctx) === suit).length;
@@ -1919,8 +1935,25 @@ function pieceOwedToOpponentAsk(view, ctx, cards) {
     if (sideSuitTotalPoints(ctx) <= PIECE_COVER_MIN_POINTS) continue;
     // 「或是自己没剩多少如三支甚至两支」—— 口径同 PIECE_NEAR_VOID_AFTER，
     // 按【打完这一手之后】还剩几张算，和打分那一头保持一致。
+    //
+    // ⚠️ 这条例外服务【两个】目的，两个都得留住：
+    //   ① Glen 给它的原话理由是「打 A 后再捅多一支或两支就断了，【可以毙别人】，
+    //      这个时候也可以吃」—— 断门的价值全在「断了能毙」上。可他这门要是比我的
+    //      主还长，他一甩 8 支 10 支我拿什么毙？那时候这条前提根本不成立。
+    //      Glen 2026-08-30：「场上如果有 K，经常会不管后果用 A 去砍，导致给对手甩
+    //      8 支 10 支的情况，自己那时还有这门牌。」插桩查过：真打出「A 砍 K」而这门
+    //      还有别的牌的 51 次里，32 次（63%）就是从这一条漏的。
+    //   ② 「队友 A，自己如果只剩下 K 和 3，正常还是要把 K 给队友」——
+    //      队友已经领先这一墩时，这一手是【送分给自己人】，跟亮不亮件无关。
+    //      ⚠️ 只收紧①而不给②留口子的话，那条裁定当场变红（试过）。
     const spentHere = cards.filter(item => suitOf(item, ctx) === suit).length;
-    if (cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER) continue;
+    const leader = trickLeader(view.round?.currentTrick ?? [], ctx);
+    const partnerAhead = !!leader && leader.seat === partnerSeatOf(view.you.seat);
+    if (
+      cardsOfSuit(hand, suit, ctx).length - spentHere <= PIECE_NEAR_VOID_AFTER &&
+      (partnerAhead ||
+        worstOpponentSuitLen(view, ctx, suit) <= cardsOfSuit(hand, 'TRUMP', ctx).length)
+    ) continue;
     return true;
   }
   return false;
