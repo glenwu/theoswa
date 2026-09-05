@@ -26,7 +26,7 @@ runMutants([
   [F, "  if (first.seat % 2 === view.you.team) return false;             // 得是对手在求",
       '',
       '队友求件、我方贡献件也算「被迫喂给对手」'],
-  [F, '  if (!isPieceRequestLead(first.cards, ctx)) return false;',
+  [F, '  if (!isPieceAskLead(first.cards, ctx)) return false;',
       '',
       '对手随便领这门、我方出了件也算（不限于他在求件）'],
   [F, '    play.seat % 2 === view.you.team &&',

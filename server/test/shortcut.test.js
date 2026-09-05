@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 // 测试客户端快捷键纯判定模块（无 DOM 依赖，node 可直接跑）
 import { isTypingTarget, shortcutAction } from '../../client/src/shortcut.js';
+import { declareOptions } from '../../client/src/declare.js';
 import { toggleGroup } from '../../client/src/selection.js';
 import { groupBadgeCount } from '../../client/src/handGroups.js';
 
@@ -55,7 +56,7 @@ test('空格：不是自己回合 / 没选牌 → 只拦截滚动，不触发动
   assert.equal(noSelection.preventDefault, true);
 });
 
-test('数字键 1-9：立即亮出第 N 张可亮级牌，编号与角标对应；超出范围无效', () => {
+test('数字键 1-9：立即亮第 N 个可亮花色，编号与「亮♠」按钮对应；超出范围无效', () => {
   const ctx = {
     phase: 'REVEALING',
     myRevealTurn: false,
@@ -104,4 +105,41 @@ test('groupBadgeCount：5 张显示、4 张不显示（门槛改为 ≥5）', ()
   assert.equal(groupBadgeCount({ count: 4 }), null);
   assert.equal(groupBadgeCount({ count: 5 }), 5);
   assert.equal(groupBadgeCount({ count: 9 }), 9);
+});
+
+// ---- 亮主的选择（控制栏那一排「亮♠」按钮 + 数字键，共用同一份）----
+// Glen 2026-09-06：「可以亮主的时候，有时候会有多个选择，现在只有一个按钮，
+//   可以做成多个按钮放同一行，就显示『亮♠』这样的信息就可以了。」
+test('亮主选择：按花色去重，一个花色一个按钮，顺序按手牌里第一次出现', () => {
+  const hand = [
+    { id: 'h2', suit: 'H', rank: 2 },
+    { id: 's2a', suit: 'S', rank: 2 },
+    { id: 'c5', suit: 'C', rank: 5 },
+    { id: 's2b', suit: 'S', rank: 2 },
+  ];
+  assert.deepEqual(declareOptions(hand, 2), [
+    { suit: 'H', cardId: 'h2', count: 1 },
+    { suit: 'S', cardId: 's2a', count: 2 },
+  ], '同花色两张级牌只占一个按钮（handleDeclareTrump 只认花色，亮哪一张结果一样）');
+});
+
+test('亮主选择：手上没有级牌就一个按钮都不摆', () => {
+  assert.deepEqual(declareOptions([{ id: 'c5', suit: 'C', rank: 5 }], 2), []);
+  assert.deepEqual(declareOptions([], 2), []);
+  assert.deepEqual(declareOptions(null, 2), []);
+});
+
+// 数字键取的就是 declareOptions 给的那一串 cardId —— 键和按钮永远对得上。
+test('亮主选择：数字键编号和按钮编号是同一份', () => {
+  const hand = [
+    { id: 'd2', suit: 'D', rank: 2 },
+    { id: 'd2b', suit: 'D', rank: 2 },
+    { id: 'c2', suit: 'C', rank: 2 },
+  ];
+  const ids = declareOptions(hand, 2).map(option => option.cardId);
+  assert.deepEqual(ids, ['d2', 'c2']);
+  const ctx = { phase: 'REVEALING', myRevealTurn: false, myPlayTurn: false, selectedIds: [], rankCardIds: ids };
+  const body = { tagName: 'BODY' };
+  assert.equal(shortcutAction({ key: '2', target: body }, ctx).cardId, 'c2', '按 2 亮的是第二个花色，不是第二张级牌');
+  assert.equal(shortcutAction({ key: '3', target: body }, ctx), null, '只有两个花色，3 无效');
 });

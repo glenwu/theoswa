@@ -5,11 +5,11 @@ import { runMutants } from './mutate.mjs';
 const F = 'server/bot-policy.js';
 runMutants([
   // ---- 求件判据（全项目唯一那一份）----
-  [F, '    isPieceRequestLead(cards, ctx) ||\n    (isSidePiece(card, ctx) && cardPoints(card) > 0)',
-      '    isPieceRequestLead(cards, ctx)',
-      '领副 K 不再算「强烈求 A」'],
-  [F, '    isPieceRequestLead(cards, ctx) ||\n    (isSidePiece(card, ctx) && cardPoints(card) > 0)',
-      '    !isSidePiece(card, ctx) || cardPoints(card) > 0',
+  [F, '  return isPieceRequestLead(cards, ctx) || isSidePiece(card, ctx);',
+      '  return isPieceRequestLead(cards, ctx);',
+      '领件（副 K / 三求一的副 A）不再算求件'],
+  [F, '  return isPieceRequestLead(cards, ctx) || isSidePiece(card, ctx);',
+      '  return !isSidePiece(card, ctx) || cardPoints(card) > 0;',
       '退回那个最松的老判据（任何非件小牌都算求件）'],
 
   // ---- 队友最近一领 = 他现在的计划（换门 / 改吊主就作废）----

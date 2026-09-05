@@ -15,6 +15,7 @@ import { useNow, secondsLeft, displayNow } from '../useNow.js';
 import { useMediaQuery, COMPACT_PORTRAIT, PHONE_LANDSCAPE, COMPACT } from '../useMedia.js';
 import { MyDetails } from './PlayerPanel.jsx';
 import { shortcutAction } from '../shortcut.js';
+import { declareOptions } from '../declare.js';
 import { checkSelection } from '../playCheck.js';
 import { seatPendingText } from '../seatStatus.js';
 import { trickLeader } from '../../../server/trick.js';
@@ -36,7 +37,7 @@ const PHASE_HINTS = {
   SEATING: '换座阶段：点击左侧玩家请求换座，全员确认座位后开始',
   READY_CHECK: '等待全员准备…',
   REVEAL_FIRST: '抢按「揭牌」成为翻牌人，系统翻牌定起揭人',
-  REVEALING: '揭牌定主：轮到你时点「揭牌」（空格），摸到级牌可随时「亮主」（数字键 1~N）',
+  REVEALING: '揭牌定主：轮到你时点「揭牌」（空格），摸到级牌可随时按「亮♠」这排键（数字键 1~N）',
   FALLBACK_TRUMP: '无人亮主，逐张揭底牌定主…',
   DEALING: '发牌中…',
   KITTY_EXCHANGE: '庄家换底：从 33 张中点选 8 张埋回底牌',
@@ -90,7 +91,6 @@ function AutoPlayToggle({ game, send, className = '' }) {
 // 中栏：十字形四方位牌桌 + 中央信息 + 控制按钮 + 我的手牌
 export default function TablePanel({ game, send, error, onTogglePlayers, onToggleChat }) {
   const [selected, setSelected] = useState([]);
-  const [declareOptions, setDeclareOptions] = useState(null);
 
   const you = game.you;
   const bySeat = Object.fromEntries(game.players.map(p => [p.seat, p]));
@@ -148,9 +148,11 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
           !game.round.lastTrick &&
           game.round.turnSeat === you.seat,
         selectedIds: selected,
+        // 数字键 1~N 对应控制栏那一排「亮♠」按钮 —— 同一份 declareOptions，
+        // 所以键和按钮永远是一一对应的（同花色的两张级牌只占一个编号）。
         rankCardIds:
           game.phase === 'REVEALING' && game.round
-            ? (you.hand ?? []).filter(c => c.rank === game.round.rankCard).map(c => c.id)
+            ? declareOptions(you.hand, game.round.rankCard).map(option => option.cardId)
             : [],
       });
       if (!action) return;
@@ -221,7 +223,6 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
       error={error}
       selected={selected}
       onClear={() => setSelected([])}
-      onDeclareOptions={setDeclareOptions}
       onTogglePlayers={onTogglePlayers}
       onToggleChat={onToggleChat}
       compact={phoneLandscape}
@@ -251,16 +252,6 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
         <SettlementPanel game={game} send={send} />
       )}
 
-      {declareOptions && (
-        <DeclareModal
-          options={declareOptions}
-          onPick={cardId => {
-            send({ type: 'declareTrump', cardId });
-            setDeclareOptions(null);
-          }}
-          onClose={() => setDeclareOptions(null)}
-        />
-      )}
     </>
   );
 
@@ -1182,7 +1173,7 @@ function PlayZone({ player, game, side = 'top', isYou }) {
 
 // compact = 手机横屏。高度是那套版式里最紧的资源，控制栏得收窄：
 // 去掉上下 padding、行距压到最小，按钮本身不动（拇指还要点得到）。
-function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, onTogglePlayers, onToggleChat, compact = false }) {
+function ControlBar({ game, send, error, selected, onClear, onTogglePlayers, onToggleChat, compact = false }) {
   const you = game.you;
   const round = game.round;
   // 注：原来这里有个 useNow(REVEALING) 只为了驱动揭牌键旁边那个 0.1 秒精度的倒计时。
@@ -1234,8 +1225,14 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
     const myTurn =
       round && round.drawnCount < 100 && !round.trumpSuit && round.revealTurnSeat === you.seat;
     const drawer = game.players.find(p => p.seat === round.revealTurnSeat);
-    // 亮主：手里有未亮出的级牌即可按（与揭牌回合无关，宽限窗口内同样可用）
-    const rankCards = (you.hand ?? []).filter(c => c.rank === round.rankCard);
+    // 亮主：手里有未亮出的级牌即可按（与揭牌回合无关，宽限窗口内同样可用）。
+    // 【有几个花色就摆几个按钮】—— Glen 2026-09-06：
+    //   「可以亮主的时候，有时候会有多个选择，现在只有一个按钮，
+    //     可以做成多个按钮放同一行，就显示『亮♠』这样的信息就可以了。」
+    // 原来是一个「亮主」键：单花色直接亮，多花色弹一个选花色的对话框。
+    // 亮主是抢的（先按先得），多一层对话框就是多一次点击、多几百毫秒 ——
+    // 而这几百毫秒正好是别人亮走的时间。所以把选择摊平到按钮上。
+    const options = declareOptions(you.hand, round.rankCard);
     // 亮主【放在揭牌上边】，而且换成绿色（Glen）。
     // 两件事一起做才有意义：这两个按钮同时出现、又是完全不同的动作
     //（揭牌是轮到我才能按的流程键，亮主是随时能按的决断键），
@@ -1243,18 +1240,26 @@ function ControlBar({ game, send, error, selected, onClear, onDeclareOptions, on
     // 倒计时不再插在两者之间 —— 它搬去牌桌中央了。
     buttons.push(
       <div key="reveal" className="flex flex-col items-center gap-2">
-        {rankCards.length > 0 && (
-          <button
-            key="declare"
-            className="btn-emerald"
-            onClick={() => {
-              const suits = [...new Set(rankCards.map(c => c.suit))];
-              if (suits.length === 1) send({ type: 'declareTrump', cardId: rankCards[0].id });
-              else onDeclareOptions(rankCards);
-            }}
-          >
-            亮主{rankCards.length > 1 ? `（按 1~${rankCards.length} 直接亮）` : '（按 1 直接亮）'}
-          </button>
+        {options.length > 0 && (
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {options.map((option, index) => (
+              <button
+                key={option.suit}
+                className="btn-emerald"
+                title={`亮 ${SUIT_INFO[option.suit].name}${option.count > 1 ? `（手上 ${option.count} 张级牌）` : ''}`}
+                onClick={() => send({ type: 'declareTrump', cardId: option.cardId })}
+              >
+                亮
+                {/* btn-emerald 是浅绿底 + 深色字，所以红花色要用【深红】，
+                    照搬对话框里那套 text-rose-400 会在浅底上糊成一片。 */}
+                <span className={suitRed(option.suit) ? 'text-rose-700' : 'text-emerald-950'}>
+                  {suitSymbol(option.suit)}
+                </span>
+                {/* 数字键编号跟按钮一一对应（rankCardIds 传的是同一份 options） */}
+                <span className="ml-1 text-[10px] font-bold opacity-60">{index + 1}</span>
+              </button>
+            ))}
+          </div>
         )}
         <button
           key="draw"
@@ -1826,32 +1831,3 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
   );
 }
 
-// 多花色级牌时选择亮哪一张
-function DeclareModal({ options, onPick, onClose }) {
-  const bySuit = {};
-  for (const c of options) {
-    (bySuit[c.suit] ??= []).push(c);
-  }
-  return (
-    <Modal title="选择亮主花色" onClose={onClose}>
-      <div className="grid grid-cols-2 gap-2">
-        {Object.entries(bySuit).map(([suit, cards]) => (
-          <button
-            key={suit}
-            className="rounded-xl border border-white/15 bg-white/5 p-3 font-black transition hover:bg-white/15"
-            onClick={() => onPick(cards[0].id)}
-          >
-            <span className={suitRed(suit) ? 'text-rose-400' : 'text-white/90'}>
-              {suitSymbol(suit)}
-            </span>
-            <span className="ml-1 text-white/80">{SUIT_INFO[suit].name}</span>
-            <span className="ml-1 text-xs text-white/50">{cards.length} 张</span>
-          </button>
-        ))}
-      </div>
-      <p className="mt-3 text-xs font-bold text-white/50">
-        亮主一次性，先按先得；选择后立即定主并停止揭牌。也可直接按数字键 1~N。
-      </p>
-    </Modal>
-  );
-}

@@ -9,7 +9,8 @@ export function isTypingTarget(element) {
 
 // 根据按键与游戏上下文决定动作：
 // - 空格：轮到自己揭牌 → drawCard；出牌阶段已选中牌 → play；其余情况只拦截滚动
-// - 数字 1-9：揭牌阶段立即亮出第 N 张可亮级牌（与牌上角标一一对应）
+// - 数字 1-9：揭牌阶段立即亮第 N 个可亮花色
+//   （与控制栏那一排「亮♠」按钮一一对应，见 declare.js 的 declareOptions）
 // 返回 null 表示不处理（含输入框聚焦时）。
 export function shortcutAction(event, context) {
   if (!event || !event.key) return null;

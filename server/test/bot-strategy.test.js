@@ -4214,3 +4214,59 @@ test('帮队友求：队友那门我已经打空了 → 帮不上，回去发展
   const card = chooseLeadCards(view)[0];
   assert.equal(card.suit, 'C', `帮不上就该打自己 6 张的梅花（实际 ${card.suit}${card.rank}）`);
 });
+
+// ============ 领件也是求件（三求一）============
+//
+// Glen 2026-09-06：「三求一的时候，就是 AAK 或 AKK 的时候，一般会是第一次打这门牌
+//   的时候出个 A，BOT 队友基本没有看到回应过，正常这时候要把件给出去，
+//   对家就是可以甩牌的状态了。」
+//
+// 求件的阶梯是「≤5 → 10 → 手上有两件就领一件」，领件是最后一档（isPieceAskLead）。
+// 读信号那一头（suitAskSignal）原来只认小牌，于是对手三求一领 A 时读成「没人求过」。
+// 应答那一头由 bot.test.js 的「三求一：队友第一次领这门就领 A，件要交出去」钉住，
+// 这里钉的是【读】：对手领 A 求件，同样不能去帮他领这门。
+test('不帮对手求：他第一次领黑桃就领 ♠A（三求一）→ 照样改领别门', () => {
+  const view = opponentAskedView([9, 7, 4], [
+    { rank: 14, status: 'seen' },      // 他刚领出来的那一支
+    { rank: 14, status: 'unseen' },
+    { rank: 13, status: 'unseen' },
+    { rank: 13, status: 'unseen' },
+  ]);
+  view.round.trickHistory[0].plays[0].cards = [T('S', 14, 90)];
+  const lead = chooseLeadCards(view)[0];
+  assert.equal(lead.suit, 'D',
+    `他领 ♠A 就是三求一，领 ♠ 等于替他逼件（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+// 反过来的一半：【我自己】这门只有孤零零一支件，就不能领出去。
+// 队友会照约定读成三求一，把他那支件白白交出来，这门的件反倒替对手现完了。
+// 实测（scripts/audit/three-ask-one.mjs，200 局）：这种假求件领了 9 次，
+// 6 次真把队友的件拽了出来。
+//
+// ⚠️ 「手上两件以上就该领」那一半不在这里 —— 由上面
+// 「AKK 缺一支 A 时出 A 求件」钉着，两条合起来才是完整的判据。
+test('不乱求：这门只有一支孤件，第一次领这门时不拿它去喊', () => {
+  // 牌形取自实测：这种「孤件被领出去」几乎全发生在【尾盘】——
+  // 手上没剩几张，一支孤 ♠A 就成了「我最长的副牌」，develop-long-side-suit
+  // 直接把它挑出来领（scripts/audit 插桩：200 局 9 次，5 次出自这条）。
+  // ⚠️ 三门副牌必须只剩 ♠ 这一门有牌，否则 sideGroups[0] 不是 ♠，
+  // 提案里压根没有那张 A，断言就成了假绿（踩过）。
+  const lonePiece = leadView({
+    hand: [T('S', 14, 40), T('H', 9, 1), T('H', 7, 2), T('H', 5, 3)],
+    declarerSeat: 0, mySeat: 0,
+    piecesView: {
+      // ♠ 还有三支件没现身 —— 队友完全可能把这一领读成三求一
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+    // ⚠️ 不能用 PLAYED_SOMETHING —— 它第 1 墩领的就是 ♠，
+    // 「这门被领过」会直接把 straySignal 关掉，这条断言同样成假绿（也踩过）。
+    trickHistory: Array.from({ length: 8 }, (unused, i) => ({
+      trickNo: i + 1, leadSeat: 1, leadSuit: 'C', winnerSeat: 1, points: 0, plays: [],
+    })),
+  });
+  const lead = chooseLeadCards(lonePiece)[0];
+  assert.notEqual(lead.suit, 'S',
+    `孤 ♠A 领出去会被队友当成三求一（实际领了 ${lead.suit}${lead.rank}）`);
+});

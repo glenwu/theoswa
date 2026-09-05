@@ -39,3 +39,15 @@ test('倒计时：揭牌键旁边不再挂第二块表', () => {
     '控制栏里又出现了 ⏱ {left.toFixed(1)}s 那个小表'
   );
 });
+
+// 亮主：一个花色一个按钮，排在同一行（Glen 2026-09-06）。
+// 抢亮是先按先得，原来那层「选择亮主花色」的对话框等于在抢的路上多加一次点击。
+// 这条钉住的是【对话框没被谁顺手加回来】，以及按钮标签是「亮」+ 花色符号。
+test('亮主：多花色时摆成一排按钮，不再弹选花色的对话框', () => {
+  assert.ok(!panel.includes('DeclareModal'), '选花色的对话框又回来了');
+  assert.ok(!panel.includes('onDeclareOptions'), '还留着往对话框里传选项的 prop');
+  const bar = panel.slice(panel.indexOf('const options = declareOptions('), panel.indexOf("key=\"draw\""));
+  assert.ok(/options\.map\(/.test(bar), '亮主按钮不是按 options 逐个摆出来的');
+  assert.ok(/flex flex-wrap/.test(bar), '这排按钮没有排在同一行（flex-wrap）');
+  assert.ok(/suitSymbol\(option\.suit\)/.test(bar), '按钮上没有显示花色符号（Glen 要的是「亮♠」）');
+});

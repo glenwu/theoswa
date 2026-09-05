@@ -723,6 +723,13 @@ test('对家配合：朋友出 5/10/K 强烈求 A，朋友的大牌已封住时�
     assert.equal(chooseFollowCards(askAce)[0].rank, 14, `朋友出 ${label} 时应用 A 回应`);
   }
 
+  // 【♠ 第一次被领就领 A = 三求一】—— Glen 2026-09-06：
+  //   「三求一的时候，就是 AAK 或 AKK 的时候，一般会是第一次打这门牌的时候出个 A，
+  //     BOT 队友基本没有看到回应过，正常这时候要把件给出去，
+  //     对家就是可以甩牌的状态了。」
+  // ⚠️ 这一条断言【原来是反的】（要求走 10 分、不拆 K）。那时领 A 压根不算求件信号，
+  // 所以那个期望在旧口径下是对的；Glen 这条裁定把领 A 补进求件的阶梯之后，
+  // 同样是 10 分落到队友手上，交 K 还顺手把这门凑齐，严格更好。
   const feedSecureAce = playView({
     seat: 2,
     hand: [card('feed-secure-3', 'S', 3), card('feed-secure-10', 'S', 10), card('feed-secure-k', 'S', 13)],
@@ -731,7 +738,27 @@ test('对家配合：朋友出 5/10/K 强烈求 A，朋友的大牌已封住时�
       { seat: 3, cards: [card('opponent-secure-6', 'S', 6)] },
     ],
   });
-  assert.equal(chooseFollowCards(feedSecureAce)[0].id, 'feed-secure-10', 'A 已封住时优先走 10 分，不拆 K 件');
+  assert.equal(chooseFollowCards(feedSecureAce)[0].id, 'feed-secure-k', '三求一：队友第一次领这门就领 A，件要交出去');
+
+  // 同一手牌，只把「这门第一次被领」这个前提拿掉 —— 领 A 就不再是求件，
+  // 那就回到「走分不拆件」。两条一起才钉得住「求件只算这门第一次被领」。
+  const secondAce = playView({
+    seat: 2,
+    hand: [card('second-ace-3', 'S', 3), card('second-ace-10', 'S', 10), card('second-ace-k', 'S', 13)],
+    trickHistory: [{
+      leadSeat: 3,
+      leadSuit: 'S',
+      plays: [
+        { seat: 3, playSuit: 'S', cards: [card('second-ace-old', 'S', 7)] },
+        { seat: 2, cards: [card('second-ace-mine', 'S', 4)] },
+      ],
+    }],
+    currentTrick: [
+      { seat: 0, playSuit: 'S', cards: [card('partner-second-a', 'S', 14)] },
+      { seat: 3, cards: [card('opponent-second-6', 'S', 6)] },
+    ],
+  });
+  assert.equal(chooseFollowCards(secondAce)[0].id, 'second-ace-10', '这门已经被领过：领 A 不是求件，走分不拆 K 件');
 
   const unsafeAce = playView({
     seat: 2,

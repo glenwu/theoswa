@@ -248,7 +248,7 @@ function teamGavePieceIn(view, ctx, suit) {
   const first = firstLeadInSuit(view, suit);
   if (!first) return false;
   if (first.seat % 2 === view.you.team) return false;             // 得是对手在求
-  if (!isPieceRequestLead(first.cards, ctx)) return false;
+  if (!isPieceAskLead(first.cards, ctx)) return false;
   return (first.plays ?? []).some(play =>
     play.seat % 2 === view.you.team &&
     (play.cards ?? []).some(
@@ -271,8 +271,20 @@ function straySignal(view, ctx, cards, tuning) {
   const card = cards[0];
   const suit = suitOf(card, ctx);
   if (suit === 'TRUMP') return false;                    // 领主牌不是求件信号
-  if (!isPieceRequestLead([card], ctx)) return false;    // 牌形上就不会被读成求件
-  // 这门【已经被领过】了 —— 再领小牌是捅短，不是求件，不会被误读（Glen）
+  // 牌形上就不会被读成求件的，直接放行。
+  // ⚠️ 求件的阶梯里还有【领件】那一档（isPieceAskLead ②③），所以这里不能只看
+  // isPieceRequestLead。但领件求件是有前提的 —— Glen：「有两件可以打一件出来；
+  // 三求一……一般打件出来」，也就是【手上得有两件以上】才这么领。
+  // 这门只有孤零零一支件还领出去，队友会当成三求一，把他那支件白白交出来，
+  // 这门的件就此现身，反而是替对手把甩牌资格凑齐。
+  // 实测（three-ask-one.mjs，200 局）：这种假求件领了 9 次，其中 6 次真把队友的件
+  // 拽了出来。手上两件以上的领件不算乱求 —— 那正是 Glen 说的那一手。
+  const piecesHere = cardsOfSuit(view.you?.hand ?? [], suit, ctx)
+    .filter(item => isSidePiece(item, ctx)).length;
+  const fakePieceAsk = isSidePiece(card, ctx) && piecesHere <= 1;
+  if (!isPieceRequestLead([card], ctx) && !fakePieceAsk) return false;
+  // 这门【已经被领过】了 —— 再领小牌是捅短，不是求件，不会被误读（Glen）。
+  // 领件同理：碰件（用 A 碰对手的 K）走的就是这条，那时这门早被领过了。
   if (suitLedBefore(view, suit)) return false;
   if (suitThrowAmbition(view, ctx, suit, tuning)) return false;  // 真心在求，该喊
   // ⚠️ 这里【原来还有一条豁免】：「我方在这门的求件还没逼完 → 接着领小牌逼件，
@@ -1394,20 +1406,33 @@ function unbeatableTrumpPlay(view, ctx, cards) {
 // 实测 400 局：第 2 次求件贡献了 185 次，第 3 次及以后又贡献 21 次。
 
 // 「队友这一领是不是在求件」—— 全项目唯一的判据，别再各写一份。
-// 两种形态：
+//
+// Glen 给全了求件的【升级阶梯】（2026-08-29）：
+//   「每门牌第一次打的时候打 ≤5 是求件……如果没有小于等于 5 的，可以打 10，
+//     也是求件，如果 10 也没有，有两件可以打一件出来；
+//     三求一你应该也知道，一般打件出来。」
+// 所以三种形态：
 //   ① 单张小牌：≤5，或者 10（10 也是求的意思，但白送 10 分，
 //      只在手上没有 ≤5 的牌时才用 —— 代价大，所以是次选）
 //   ② 领副 K：K 本身就是件，这是强烈求 A
+//   ③ 领副 A：阶梯的最后一档。手上有两件（尤其 AAK / AKK 的三求一）才这么领 ——
+//      Glen 2026-09-06：「三求一的时候，就是 AAK 或 AKK 的时候，一般会是第一次
+//      打这门牌的时候出个 A。」
+//
+// ⚠️ ③ 只在【这门第一次被领】时才成立，否则领 A 多半是碰件或者收牌权。
+// 这个位置条件不写在这里 —— 三个调用点各自都已经要求「这门没被领过」
+//（asksForPiece / partnerRequest ① / pieceContributionContinuationLead），
+// 再写一遍是重复，而且 firstLeadInSuit 才是唯一的位置判据。
+// 实测（scripts/audit/three-ask-one.mjs，200 局）：某门第一次被领就领单张件
+// 共 78 次，领牌人手上件数 3 张的 62 次、2 张 8 次、只有 1 张的 8 次 ——
+// 90% 是真在求，把它读成求件是对的。
 // ⚠️ 曾经有三处各写一套，最松的那套是
 //    `cardPoints > 0 || !isSidePiece` —— 队友领任何非件小牌都算求件，
 //    6/7/8/9/J/Q 全算。求件带 +700 的约定加分，判据一松就到处乱给件。
 function isPieceAskLead(cards, ctx) {
   if (!Array.isArray(cards) || cards.length !== 1) return false;
   const card = cards[0];
-  return (
-    isPieceRequestLead(cards, ctx) ||
-    (isSidePiece(card, ctx) && cardPoints(card) > 0)
-  );
+  return isPieceRequestLead(cards, ctx) || isSidePiece(card, ctx);
 }
 
 // 【求件只在一门牌第一次被领的时候成立】—— Glen 2026-08-29：
@@ -1751,8 +1776,12 @@ export function suitAskSignal(view, ctx, suit) {
   // 「谁在求这门」这个判断也就永远停不下来。
   // 顺带：Glen 那句「【首先】看对家有没有求牌，其次看对手」现在自动成立 ——
   // 第一次领牌只有一个人，不存在两边都求过要排序的问题。
+  // ⚠️ 判据用 isPieceAskLead 而不是 isPieceRequestLead —— 求件的阶梯还有
+  // 「领 K 求 A」和「三求一领 A」两档（见 isPieceAskLead）。原来这里只认
+  // 小牌那一档，于是队友三求一领 A 时这里返回 null，
+  // 「队友求过就可以很没压力地出件」那条豁免整条落空。
   const first = firstLeadInSuit(view, suit);
-  if (!first || !isPieceRequestLead(first.cards, ctx)) return null;
+  if (!first || !isPieceAskLead(first.cards, ctx)) return null;
   if (first.seat === partnerSeatOf(view.you.seat)) return 'partner'; // 件多半在他那
   if (first.seat % 2 !== view.you.team) return 'opponent';           // 别亮
   return null;                                                       // 我自己求的
@@ -3054,7 +3083,7 @@ function scoreFollow(view, cards, ctx) {
   //   「如果在牌局中后段，看不出来他是很强势的牌，则不应该这么打」。
   const partnerProbe =
     lead.seat === partnerSeatOf(you.seat) &&
-    isPieceRequestLead(lead.cards, ctx) &&
+    isPieceAskLead(lead.cards, ctx) &&
     // 这门之前被领过了 → 这一领是捅短不是求件（Glen 2026-08-29）。
     // 「我方求过一次就不再是新的求件」那条被它吸收了，理由同 asksForPiece。
     !suitLedBefore(view, lead.playSuit);
