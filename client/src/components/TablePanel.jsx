@@ -16,6 +16,7 @@ import { useMediaQuery, COMPACT_PORTRAIT, PHONE_LANDSCAPE, COMPACT } from '../us
 import { MyDetails } from './PlayerPanel.jsx';
 import { shortcutAction } from '../shortcut.js';
 import { declareOptions } from '../declare.js';
+import { kittySpotlightStage, KITTY_SPOTLIGHT_FLY_MS } from '../kittySpotlight.js';
 import { checkSelection } from '../playCheck.js';
 import { seatPendingText } from '../seatStatus.js';
 import { trickLeader } from '../../../server/trick.js';
@@ -182,6 +183,9 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
 
       {/* 关键节点大图：翻牌定起揭人 / 亮主 / 揭底定主（中央牌桌停留展示） */}
       <CenterEventOverlay game={game} send={send} />
+
+      {/* 埋底亮件：庄家埋进去的副 A/K 放大停 3 秒，再飞进下面那一排底牌（Glen） */}
+      <KittyPieceSpotlight game={game} />
 
       <div className="grid min-h-0 flex-1 grid-cols-[1fr_auto_1fr] grid-rows-[auto_1fr_auto] gap-2">
         {/* 上下两行用固定行高（不是 min-h）：出牌区在「只有名字的小药丸」(24px) 与
@@ -357,6 +361,87 @@ function CenterTurnTimer({ game }) {
           {PLAYER_EMOJI[player.id]} {player.nickname}
         </span>
       )}
+    </div>
+  );
+}
+
+// 底牌那一排的 DOM id —— 埋底亮件的大图要在运行时量它的位置当落点。
+// 用 id 而不是把 ref 传来传去：两者是牌桌里两棵不相干的子树，
+// 为了一段 0.7 秒的动画在中间架一层 context 不值当。
+const KITTY_ROW_ID = 'kitty-backs-row';
+
+// 埋底亮件的大图（Glen 2026-09-06）：
+//   「如果庄家埋底有件，把件大一点显示在屏幕中间，停留 3 秒，
+//     然后动态效果收到放埋底的 8 张牌那边。」
+//
+// 埋进底牌的副 A/K 是【强制公开】的（handleBuryKitty），可原来只在底牌那一排
+// 旁边挂个小标签，一闪就过去了 —— 那几支件恰恰是全场判甩牌资格最要紧的信息。
+//
+// 分段判定放在 kittySpotlight.js（纯函数，可单测）；这里只管画和飞。
+function KittyPieceSpotlight({ game }) {
+  const now = useNow(true, 200);
+  const compact = useMediaQuery(COMPACT);
+  const boxRef = useRef(null);
+  const clockStage = kittySpotlightStage(game, now);
+
+  // ⚠️ 飞行这一段【不能只看时钟】：useNow 是 200ms 一跳，进入 fly 最多晚 200ms，
+  // 而窗口只有 700ms —— 那样动画会被中途卸载，看起来是"啪"地消失。
+  // 所以时钟一进 fly 就本地锁住，由 setTimeout 按动画自己的长度收尾。
+  const [flying, setFlying] = useState(false);
+  useEffect(() => {
+    if (clockStage !== 'fly') return undefined;
+    setFlying(true);
+    const timer = setTimeout(() => setFlying(false), KITTY_SPOTLIGHT_FLY_MS);
+    return () => clearTimeout(timer);
+  }, [clockStage]);
+
+  const stage = clockStage === 'hold' ? 'hold' : (flying || clockStage === 'fly') ? 'fly' : null;
+
+  // 落点在切到 fly 的那一帧量一次，写进 CSS 变量。
+  // ⚠️ 只量一次：元素正在被动画推着走，每帧量 rect 会和动画自己打架。
+  useEffect(() => {
+    if (stage !== 'fly' || !boxRef.current) return;
+    const from = boxRef.current.getBoundingClientRect();
+    // 过河阶段底牌那一排还没挂出来（KittyBacksRow 只在 PLAYING/DOMINANCE 渲染）。
+    // 量不到就退回「往下收一点」—— 方向是对的，只是落点不精确。
+    const to = document.getElementById(KITTY_ROW_ID)?.getBoundingClientRect();
+    const dx = to ? to.left + to.width / 2 - (from.left + from.width / 2) : 0;
+    const dy = to ? to.top + to.height / 2 - (from.top + from.height / 2) : 90;
+    boxRef.current.style.setProperty('--fly-x', `${Math.round(dx)}px`);
+    boxRef.current.style.setProperty('--fly-y', `${Math.round(dy)}px`);
+  }, [stage]);
+
+  if (!stage) return null;
+  const pieces = game.round.kittyRevealedPieces ?? [];
+  // 件多的时候整排会顶破牌桌中央那块地方，按张数降一档；窄屏再降一档。
+  const size = pieces.length <= 2 ? 'xl' : pieces.length <= 4 ? 'lg' : 'md';
+  const shown = compact ? { xl: 'lg', lg: 'md', md: 'sm' }[size] : size;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
+      <div
+        ref={boxRef}
+        className={`flex flex-col items-center rounded-3xl border-2 border-amber-300/60 bg-black/75 px-6 py-4 shadow-2xl compact:px-3 compact:py-2 ${
+          stage === 'fly' ? 'kitty-piece-fly' : ''
+        }`}
+      >
+        <div className="text-sm font-bold text-white/70 compact:text-xs">庄家埋底亮出</div>
+        <div className="mt-1 flex items-center gap-1.5">
+          {pieces.map((piece, i) => (
+            <PlayingCard
+              key={`buried-piece-${piece.suit}-${piece.rank}-${i}`}
+              suit={piece.suit}
+              rank={piece.rank}
+              size={shown}
+              className="card-pop"
+            />
+          ))}
+        </div>
+        {/* 为什么值得看清楚：件的去向直接决定这门牌谁甩得动 */}
+        <div className="mt-1.5 text-xs font-bold text-amber-300 compact:text-[10px]">
+          这 {pieces.length} 支件进了底牌，不在任何人手上
+        </div>
+      </div>
     </div>
   );
 }
@@ -918,7 +1003,7 @@ function KittyBacksRow({ game }) {
   // 牌背保留但换到最小的 xs 档、叠得更紧 —— 它只需要传达"底牌还压着这么多张"。
   if (compact) {
     return (
-      <div className="flex items-center gap-1 rounded-full border border-white/10 bg-black/25 px-1.5 py-0.5">
+      <div id={KITTY_ROW_ID} className="flex items-center gap-1 rounded-full border border-white/10 bg-black/25 px-1.5 py-0.5">
         <div className="flex">
           {Array.from({ length: total }, (_, i) => (
             <PlayingCard
@@ -947,7 +1032,7 @@ function KittyBacksRow({ game }) {
   }
 
   return (
-    <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-black/25 px-3 py-1.5 compact:gap-1 compact:px-1.5 compact:py-1">
+    <div id={KITTY_ROW_ID} className="flex items-center gap-1.5 rounded-full border border-white/10 bg-black/25 px-3 py-1.5 compact:gap-1 compact:px-1.5 compact:py-1">
       <span className="text-[10px] font-bold text-white/40 compact:hidden">底牌</span>
       <div className="flex">
         {Array.from({ length: total }, (_, i) => {

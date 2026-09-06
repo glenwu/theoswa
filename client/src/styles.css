@@ -194,6 +194,30 @@ body {
   }
 }
 
+/* 埋底亮件的大图：停 3 秒之后飞进牌桌中央那一排底牌（Glen）。
+   飞的落点是运行时量出来的（底牌那一排的真实位置），所以位移写成两个自定义属性，
+   由 JS 填 —— 写死一个偏移量在手机横屏那种版式上会飞歪。
+   飞行期间关掉指针事件，别把底下的牌桌挡住。 */
+.kitty-piece-fly {
+  animation: kitty-piece-fly-in 700ms cubic-bezier(0.55, 0, 0.65, 1) both;
+  pointer-events: none;
+}
+@keyframes kitty-piece-fly-in {
+  from {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--fly-x, 0px), var(--fly-y, 90px)) scale(0.28);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 只留淡出：位移和缩放对前庭敏感的人不友好，信息本身不靠动画传达 */
+  .kitty-piece-fly { animation: kitty-piece-fade 700ms ease both; }
+  @keyframes kitty-piece-fade { from { opacity: 1; } to { opacity: 0; } }
+}
+
 /* 当前揭牌人发光提示 */
 .drawer-glow {
   animation: drawer-glow-pulse 1.2s ease-in-out infinite;

@@ -409,6 +409,9 @@ export function handleBuryKitty(state, action, actorId) {
   if (buried.some(c => !c)) return fail(ErrorCode.CARDS_NOT_IN_HAND, '所选牌不在你手上');
   me.hand = me.hand.filter(c => !ids.includes(c.id));
   r.kitty = buried;
+  // 埋底亮件那段大图的起点（四家共用一个时刻，见 state.kittyBuriedAt）。
+  // 超时自动埋底走的也是这个入口，不必另设一处。
+  r.kittyBuriedAt = Date.now();
   me.hand = sortHand(me.hand, { trumpSuit: r.trumpSuit, rankCard: r.rankCard });
 
   // 埋入的副牌 A/K（件）系统自动公开亮给全桌：庄家不能隐瞒

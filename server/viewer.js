@@ -56,6 +56,7 @@ function clipRound(round, viewerSeat) {
         }
       : null,
     kittyDeadline: round.kittyDeadline ?? null,
+    kittyBuriedAt: round.kittyBuriedAt ?? null,  // 埋底亮件大图的起点（公开）
     dominanceDeadline: round.dominanceDeadline ?? null,
     dominanceHolds: [...(round.dominanceHolds ?? [])],
     leadSeat: round.leadSeat,

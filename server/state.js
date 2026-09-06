@@ -136,6 +136,9 @@ export function createRoundState(roundNumber, declarerSeat) {
     leadSeat: null,
     turnSeat: null,
     kittyDeadline: null,    // 庄家换底截止时刻（超时服务端自动埋底）
+    // 埋底完成的时刻。四家共用它来对齐「埋底亮件」那段大图停留 ——
+    // 客户端各自记时间会因为收包先后错开，同一件事看到的长短不一样。
+    kittyBuriedAt: null,
     dominanceDeadline: null,// 碾压确认截止时刻（超时服务端自动确认）
     // 碾压收尾停留期间按了「看多一会」的座位。非空就一直等着，
     // 直到他们都按了「继续」（清空）或 30 秒到。口径同 lastTrickHolds。
