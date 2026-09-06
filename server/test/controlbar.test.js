@@ -51,3 +51,19 @@ test('亮主：多花色时摆成一排按钮，不再弹选花色的对话框',
   assert.ok(/flex flex-wrap/.test(bar), '这排按钮没有排在同一行（flex-wrap）');
   assert.ok(/suitSymbol\(option\.suit\)/.test(bar), '按钮上没有显示花色符号（Glen 要的是「亮♠」）');
 });
+
+// 手牌上的可亮级牌角标、控制栏那排「亮♠」按钮、数字快捷键，三者必须是同一套编号。
+// 角标原来是【按张】数 1..N：手上 ♠6 ♥6 ♠6 时角标 1/2/3，而选择只有 ♠=1 ♥=2 ——
+// 按 3 什么也不会发生，按 2 亮的还是 ♥，跟角标对不上号。
+test('亮主编号：角标、按钮、数字键都从同一份 declareOptions 来', () => {
+  const uses = panel.match(/declareOptions\(/g) ?? [];
+  assert.equal(uses.length, 3,
+    `按钮 / 数字键 / 角标各用一次，共 3 处，实际 ${uses.length} 处`);
+  const badges = panel.slice(
+    panel.indexOf('const rankBadges = new Map();'),
+    panel.indexOf('// groupIndex 为组内序号')
+  );
+  assert.ok(/declareOptions\(hand, game\.round\.rankCard\)/.test(badges),
+    '角标又回去按张数了（没走 declareOptions）');
+  assert.ok(!/rankIndex/.test(panel), '按张递增的旧编号还在');
+});

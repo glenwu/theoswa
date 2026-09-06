@@ -1733,15 +1733,21 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
     };
   };
 
-  // 揭牌阶段：可亮级牌角标（1..N，与数字快捷键对应）
-  let rankIndex = 0;
+  // 揭牌阶段：可亮级牌角标，编号 = 控制栏那排「亮♠」按钮的编号，也就是数字快捷键。
+  //
+  // ⚠️ 原来是【按张】数 1..N。亮主改成【一个花色一个按钮】之后这两套编号就对不上了：
+  // 手上 ♠6 ♥6 ♠6 时角标是 1/2/3，而选择只有 ♠=1、♥=2 —— 按 3 什么也不会发生，
+  // 按 2 亮的还是 ♥，跟角标写的对不上号。
+  // 同花色的两张级牌拿到【同一个编号】是对的：亮哪一张结果一模一样
+  //（handleDeclareTrump 只认 card.suit），它们本来就是同一个选择。
   const rankBadges = new Map();
   if (revealing && game.round) {
+    const bySuit = new Map(
+      declareOptions(hand, game.round.rankCard).map((option, index) => [option.suit, index + 1])
+    );
     for (const c of hand) {
-      if (c.rank === game.round.rankCard) {
-        rankIndex += 1;
-        rankBadges.set(c.id, rankIndex);
-      }
+      const badge = bySuit.get(c.suit);
+      if (c.rank === game.round.rankCard && badge !== undefined) rankBadges.set(c.id, badge);
     }
   }
 
