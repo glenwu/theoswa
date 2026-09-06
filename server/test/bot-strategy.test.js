@@ -4270,3 +4270,69 @@ test('不乱求：这门只有一支孤件，第一次领这门时不拿它去�
   assert.notEqual(lead.suit, 'S',
     `孤 ♠A 领出去会被队友当成三求一（实际领了 ${lead.suit}${lead.rank}）`);
 });
+
+// ============ 最后一张主要留到最后一墩 ============
+//
+// Glen 2026-09-06：「BOT 把鬼吊完，但剩最后一支是副牌给我们保底的情况，
+//   优化一下，大牌主还是需要留到最后撬底。」
+//
+// 保底/撬底比的就是最后一墩。手上还有副牌、却把仅剩的那张主吊了出去，
+// 最后一墩就只能拿副牌去打 —— 谁还剩一张主都能盖过去。
+//
+// 实测（scripts/audit/last-trick-trump.mjs，200 局）界限很干净：
+//   领完还剩主 → 最后一张是副牌 0/15；领完主归零、手上还剩副牌 → 5/5。
+function lastTrumpView(hand) {
+  return leadView({
+    hand,
+    declarerSeat: 0, mySeat: 0,
+    // 首轮豁免（见下一条），所以这里必须是【非首轮】
+    trickHistory: [{ trickNo: 1, leadSeat: 1, leadSuit: 'C', winnerSeat: 1, points: 0, plays: [] }],
+  });
+}
+
+test('留主撬底：只剩一张主 + 手上还有副牌 → 改打副牌，不把那张主领出去', () => {
+  // 副牌全带分：早盘 pointValue×8 的代价原本会把它们压到主牌之下，
+  // 于是通用打分（legal-single）就把最后那张主领了出去 —— 实测 200 局里这样漏了 10 次。
+  const rich = lastTrumpView([
+    T('H', 16, 0),                                     // 唯一的主：大鬼
+    ...[13, 10, 5].map((r, i) => T('S', r, i + 1)),
+    ...[13, 10, 5].map((r, i) => T('D', r, i + 4)),
+  ]);
+  assert.notEqual(chooseLeadCards(rich)[0].suit, 'H',
+    `手上还有 6 张副牌，不该把仅剩的大鬼领出去（实际领了 ${chooseLeadCards(rich)[0].id}）`);
+
+  // 不是鬼也一样 —— Glen 说的是「大牌主」，判据落在【这是我最后一张主】上，
+  // 跟它是不是鬼无关。
+  const small = lastTrumpView([
+    T('H', 9, 0), T('S', 13, 1), T('S', 10, 2), T('D', 5, 3),
+  ]);
+  assert.notEqual(chooseLeadCards(small)[0].suit, 'H',
+    `小主也是最后一张主，同样要留住（实际领了 ${chooseLeadCards(small)[0].id}）`);
+});
+
+test('留主撬底：手上一张副牌都没有 → 照领主牌（这条规矩不管这种局面）', () => {
+  const allTrump = lastTrumpView([T('H', 16, 0)]);
+  assert.equal(chooseLeadCards(allTrump)[0].suit, 'H', '只剩主牌时总得领主牌');
+});
+
+// 这一手既然不吊主了，就该老老实实回去【发展长副牌】，而不是让位让到只剩兜底小牌。
+// drawWarranted 管的正是「该吊主的时候，发展长副牌让位」——
+// 只掐掉吊主的提案、忘了把它一起关掉的话，长副牌那条整局都提不出来，
+// 领牌退化成 low-card-fallback 挑全手最小的那张（这里是 ♦6，而不是长门的 ♠7）。
+test('留主撬底：不吊了就回去发展长副牌，别让位让成兜底小牌', () => {
+  const partnerOfDeclarer = leadView({
+    hand: [
+      T('H', 9, 0),                                    // 唯一的主，而且不是鬼（鬼不进吊主的候选池）
+      ...[9, 8, 7].map((r, i) => T('S', r, i + 1)),    // 最长的副牌
+      T('D', 6, 4),                                    // 全手最小的那张
+    ],
+    declarerSeat: 0, mySeat: 2,                        // 庄家队友：吊主那条本来会给 480
+    trickHistory: [{
+      trickNo: 1, leadSeat: 1, leadSuit: 'C', winnerSeat: 1, points: 0,
+      plays: [{ seat: 1, playSuit: 'C', cards: [T('C', 4, 90)] }],
+    }],
+  });
+  const lead = chooseLeadCards(partnerOfDeclarer)[0];
+  assert.equal(lead.suit, 'S',
+    `不吊主就该发展最长的副牌 ♠，而不是兜底挑全手最小的（实际领了 ${lead.id}）`);
+});

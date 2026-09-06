@@ -5,7 +5,9 @@ import { runMutants } from './mutate.mjs';
 
 const F = 'server/bot-policy.js';
 runMutants([
-  [F, '    if (drawBonus > 0) {', '    if (false && drawBonus > 0) {', '拿掉持续吊主（回到「只吊一轮」）'],
+  // ⚠️ 判据 2026-09-06 换过：吊主的提案现在还要过「这不是我最后一张主」那一关
+  //（drawWarranted，见 mutants36），所以锚点跟着挪到那个变量上。
+  [F, '    if (drawWarranted) {', '    if (false && drawWarranted) {', '拿掉持续吊主（回到「只吊一轮」）'],
   [F, `        ? (trumpSignalAnswered(view, ctx) ||
            trumps.length <= maxOpponentTrumpEstimate(view, ctx) ? 0 : 520)`,
       '        ? 0', '庄家不再续吊'],

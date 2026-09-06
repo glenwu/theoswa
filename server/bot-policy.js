@@ -2488,8 +2488,31 @@ export function chooseLeadCards(view) {
       // 权重和庄家队友那一档同级（480）：都是「跟着主家的路子打」。
       : partnerLine(view, ctx) === 'trump' ? 480
       : 0;                                                             // 其余闲家：随便
-    drawWarranted = drawBonus > 0;
-    if (drawBonus > 0) {
+    // 【最后一墩要靠主牌去赢 —— 别把最后一张主吊出去】（Glen 2026-09-06）：
+    //   「BOT 把鬼吊完，但剩最后一支是副牌给我们保底的情况，优化一下，
+    //     大牌主还是需要留到最后撬底。」
+    //
+    // 保底/撬底比的就是最后一墩。手上还有副牌、却把仅剩的那张主吊了出去，
+    // 最后一墩就只能拿副牌去打 —— 谁还有一张主都能盖过去，那一墩必然不是我的。
+    // 顶端的主牌本来就是【专门用来赢最后一墩】的那张牌，提前吊出去等于作废。
+    //
+    // 实测（scripts/audit/last-trick-trump.mjs，200 局）：中途领鬼出去的 29 手里，
+    // 按「领完之后手上剩什么」分开看，界限非常干净 ——
+    //   领完还剩主  → 最后一张是副牌 0 / 15
+    //   领完主归零、手上还剩副牌 → 最后一张是副牌 5 / 5
+    // 所以判据就写成后面这一种，不去猜中间那些形状。
+    //
+    // ⚠️ 只掐【吊主】这一条提案，不碰 cash-certain-control。那条的前提恰恰也是
+    // 「大鬼是我唯一的主 + 手上还有副牌」，但它是 Glen 亲自裁过的另一回事：
+    //   「留着也买不到第二次用处（既续不了吊、也毙不了第二墩），
+    //     趁它还稳赢兑现一墩、让队友安全上分。」
+    // 那时对手已确认能把我的副牌全毙，最后一墩本来就赢不了 —— 前提不同，别一起掐。
+    //
+    // ⚠️ drawWarranted 要跟着一起关掉。它管的是「该吊主的时候，发展长副牌让位」；
+    // 这一手既然不吊了，就该老老实实回去打副牌，而不是让位让到只剩兜底小牌。
+    const spendsLastTrump = trumps.length === 1 && nonTrumps.length > 0;
+    drawWarranted = drawBonus > 0 && !spendsLastTrump;
+    if (drawWarranted) {
       addProposal(
         // 只有甩尾手计划挂起时才算「明确需要」—— 那时确实要把对手的主削到毙不动
         // 清顶优先于甩尾手的「吊副级牌」：顶端马上就能清完，先清完再说
@@ -2669,6 +2692,34 @@ export function chooseLeadCards(view) {
   // 只剩主牌时 quietLead 自动退化成 lowestLead（主牌不是求件信号）。
   const fallback = quietLead(view, ctx, nonTrumps.length ? nonTrumps : trumps, tuning);
   if (fallback) addProposal([fallback], 20, 'low-card-fallback');
+
+  // 【手上还有副牌，就别把最后一张主领出去】—— 上面吊主那条的另一半（Glen 2026-09-06）。
+  //
+  // 那边掐的是【吊主】这个意图，这里兜的是【所有别的意图】：实测把吊主那条改掉之后，
+  // 还剩 20 次「最后一张主领出去、手上还有副牌」，其中 10 次赢在 legal-single ——
+  // 也就是纯靠通用打分（副牌带分，早盘 pointValue×8 的代价把它们压到主牌之下）。
+  // 那不是哪条打法要求的，是打分的副作用，所以在这里统一删掉。
+  //
+  // 例外只有一个：cash-certain-control。它的前提恰恰也是「大鬼是我唯一的主 +
+  // 手上还有副牌」，但 Glen 亲自裁过那一手 ——「留着也买不到第二次用处，
+  // 趁它还稳赢兑现一墩、让队友安全上分」，那时对手已确认能把我的副牌全毙，
+  // 最后一墩本来就赢不了。前提不同，不能一起删。
+  //
+  // ⚠️ 首轮不算。这条规矩守的是【最后一墩】，而首轮离最后一墩还有二十几墩，
+  // 那时领主牌是庄家的开局表态（dealer-opening-trump-signal，Glen 早就裁过的约定），
+  // 跟撬底不是一回事。不排除首轮的话，「庄家首轮没有双大鬼时先吊最小主牌」
+  // 那条裁定当场变红（合成手牌只有 3 张，首轮和残局在那个 fixture 里重合了）。
+  //
+  // 兜底同下面几段：全删光了就没牌可领了，那时维持原判。
+  if (!opening && trumps.length === 1 && nonTrumps.length > 0) {
+    const victims = [...proposals].filter(([, proposal]) =>
+      proposal.cards.every(card => suitOf(card, ctx) === 'TRUMP') &&
+      !proposal.reasons.includes('cash-certain-control')
+    );
+    if (victims.length < proposals.size) {
+      for (const [key] of victims) proposals.delete(key);
+    }
+  }
 
   // 【对手在求的那门，不主动去领】—— 判据在 opponentAskOpen 上面那段。
   //
