@@ -8,7 +8,8 @@
         "run",
         "server"
       ],
-      "port": 8787
+      "port": 8787,
+      "autoPort": false
     },
     {
       "name": "game-lan",
@@ -17,7 +18,8 @@
         "run",
         "server:lan"
       ],
-      "port": 8787
+      "port": 8787,
+      "autoPort": false
     },
     {
       "name": "game-debug",
@@ -26,7 +28,8 @@
         "run",
         "server:debug"
       ],
-      "port": 8787
+      "port": 8787,
+      "autoPort": false
     },
     {
       "name": "game-fast",
@@ -35,7 +38,8 @@
         "run",
         "server:fast"
       ],
-      "port": 8787
+      "port": 8787,
+      "autoPort": false
     },
     {
       "name": "ui-preview",
@@ -44,7 +48,14 @@
         "run",
         "ui:preview"
       ],
-      "port": 5174
+      "port": 5174,
+      "autoPort": false
+    },
+    {
+      "name": "game-attached",
+      "url": "http://localhost:8787",
+      "port": 8787,
+      "autoPort": false
     }
   ]
 }
