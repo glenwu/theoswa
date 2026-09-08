@@ -1,7 +1,7 @@
 import { PLAYERS, PLAYER_COUNT, QUICK_PHRASES, KITTY_SIZE, REVEAL_TOTAL, SUIT_NAMES, CROSS_RIVER_DECIDE_MS, CROSS_RIVER_PICK_MS, rollSuppressedEgg } from './constants.js';
 import { playerById, playerBySeat, pushLog, resetGameState } from './state.js';
 import { chooseRevealEntry, advanceToReadyCheck, startRevealing } from './flow.js';
-import { beginRound, drawOneCard } from './round.js';
+import { beginRound, drawOneCard, enterKittyExchange } from './round.js';
 import { isRankCard, cardLabel, sortHand } from './cards.js';
 import { rebuildPieces, pieceStatusesFor, migratePlayedPieces, trumpDumpVerdict, relocateTableCards } from './pieces.js';
 import { validateLeadPlay, validateFollowPlay, resolveTrick, trickLeader, assertEqualHandCounts } from './trick.js';
@@ -426,8 +426,12 @@ export function handleBuryKitty(state, action, actorId) {
   r.leadSeat = me.seat;
   r.turnSeat = me.seat;
   // 换底 → 三主过河（CROSS_RIVER）：无人符合条件时直接进入出牌
-  r.crossRiver.doneTeams = [];
-  r.crossRiver.passedSeats = [];
+  // ⚠️ doneTeams / passedSeats 【不清空】—— 埋底前那一轮（庄家队友给庄家）
+  // 已经用掉的名额和已经明确跳过的人，在这一轮里继续算数：
+  //   「每队每局最多一次」说的是【一局】，不是【一个窗口】；
+  //   跳过也是同一个人对着同一手牌做的同一个决定，不该再问一遍。
+  // 第一版把这两行留在这里，队友埋底前刚过完河，埋底后名额又刷新了，等于一局两次。
+  r.crossRiver.stage = 'after-bury';
   r.crossRiver.active = [];
   r.crossRiver.decideDeadline = Date.now() + (state.timing ? state.timing.crossRiverDecideMs : CROSS_RIVER_DECIDE_MS);
   state.phase = 'CROSS_RIVER';
@@ -440,12 +444,19 @@ export function handleBuryKitty(state, action, actorId) {
 // 发起者：主牌 ≤3 张、对家副牌 ≥3 张、本队本局未过河（先点先得，服务端裁决）。
 // 发起者给对家 3 张（全部主牌 + 副牌补足）；对家回 3 张副牌（30 秒不选自动挑最小 3 副）。
 
-// 过河阶段收尾判定：无候选人且无进行中的过河 → 进入出牌（先做碾压判定，用过河后的手牌）
+// 过河阶段收尾判定：无候选人且无进行中的过河 → 走下一步。
+// 下一步是哪一步看 stage（Glen 2026-09-06 把过河拆成了埋底前 / 埋底后两轮）：
+//   before-bury → 庄家换底（庄家这才拿着最终的手牌去埋）
+//   after-bury  → 出牌（先做碾压判定，用过河后的手牌）
 function maybeFinishCrossRiver(state) {
   if (state.phase !== 'CROSS_RIVER') return;
   const r = state.round;
   if (crossRiverCandidates(state).length > 0) return;
   if (r.crossRiver.active.length > 0) return; // 等对家回牌
+  if (r.crossRiver.stage === 'before-bury') {
+    enterKittyExchange(state);
+    return;
+  }
   state.phase = 'PLAYING';
   r.playDeadline = null;
   r.playTurnSeat = null;
@@ -500,9 +511,19 @@ export function handleRespondCrossRiver(state, action, actorId) {
   if (backErr) return fail(ErrorCode.CARDS_NOT_IN_HAND, backErr);
 
   const from = playerBySeat(state, active.fromSeat);
+  // ⚠️ 过河这里【不能】用 assertEqualHandCounts（四家手牌数相等）。
+  // 埋底【前】那一轮（庄家队友给庄家，Glen 2026-09-06）庄家手上是 33 张，
+  // 另外三家 25 张 —— 四家本来就不相等，那条断言会当场把合法的过河判成崩溃。
+  // 过河真正的不变量是【3 换 3，两边张数各自不变】，这里直接钉这个，
+  // 比「四家相等」更准，而且两轮窗口都成立。
+  const beforeCounts = [from.hand.length, me.hand.length];
   const moves = executeCrossRiver(state, active, action.cardIds);
   relocateTableCards(state, moves); // 件表 + 主牌表同步换手（对对手仍是暗牌）
-  assertEqualHandCounts(state.players);
+  if (from.hand.length !== beforeCounts[0] || me.hand.length !== beforeCounts[1]) {
+    throw new Error(
+      `过河手牌数不变量被破坏：${beforeCounts.join(',')} → ${from.hand.length},${me.hand.length}`
+    );
+  }
   pushLog(state, `${from.nickname} 与 ${me.nickname} 三主过河（3 张换 3 张）`);
   maybeFinishCrossRiver(state);
   return succeed();

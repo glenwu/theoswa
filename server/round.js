@@ -15,6 +15,8 @@ import { rankOfLevel } from './level.js';
 import { nextSeat } from './rotation.js';
 import { FLIP_HOLD_MS } from './constants.js';
 import { starterFromFlip } from './reveal.js';
+import { crossRiverCandidates } from './crossriver.js';
+import { CROSS_RIVER_DECIDE_MS } from './constants.js';
 
 // 开局：整体重建 RoundState（杜绝跨局状态污染），建牌组、洗牌，
 // 按庄家是否已定走两条路：
@@ -119,6 +121,32 @@ export function completeDeal(state) {
   const declarer = playerBySeat(state, state.declarerSeat);
   declarer.hand = sortHand([...declarer.hand, ...r.kitty], ctx);
   r.kitty = [];
+
+  // 【埋底前的那一轮三主过河】—— Glen 2026-09-06：
+  //   「三主过河如果是庄家的队友要给庄家，应该先过河之后再埋底。」
+  // 队友先把主牌交过来，庄家才是拿【最终的手牌】在埋底。
+  // 只开给庄家的队友，判据见 crossRiverCandidates；没人够格就照旧直接进换底。
+  r.crossRiver.stage = 'before-bury';
+  r.crossRiver.decideDeadline =
+    Date.now() + (state.timing ? state.timing.crossRiverDecideMs : CROSS_RIVER_DECIDE_MS);
+  state.phase = 'CROSS_RIVER';
+  if (crossRiverCandidates(state).length === 0) {
+    enterKittyExchange(state);
+    return state;
+  }
+  pushLog(state, '发牌完成。庄家的队友主牌 ≤3 张，可以先过河再让庄家埋底（15 秒内）。');
+  return state;
+}
+
+// 进入庄家换底。两个入口共用：发牌完没人过河，或者埋底前那一轮过河走完了。
+// ⚠️ kittyDeadline 置空是有意的 —— 由 game-engine 在进入这个阶段时按 kittyExchangeMs
+// 重新起算，庄家不会因为前面那 15 秒的过河窗口而少了换底时间。
+export function enterKittyExchange(state) {
+  const r = state.round;
+  r.crossRiver.stage = 'after-bury';
+  r.crossRiver.active = [];
+  r.crossRiver.decideDeadline = null;
+  r.kittyDeadline = null;
   state.phase = 'KITTY_EXCHANGE';
   pushLog(state, '发牌完成，底牌已并进庄家手牌，请点选 8 张埋回');
   return state;

@@ -165,9 +165,16 @@ export function createRoundState(roundNumber, declarerSeat) {
     pieces: [],             // 件追踪（换底完成后重建）
     // 阶段7：
     trumpCards: [],         // 全主牌去向表（与件表同构）：主牌甩牌资格判定的唯一依据
-    crossRiver: {           // 三主过河（KITTY_EXCHANGE → CROSS_RIVER → PLAYING）
-      doneTeams: [],        //   已过河的队伍（每队每局最多一次）
-      passedSeats: [],      //   明确跳过的玩家（不再弹候选）
+    crossRiver: {           // 三主过河（发牌完 → 过河① → 换底 → 过河② → 出牌）
+      // 这一轮过河开在埋底【前】还是【后】。Glen 2026-09-06：
+      //   「三主过河如果是庄家的队友要给庄家，应该先过河之后再埋底。」
+      // 队友把主牌交给庄家之后庄家才埋底，庄家才是拿【最终的手牌】在埋 ——
+      // 否则他埋完 8 张才收到 3 张主，还要倒贴 3 张副牌出去，那 8 张就白埋了。
+      //   'before-bury' 只开给【庄家的队友】（唯一会改动庄家手牌的那一种）
+      //   'after-bury'  照旧：庄家自己发起、闲家之间
+      stage: 'after-bury',
+      doneTeams: [],        //   已过河的队伍（每队每局最多一次，跨两轮窗口继承）
+      passedSeats: [],      //   明确跳过的玩家（不再弹候选，同样跨两轮窗口继承）
       active: [],           //   进行中的过河 [{ fromSeat, toSeat, giveCardIds, deadline }]
       decideDeadline: null, //   发起/跳过决定窗口截止时刻（到时未行动的候选人自动跳过）
     },

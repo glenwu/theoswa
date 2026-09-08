@@ -44,6 +44,8 @@ function clipRound(round, viewerSeat) {
     // 三主过河（公开状态；giveCardIds 不外发——换的牌只有当事两人知道）
     crossRiver: round.crossRiver
       ? {
+          // 这一轮过河开在埋底前还是埋底后 —— 界面上要说清楚，两轮的意思完全不同
+          stage: round.crossRiver.stage ?? 'after-bury',
           doneTeams: [...round.crossRiver.doneTeams],
           passedSeats: [...round.crossRiver.passedSeats],
           active: round.crossRiver.active.map(a => ({

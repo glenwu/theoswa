@@ -43,6 +43,7 @@ const PHASE_HINTS = {
   DEALING: '发牌中…',
   KITTY_EXCHANGE: '庄家换底：从 33 张中点选 8 张埋回底牌',
   CROSS_RIVER: '三主过河：主牌 ≤3 张可把主牌交给对家（换回 3 张副牌），不玩可跳过',
+  CROSS_RIVER_BEFORE: '三主过河（埋底前）：庄家的队友主牌 ≤3 张可先把主牌交给庄家，庄家再拿最终的牌去埋底',
   PLAYING: '出牌：点选手牌（可多选甩牌，主牌也可甩——算错只出最小一张），按「出牌」或空格打出',
   SCORING: '结算中…',
   ROUND_END: '本局结束',
@@ -87,6 +88,21 @@ function AutoPlayToggle({ game, send, className = '' }) {
       {on ? '🤖 取消托管' : '🤖 托管'}
     </button>
   );
+}
+
+// 三主过河开了两轮（Glen 2026-09-06）：埋底【前】那一轮只开给庄家的队友，
+// 埋底【后】那一轮才是原来的全员窗口。两轮的名字和说明都要分开，
+// 否则界面上看起来像是同一件事问了两遍。
+function crossRiverBeforeBury(game) {
+  return game.phase === 'CROSS_RIVER' && game.round?.crossRiver?.stage === 'before-bury';
+}
+function phaseNameOf(game) {
+  if (crossRiverBeforeBury(game)) return '三主过河（埋底前）';
+  return PHASE_NAMES_CN[game.phase] ?? game.phase;
+}
+function phaseHintOf(game) {
+  if (crossRiverBeforeBury(game)) return PHASE_HINTS.CROSS_RIVER_BEFORE;
+  return PHASE_HINTS[game.phase];
 }
 
 // 中栏：十字形四方位牌桌 + 中央信息 + 控制按钮 + 我的手牌
@@ -722,7 +738,7 @@ function CenterInfo({ game, send }) {
       </div>
       {/* 阶段说明：竖屏窄屏空间宝贵，整段文字换成一个「说明」小按钮，点开才看 */}
       <div className="text-xs font-bold text-white/70 compact:hidden">
-        {PHASE_HINTS[game.phase]}
+        {phaseHintOf(game)}
       </div>
       {/* 窄屏：托管和说明并成一行（Glen）—— 各占一行太浪费，这两个都是小按钮 */}
       <div className="hidden items-center gap-1.5 compact:flex">
@@ -736,9 +752,9 @@ function CenterInfo({ game, send }) {
         </button>
       </div>
       {showHint && (
-        <Modal title={PHASE_NAMES_CN[game.phase] ?? game.phase} onClose={() => setShowHint(false)}>
+        <Modal title={phaseNameOf(game)} onClose={() => setShowHint(false)}>
           <p className="py-2 text-sm font-bold leading-relaxed text-white/80">
-            {PHASE_HINTS[game.phase]}
+            {phaseHintOf(game)}
           </p>
         </Modal>
       )}

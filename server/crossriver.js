@@ -13,8 +13,18 @@ export function crossRiverCandidates(state) {
   if (!r || state.phase !== 'CROSS_RIVER' || !r.trumpSuit) return [];
   const ctx = { trumpSuit: r.trumpSuit, rankCard: r.rankCard };
   const cr = r.crossRiver;
+  // 埋底【前】那一轮只开给庄家的队友（Glen 2026-09-06）——
+  // 三种过河里只有「队友给庄家」会改动庄家的手牌，也只有它必须赶在埋底之前。
+  // 庄家自己发起的那一种【不能】挪到这里：他的发起资格按「手上主牌 ≤3」算，
+  // 而这会儿他手上是 33 张（含底牌 8 张），主牌数被抬高，挪过来等于把那条路砍掉。
+  const beforeBury = cr.stage === 'before-bury';
+  const partnerOfDeclarer =
+    state.declarerSeat === null || state.declarerSeat === undefined
+      ? null
+      : oppositeSeat(state.declarerSeat);
   const out = [];
   for (const p of state.players) {
+    if (beforeBury && p.seat !== partnerOfDeclarer) continue;
     if (cr.doneTeams.includes(p.team)) continue;
     if (cr.passedSeats.includes(p.seat)) continue;
     // 同队已有一笔进行中的过河 → 本队其余人不能再发起（先点先得）
