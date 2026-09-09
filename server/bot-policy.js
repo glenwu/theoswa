@@ -785,38 +785,6 @@ function isSmallTrump(card, ctx) {
   );
 }
 
-// 【无分的吊主墩，别拿级牌去盖】—— Glen 2026-09-09：
-//   「吊主的时候，经常第四家 BOT 如果第三家是出的 A，必定出 2，或是第三家副 2，
-//     必定主 2，实际上这时候也要分情况，如果没有分，而且自己也无所谓别人吊主
-//    （即自己不是保底/撬底牌或是没有要求件的副门）就可以放一下，
-//     因为 2 和主 2 还是相对比较大的牌，不需要浪费在无分的局。」
-//
-// 「无所谓别人吊主」照他括号里给的两条落地，两条都不成立才算无所谓：
-//   · 不是保底/撬底牌 —— 顶端不在我手上，本局策略也不是走撬底
-//   · 没有要求件的副门 —— 一门有甩牌欲望的副牌都没有（那种门要靠吊主把对手的主削短）
-// 两者但凡成立一条，牌权就有用，级牌该花就花。
-function indifferentToTrumpDraw(view, ctx) {
-  const control = bottomControlOf(view, ctx);
-  if (control.holdsTopTrump || control.guaranteed) return false;      // 我就是保底/撬底那手
-  if (roundStrategy(view, ctx, control) === 'grab-bottom') return false;
-  const tuning = strategyTuning(view);
-  for (const suit of SUITS) {
-    if (suit === ctx.trumpSuit) continue;
-    // ⚠️ 判据用 strongPieceSuit，不是 suitThrowAmbition。Glen 的原话是
-    // 「没有【要求件】的副门」—— 求件那一档是 strongPieceSuit（两件以上配 6 支、
-    // 或单件配 8 支，都是他自己给的数）。suitThrowAmbition 还多带一档
-    // 「比谁都长」的纯长度欲望，那不是求件；实测拿它当判据的话
-    // 360 次里有 240 次栽在这一条，整条规矩只剩 44 次能用。
-    if (strongPieceSuit(view, ctx, suit, tuning)) return false;      // 有要靠吊主逼件的副门
-  }
-  return true;
-}
-
-// 级牌（副级牌「副 2」和主级牌「主 2」）—— Glen 说的「2 和主 2」那两张。
-function isRankTrump(card, ctx) {
-  return card.rank === ctx.rankCard && suitOf(card, ctx) === 'TRUMP';
-}
-
 function partnerSideProtocolChoice(view, choices, ctx) {
   const current = view.round.currentTrick;
   if (current.length !== 2) return null;
@@ -3354,28 +3322,21 @@ function scoreFollow(view, cards, ctx) {
     if (isKill && totalPoints === 0 && early && !blockingWithSmallTrump) {
       score -= 180 * tuning.emptyTrumpPenaltyWeight;
     }
-    // 【无分的吊主墩，别拿级牌去盖】（Glen 2026-09-09，判据见 indifferentToTrumpDraw）。
-    // 末家收下一个 0 分的主牌墩，接管加分给的是 100 + 0 + 45 = 145 —— 白拿一墩牌权，
-    // 分一分没有。牌权本身对【保底/撬底那手】或者【有副门要养】的人才值钱；
-    // 都不是的话，这一墩换掉一张级牌纯属浪费。
-    // 实测 200 局：无分的单张主牌墩 716 个，第四家用级牌拿下 229 个（32.0%），
-    // 其中 52 次花的是主级牌，而且有 88 次盖上去还没赢。
+    // ⚠️ 【无分的吊主墩别拿级牌去盖】那条实现过、又整条撤了（Glen 2026-09-09 裁定撤销）。
+    // 他的原话：「吊主的时候，第三家出 A 就必定出 2、第三家副 2 就必定主 2……
+    //   如果没有分，而且自己也无所谓别人吊主，就可以放一下。」
+    // 实现出来行为是对的（末家用级牌买下无分吊主墩 229 → 178 次，其中
+    // 「手上明明有更便宜的主」129 → 64），可代价压不住：600 局配对撬底 37.3% → 36.0%。
     //
-    // ⚠️ 只罚【级牌】。小主该毙照毙 —— 那是上一条（第三家拦分）刚放开的路，
-    // 也不碰鬼：鬼有它自己那套保底账（JOKER_EARLY_SPEND_PENALTY）。
-    // ⚠️ 罚额 400 是【量出来的拐点】，不是照接管加分（末家 100+45=145）算的：
-    // 试过 150 —— 一次决策都没改变（罚确实落下去了 470 次，只是压不动）；
-    // 400 时「手上有更便宜的主却还是花了级牌」129 → 64 次；再加到 900 还是 64，
-    // 说明剩下那 64 次是别的账在决定，跟这条无关。取拐点，不取更大的数。
-    if (
-      lastToAct &&
-      lead.playSuit === 'TRUMP' &&
-      totalPoints === 0 &&
-      cards.every(card => isRankTrump(card, ctx)) &&
-      indifferentToTrumpDraw(view, ctx)
-    ) {
-      score -= 400 * tuning.emptyTrumpPenaltyWeight;
-    }
+    // 他自己提出按牌局阶段分段验（「放的情况可能是在牌局前期做的事」），
+    // 跑出来方向确实分裂 —— 基准取【整条关掉】，600 局配对：
+    //   前期（手上 >16 张） 撬底 37.3% → 38.2%（起 13 / 掉 8，z=0.87）✅
+    //   中期（9–16 张）     撬底 37.3% → 36.3%（起  2 / 掉 8，z=1.58）❌
+    //   后期（≤8 张）       撬底 37.3% → 36.7%（起  0 / 掉 4，z=1.50）❌
+    // 前期是正的（他那句牌理站得住），但三段的 z 值都不显著。
+    // 他的裁定：「不显著就取消吧，我也不能说我的牌理就一定是对的。」
+    // 所以【整条不留】—— 别照着上面那串数字再实现一遍。
+    // 量它的脚本留着：scripts/audit/fourth-hand-rank.mjs。
   } else {
     // 已经无法赢下这轮，不往对手那里送分。
     score -= candidatePoints * 14;
