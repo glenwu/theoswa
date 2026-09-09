@@ -1325,3 +1325,94 @@ test('PHASES 常量覆盖代码中实际会出现的每一个阶段（含 DOMINA
     'DOMINANCE 排在 SCORING 之前'
   );
 });
+
+// ============ 第三家断门时用小主拦住第四家的 10 ============
+//
+// Glen 2026-09-09（第三家这件事他提第五次了）：
+//   「当 BOT 是第三个出牌的时候经常没有打大过 10 的牌，很容易放第四家的 10 吃分，
+//     如果有大过 10 的，如 QJ 或是主牌的副 2 及以下最好是尽力拦一下，
+//     当然不要乱出大牌（主 2 及以上）和件。」
+//
+// 「QJ」那一半（跟得上这门时封）早就实现了，实测 92%。这里补的是【断门】那一半。
+//
+// ⚠️ 根因是「无分墩」的口径：桌面上现在 0 分，可我是第三家、第四家还没出牌，
+// 他一张 10 塞进来就是 10 分。原来的空毙罚只数桌面分，于是电脑把这一墩让掉了。
+// 实测 200 局：这种局面 110 次只毙了 63.6%，漏掉的 40 次里 30 次被第四家拿走，共 230 分。
+//
+// ⚠️ 牌面是从实测里【抓下来的真实现场】搬过来的，不是手搓的。手搓过一版：
+// 座 2、手上一张小主加一串小副牌 —— 那个形状里毙牌本来就赢 15 分，
+// 空毙罚（180）根本不是胜负手，改动前后打的都一样，三条断言全是假绿。
+// 真实现场里手上压着双鬼 + 主 2 + 一门长主，保底那些账把毙牌压下去，
+// 空毙罚才真正成为决定性的那一票。
+const RUFF_BIGS = [
+  card('ruff-big', 'JOKER', 16), card('ruff-small', 'JOKER', 15), card('ruff-main2', 'S', 2),
+];
+const RUFF_SMALLS = [
+  card('ruff-side2', 'H', 2),                      // 副级牌 = Glen 说的「副 2」
+  card('ruff-sq', 'S', 12), card('ruff-s8', 'S', 8),
+  card('ruff-s7', 'S', 7), card('ruff-s4', 'S', 4),
+];
+const RUFF_SIDES = [
+  card('ruff-da', 'D', 14), card('ruff-dk', 'D', 13), card('ruff-d5', 'D', 5),
+  card('ruff-d9', 'D', 9), card('ruff-d8', 'D', 8),
+  card('ruff-d7', 'D', 7), card('ruff-d6', 'D', 6), card('ruff-d4', 'D', 4),
+];
+// 主 ♠ 打 2；我是座 1（第三家），座 0（对手）殿后；♣ 我断门。
+function thirdHandRuffView({ smalls = RUFF_SMALLS, trickHistory = [] } = {}) {
+  const hand = [...RUFF_BIGS, ...smalls, ...RUFF_SIDES.slice(0, 11 - RUFF_BIGS.length - smalls.length)];
+  return {
+    phase: 'PLAYING',
+    declarerSeat: 1,
+    players: [0, 1, 2, 3].map(s => ({ seat: s, team: s % 2, handCount: 11 })),
+    round: {
+      roundNumber: 1, trumpSuit: 'S', rankCard: 2, kittyCount: 8,
+      currentTrick: [
+        { seat: 3, playSuit: 'C', cards: [card('ruff-lead', 'C', 3)] },
+        { seat: 2, cards: [card('ruff-second', 'C', 4)] },
+      ],
+      trickHistory, lastTrick: null, turnSeat: 1,
+      piecesView: {
+        H: [14, 14, 13, 13].map(rank => ({ rank, status: 'seen' })),
+        D: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'seen' },
+            { rank: 13, status: 'mine' }, { rank: 13, status: 'seen' }],
+        // ♣ 还有一支 A、一支 K 没现 —— 第四家一张就能把这墩买走
+        C: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
+            { rank: 13, status: 'unseen' }, { rank: 13, status: 'seen' }],
+      },
+    },
+    you: { id: 'BOT', nickname: '电脑', seat: 1, team: 1, hand, crossRiver: {} },
+  };
+}
+
+test('第三家断门：桌面 0 分但第四家能塞分 → 用【最小的】小主拦一手', () => {
+  const play = chooseFollowCards(thirdHandRuffView());
+  assert.equal(play[0].id, 'ruff-s4',
+    `♣ 断了、第四家还能塞 A/K 进来，该用最小的主毙住（实际打了 ${play[0].id}）`);
+});
+
+test('第三家断门：手上只剩鬼和主 2 → 不为拦一张分花掉（Glen：不要乱出主 2 及以上）', () => {
+  const play = chooseFollowCards(thirdHandRuffView({ smalls: [] }));
+  assert.ok(
+    play.every(c => c.suit === 'D'),
+    `鬼和主级牌是保底/撬底的本钱，拦一张分不值得（实际打了 ${play[0].id}）`
+  );
+});
+
+test('第三家断门：第四家这门已知断门 → 他塞不进分，就别浪费主牌', () => {
+  const play = chooseFollowCards(thirdHandRuffView({
+    // 座 0（第四家）上一墩 ♣ 没跟 → 已知断门：他只会毙，不会用 A/K 把这墩买走
+    trickHistory: [{
+      trickNo: 1, leadSeat: 3, leadSuit: 'C', winnerSeat: 3, points: 0,
+      plays: [
+        { seat: 3, playSuit: 'C', cards: [card('ruff-h1', 'C', 5)] },
+        { seat: 2, cards: [card('ruff-h2', 'C', 6)] },
+        { seat: 1, cards: [card('ruff-h3', 'C', 7)] },
+        { seat: 0, cards: [card('ruff-h4', 'D', 3)] },
+      ],
+    }],
+  }));
+  assert.ok(
+    play.every(c => c.suit === 'D'),
+    `第四家断了这门，塞不进分，这就是真无分墩（实际打了 ${play[0].id}）`
+  );
+});

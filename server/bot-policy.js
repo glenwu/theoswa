@@ -711,6 +711,60 @@ function lastSeatPointExposure(view, candidateLeader, candidateCards, ctx) {
   return exposure;
 }
 
+// 【第三家要拦住第四家的 10】—— Glen 2026-09-09 第五次提第三家：
+//   「当 BOT 是第三个出牌的时候经常没有打大过 10 的牌，很容易放第四家的 10 吃分，
+//     如果有大过 10 的，如 QJ 或是主牌的副 2 及以下最好是尽力拦一下，
+//     当然不要乱出大牌（主 2 及以上）和件。」
+//
+// 「QJ」那一半（跟得上这门时用大的无分牌封）在 partnerSideProtocolChoice 里，
+// 实测已经做到 92%（scripts/audit/third-hand.mjs）。漏的是【这门我断了】那一半：
+// 手上有小主却不毙，把一墩眼看要变成 10 分的牌白送给第四家。
+//
+// 根因插桩查得很清楚（6 个现场逐个重放候选得分）：0 分墩时最好的毙大约 −70、
+// 垫一张小副牌 −31，差的那 39 分正是 `isKill && totalPoints === 0 && early`
+// 那条 −180 的空毙罚。可 totalPoints 数的是【桌面上已经有的分】，
+// 而第三家出手时第四家还没出 —— Glen 说的正是这个：现在 0 分，
+// 他一张 10 塞进来就是 10 分。所以「这墩有没有分」不能只看桌面。
+//
+// 这个函数返回【第四家能往这一墩塞进来的最大分值】：他手上那张牌得
+//   · 是这门的（他没断门），而且
+//   · 压得过当前的牌面（压不过就拿不走，塞分等于送给我方），而且
+//   · 还没现身（unseenCopiesOf）
+// 一张都凑不出来就返回 0 —— 那才是真正的无分墩，空毙罚照旧管着。
+function lastSeatPointInjection(view, ctx) {
+  const current = view.round?.currentTrick ?? [];
+  if (current.length !== 2) return 0;
+  const lead = current[0];
+  if (!lead || lead.playSuit === 'TRUMP' || (lead.cards?.length ?? 1) !== 1) return 0;
+  // 最后一家必然是对手：座位是两队交错的，(seat+3)%4 和 seat 的奇偶恒相反。
+  // 所以【不写】「最后一家是队友就不用防」那一句 —— 它恒为假，写了也是永远存活的
+  // 死条件（旁边的 lastSeatPointExposure 里那句就是，留着只会让变异测试失真）。
+  const lastSeat = (view.you.seat + 3) % 4;
+  if (knownVoidInSuit(view, lastSeat, lead.playSuit, ctx)) return 0;  // 他断了，只会毙不会塞分
+  const leaderCard = trickLeader(current, ctx)?.cards?.[0];
+  if (!leaderCard) return 0;
+  let best = 0;
+  for (let rank = 2; rank <= 14; rank += 1) {
+    const probe = { id: `inject-${lead.playSuit}-${rank}`, suit: lead.playSuit, rank };
+    if (suitOf(probe, ctx) !== lead.playSuit) continue;
+    if (cardStrength(probe, ctx) <= cardStrength(leaderCard, ctx)) continue;
+    if (unseenCopiesOf(view, lead.playSuit, rank, ctx) <= 0) continue;
+    best = Math.max(best, cardPoints(probe));
+  }
+  return best;
+}
+
+// 这一手是不是「副 2 及以下」的主牌 —— Glen 划的那条线：
+//   「主牌的副 2 及以下最好是尽力拦一下，当然不要乱出大牌（主 2 及以上）和件。」
+// 副级牌排在主花色 A 之上，所以「副 2 及以下」= 主牌里【除了大鬼、小鬼、主级牌】的全部。
+function isSmallTrump(card, ctx) {
+  return (
+    suitOf(card, ctx) === 'TRUMP' &&
+    card.rank !== 15 && card.rank !== 16 &&
+    !(card.rank === ctx.rankCard && card.suit === ctx.trumpSuit)
+  );
+}
+
 function partnerSideProtocolChoice(view, choices, ctx) {
   const current = view.round.currentTrick;
   if (current.length !== 2) return null;
@@ -3232,7 +3286,18 @@ function scoreFollow(view, cards, ctx) {
     // 对手领先：有分时用“刚好能赢”的牌去抢，无分时早盘少浪费主牌。
     score += (100 + totalPoints * (lastToAct ? 10 : 2) + (lastToAct ? 45 : 0)) *
       tuning.takeoverWeight;
-    if (isKill && totalPoints === 0 && early) score -= 180 * tuning.emptyTrumpPenaltyWeight;
+    // ⚠️ 「无分墩」不能只看桌面（Glen 2026-09-09，见 lastSeatPointInjection）：
+    // 我是第三家时第四家还没出牌，他一张 10 塞进来这墩就是 10 分。
+    // 所以只有【第四家也塞不进分】才算真无分墩，那时空毙罚照旧。
+    //
+    // ⚠️ 豁免只给【副 2 及以下】的小主 —— 那是 Glen 划的线：
+    //   「主牌的副 2 及以下最好是尽力拦一下，当然不要乱出大牌（主 2 及以上）和件。」
+    // 鬼和主级牌照旧挨罚：拦一张 10 不值得花掉保底/撬底的本钱。
+    const blockingWithSmallTrump =
+      cards.every(card => isSmallTrump(card, ctx)) && lastSeatPointInjection(view, ctx) > 0;
+    if (isKill && totalPoints === 0 && early && !blockingWithSmallTrump) {
+      score -= 180 * tuning.emptyTrumpPenaltyWeight;
+    }
   } else {
     // 已经无法赢下这轮，不往对手那里送分。
     score -= candidatePoints * 14;
