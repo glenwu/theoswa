@@ -757,6 +757,26 @@ function lastSeatPointInjection(view, ctx) {
 // 这一手是不是「副 2 及以下」的主牌 —— Glen 划的那条线：
 //   「主牌的副 2 及以下最好是尽力拦一下，当然不要乱出大牌（主 2 及以上）和件。」
 // 副级牌排在主花色 A 之上，所以「副 2 及以下」= 主牌里【除了大鬼、小鬼、主级牌】的全部。
+// 【两个对手都没主了，就别再打主】—— Glen 2026-09-09：
+//   「如果对手两家都没主牌的情况，经常还会把主牌都打得很光，其实这些都已经是
+//     大牌了，不必要再打，就看副牌怎么走就行，自己主牌打光，别人甩牌就毙不到了。」
+//
+// 吊主的目的就是把对手的主削光。削光了还接着领主，削的只剩自己 ——
+// 而手上的主这时候【每一张都已经是必赢的大牌】，留着才有用：
+// 对手一甩长副牌，靠的就是这些主去毙。打光了就毙不到了。
+//
+// 判据只用公开信息：某个主牌墩他没跟满主 → 已知断主（knownVoidInSuit）。
+// 不用 maxOpponentTrumpEstimate —— 那是按各家手牌数摊出来的期望值，
+// 只有全场一张未现的主都没有时才会到 0，根本表达不了「对手两家断了、
+// 但主还在队友或底牌里」这个局面，而那正是 Glen 说的那种。
+function opponentsOutOfTrumps(view, ctx) {
+  const opponents = (view.players ?? []).filter(
+    player => player.seat !== view.you.seat && player.seat % 2 !== view.you.team
+  );
+  if (opponents.length === 0) return false;
+  return opponents.every(player => knownVoidInSuit(view, player.seat, 'TRUMP', ctx));
+}
+
 function isSmallTrump(card, ctx) {
   return (
     suitOf(card, ctx) === 'TRUMP' &&
@@ -2530,8 +2550,12 @@ export function chooseLeadCards(view) {
   // 不开这个口子的话，下面那档「闲家里自己是主家」的加分永远够不着 ——
   // 实测 200 局「闲家 + 主家」领牌 38 次只吊了 3 次，加了分也纹丝不动。
   const bottomDone = control.guaranteed && strategy !== 'grab-bottom';
+  // 【对手两家都没主了就停吊】（Glen 2026-09-09，判据见 opponentsOutOfTrumps）。
+  // 实测 200 局：两个对手都已知断主的领牌 58 次，其中 22 次（37.9%）还在领主牌，
+  // 7 次一路领到自己一张主都不剩。
+  const opponentsTrumpless = opponentsOutOfTrumps(view, ctx);
   if (!opening && !helpingOpponentDraw && drawPool.length > 0 && outstandingTrumps > 0 &&
-      !bottomDone && (!strongSide || planPending)) {
+      !bottomDone && !opponentsTrumpless && (!strongSide || planPending)) {
     const drawBonus =
       planPending ? 560                                                // 为尾巴削对手的主
       // 队友已经应了「不用吊主」→ 转去跑副牌保底，别再削对手的主。

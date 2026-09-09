@@ -4336,3 +4336,50 @@ test('留主撬底：不吊了就回去发展长副牌，别让位让成兜底�
   assert.equal(lead.suit, 'S',
     `不吊主就该发展最长的副牌 ♠，而不是兜底挑全手最小的（实际领了 ${lead.id}）`);
 });
+
+// ============ 对手两家都没主了，就别再打主 ============
+//
+// Glen 2026-09-09：
+//   「如果对手两家都没主牌的情况，经常还会把主牌都打得很光，其实这些都已经是
+//     大牌了，不必要再打，就看副牌怎么走就行，自己主牌打光，别人甩牌就毙不到了。」
+//
+// 吊主的目的就是把对手的主削光；削光了还接着领主，削的只剩自己。
+// 而这时候手上每一张主都已经是必赢的大牌 —— 留着才有用：
+// 对手一甩长副牌，靠的就是它们去毙。
+//
+// 实测（scripts/audit/trump-after-void.mjs，200 局）：两个对手都已知断主的领牌
+// 58 次，其中 22 次（37.9%）还在领主牌，7 次一路领到自己一张主都不剩。
+function trumplessOpponentsView(bothVoid) {
+  const lastPlay = bothVoid
+    ? { seat: 1, cards: [T('D', 3, 93)] }        // 座 1 也没跟主 → 两家都断
+    : { seat: 1, cards: [T('H', 4, 93)] };       // 座 1 跟了主 → 只断了一家
+  return leadView({
+    hand: [
+      ...[14, 13, 12, 11, 10, 9, 8, 7, 6].map((r, i) => T('H', r, i)),  // 9 张主
+      ...[9, 7, 5].map((r, i) => T('S', r, i + 10)),
+      ...[8, 6, 4].map((r, i) => T('D', r, i + 20)),
+    ],
+    declarerSeat: 0, mySeat: 0,
+    trickHistory: [{
+      trickNo: 1, leadSeat: 0, leadSuit: 'TRUMP', winnerSeat: 0, points: 0,
+      plays: [
+        { seat: 0, playSuit: 'TRUMP', cards: [T('H', 14, 90)] },
+        { seat: 3, cards: [T('S', 3, 91)] },     // 对手没跟主 → 已知断主
+        { seat: 2, cards: [T('H', 5, 92)] },     // 队友跟了主
+        lastPlay,
+      ],
+    }],
+  });
+}
+
+test('停吊：两个对手都已知断主 → 改打副牌，手上的主留着毙他的甩牌', () => {
+  const lead = chooseLeadCards(trumplessOpponentsView(true))[0];
+  assert.notEqual(lead.suit, 'H',
+    `对手两家都没主了，再吊只是削自己（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+test('停吊：只断了一家 → 照吊不误（要两家都断才停）', () => {
+  const lead = chooseLeadCards(trumplessOpponentsView(false))[0];
+  assert.equal(lead.suit, 'H',
+    `还有一家有主，吊主照样是在削他（实际领了 ${lead.suit}${lead.rank}）`);
+});
