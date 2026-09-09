@@ -96,6 +96,14 @@ export function executeCrossRiver(state, active, backCardIds) {
 
   r.crossRiver.active = r.crossRiver.active.filter(a => a.fromSeat !== active.fromSeat);
   if (!r.crossRiver.doneTeams.includes(from.team)) r.crossRiver.doneTeams.push(from.team);
+  // 【过河惩罚只认「庄家自己发起」这一件事】—— Glen 2026-09-06 裁定：
+  //   「队友把 3 张主过河给庄家之后，庄家可不可以把这几张主埋进底？可以。
+  //     过河惩罚只针对庄家自己发起，和队友无关，这时埋主不受罚。」
+  //
+  // ⚠️ 判的是 from.seat（发起人），不是 from.team（发起方那一队）—— 这一字之差
+  // 就是那条裁定本身。三主过河挪到埋底之前以后（见 round.js 的 before-bury），
+  // 队友交过来的主牌庄家【来得及】埋进底了，这在老顺序下根本做不到；
+  // 惩罚要不要跟着扩到队友那一笔，是问过 Glen 的，他裁的是【不扩】。
   if (from.seat === state.declarerSeat) r.declarerCrossedRiver = true;
 
   // 返回移动明细，供调用方同步件表/主牌表去向

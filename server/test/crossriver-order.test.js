@@ -14,6 +14,7 @@ import { completeDeal } from '../round.js';
 import { crossRiverCandidates } from '../crossriver.js';
 import { countTrump } from '../cards.js';
 import { oppositeSeat } from '../rotation.js';
+import { settleRound } from '../scoring.js';
 
 const card = (id, suit, rank) => ({ id, suit, rank });
 
@@ -145,4 +146,52 @@ test('过河顺序：庄家一方埋底前过完河，埋底后不能再过一�
 
   expireCrossRiverDecision(state);
   assert.ok(['PLAYING', 'DOMINANCE'].includes(state.phase), `过河② 走完应当进出牌，实际 ${state.phase}`);
+});
+
+// 【队友交过来的主牌，庄家埋进底不受罚】—— Glen 2026-09-06 裁定：
+//   「队友把 3 张主过河给庄家之后，庄家可不可以把这几张主埋进底？可以。
+//     过河惩罚只针对庄家自己发起，和队友无关，这时埋主不受罚。」
+//
+// ⚠️ 这条【是过河挪到埋底之前才新造出来的局面】：老顺序（先埋底再过河）下，
+// 队友给的主牌根本来不及埋。所以它必须单独钉住 —— 判据是 from.seat（发起人），
+// 不是 from.team，一字之差就把这条裁定推翻了。
+test('过河惩罚：队友发起、庄家把交来的主牌埋进底 → 不算庄家过河，不受罚', () => {
+  const state = dealtState({ partnerTrumps: 3 });
+  completeDeal(state);
+  const declarerSeat = state.declarerSeat;
+  const partner = playerBySeat(state, oppositeSeat(declarerSeat));
+  const declarer = playerBySeat(state, declarerSeat);
+
+  // 交出【全部】主牌，副牌补足到 3 张（这里主牌正好 3 张，一张都不用补）
+  const givenTrumpIds = partner.hand.filter(c => c.suit === 'H').map(c => c.id);
+  const give = [
+    ...givenTrumpIds,
+    ...partner.hand.filter(c => c.suit === 'D').slice(0, 3 - givenTrumpIds.length).map(c => c.id),
+  ];
+  assert.equal(applyAction(state, { type: 'initiateCrossRiver', cardIds: give }, partner.id).ok, true);
+  const back = declarer.hand.filter(c => c.suit === 'S').slice(0, 3).map(c => c.id);
+  assert.equal(applyAction(state, { type: 'respondCrossRiver', cardIds: back }, declarer.id).ok, true);
+  assert.equal(state.round.declarerCrossedRiver, false,
+    '发起人是队友，不是庄家 —— 这一笔不该点亮「庄家过河」');
+
+  // 庄家把队友刚交过来的那 3 张主牌【原样埋进底】，再凑够 8 张
+  const hand = playerBySeat(state, declarerSeat).hand;
+  const rest = hand.filter(c => !givenTrumpIds.includes(c.id)).slice(0, 8 - givenTrumpIds.length);
+  const bury = [...givenTrumpIds, ...rest.map(c => c.id)];
+  assert.equal(applyAction(state, { type: 'buryKitty', cardIds: bury }, declarer.id).ok, true);
+  for (const id of givenTrumpIds) {
+    assert.ok(state.round.kitty.some(c => c.id === id), `队友交来的 ${id} 应当能埋进底`);
+  }
+  assert.equal(state.round.declarerCrossedRiver, false, '埋了也还是不算庄家过河');
+
+  // 结算口径：底里有主牌，但没触发「庄家过河」→ 惩罚为 0
+  const trumpsInKitty = state.round.kitty.filter(c => c.suit === 'H').length;
+  assert.ok(trumpsInKitty >= givenTrumpIds.length, '底牌里确实埋进了主牌');
+  const settled = settleRound({
+    defenderTrickPoints: 90, kittyPoints: 0, kittyGrab: true,
+    declarerTeam: declarer.team,
+    declarerCrossedRiver: state.round.declarerCrossedRiver,
+    trumpsInKitty,
+  });
+  assert.equal(settled.crossRiverPenalty, 0, '队友发起的那一笔不带惩罚（Glen 裁定）');
 });
