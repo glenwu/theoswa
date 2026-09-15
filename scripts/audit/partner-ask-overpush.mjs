@@ -2,7 +2,8 @@
 //   让这一门变得很短不好甩或威胁降低。」
 //
 // 他给的读法：
-//   · 队友看到你求件，默认你手上是【两件】
+//   · 队友看到你求件，默认你手上是【两件】；第一次领这门就领【件】→ 至少三件
+//     （Glen 2026-09-16：「这个花色第一轮打件出来，至少是三件」）
 //   · 外边已经出了两件（包括队友自己出的）→ 假设你已经可以甩了，
 //     不再为你打这门，可以转去吊主
 //   · 这之后你【又打这门】→ 说明你是一求三，继续帮你打
@@ -54,7 +55,8 @@ for (let i = 0; i < N; i++) {
     if (!lead || t.leadSuit === 'TRUMP') return;
     const suit = t.leadSuit;
     if (!firstLead.has(suit)) {
-      firstLead.set(suit, { seat: lead.seat, ti, ask: isAsk(lead.cards ?? []) });
+      firstLead.set(suit, { seat: lead.seat, ti, ask: isAsk(lead.cards ?? []),
+        piece: (lead.cards ?? []).some(isPiece) });
       return;
     }
     const f = firstLead.get(suit);
@@ -64,11 +66,12 @@ for (let i = 0; i < N; i++) {
     if (lead.seat !== helper) return;                  // 只看队友「帮他打」的那些领牌
     helpLeads += 1;
     const T = totalPieces(suit);
-    // 推 A 手上几件：默认两件；A 在「外边已出够 T-2 件」之后又领过这门 → 一求三
-    let H = 2;
+    // 推 A 手上几件：小牌/10 求件默认两件、领件求件默认三件；
+    // A 在「外边已出够 T-H 件」之后又领这门 → 少算一件（一路减到一求三）
+    let H = Math.min(f.piece ? 3 : 2, T - 1);
     for (let k = f.ti + 1; k < ti; k++) {
       const l2 = hist[k].plays?.[0];
-      if (l2?.seat === asker && hist[k].leadSuit === suit && outsideOut(suit, asker, k) >= T - 2) H = 1;
+      if (l2?.seat === asker && hist[k].leadSuit === suit && H > 1 && outsideOut(suit, asker, k) >= T - H) H -= 1;
     }
     const out = outsideOut(suit, asker, ti);
     if (out < T - H) return;                           // 还没出够，该帮

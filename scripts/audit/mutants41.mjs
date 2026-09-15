@@ -15,6 +15,11 @@ runMutants([
       '  return outsideBefore(history.length) >= total;',
       '要外边把四件全出完才算他甩得动（等于他自己一件没有）'],
 
+  // ---- 领件 = 至少三件（Glen 2026-09-16）----
+  [F, '  let held = Math.min(firstIsPiece ? 3 : 2, total - 1);',
+      '  let held = Math.min(2, total - 1);',
+      '领件求件也按两件算（三求一的惯例丢了）'],
+
   // ---- 一求三：出够之后他又领这门 ----
   [F, '    if (held > 1 && outsideBefore(i) >= total - held) held -= 1;',
       '    if (false) held -= 1;',

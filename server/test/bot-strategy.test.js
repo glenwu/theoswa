@@ -4473,3 +4473,40 @@ test('帮队友求件：他求过的 ♠ 已经甩得动、后来换打 ♦ → 
   assert.notEqual(card.suit, 'S',
     `♠ 是他求过、已经甩得动的门，发展长副牌也不该去捅它（实际领了 ${card.suit}${card.rank}）`);
 });
+
+// 【第一次领这门就领件 = 至少三件】—— Glen 2026-09-16 裁定：
+//   「这个花色第一轮打件出来，至少是三件（还有就是他没有分或小于等于五的可以求），
+//     一般队友需要把件撞出来，这个基本是惯例，因为如果队友三求一，这样做的威胁是最大的。」
+// 所以他领 ♠A、我把 ♠K 撞出来之后，外边就出够了（4 - 3 = 1），他 ♠ 已经齐了。
+// 按「两件」算的话还差一件，我这边的发展长副牌就会去捅 ♠ —— 那正是在拆他的三求一。
+test('帮队友求件：他第一次领 ♠ 就领 ♠A（三求一）、我撞出 ♠K → 他齐了，我最长的 ♠ 也不去捅', () => {
+  const hand = [
+    ...[9, 8, 7, 6, 5, 4].map((r, i) => T('S', r, i)),   // ♠ 是我最长的副牌
+    T('C', 8, 10),
+    ...[5, 4, 3].map((r, i) => T('H', r, i + 20)),
+  ];
+  const view = leadView({
+    hand, mySeat: 2, declarerSeat: 0,
+    trickHistory: [
+      { // 第 1 墩：队友领 ♠A 三求一，我把 ♠K 撞出来
+        leadSeat: 0, leadSuit: 'S', winnerSeat: 0, trickNo: 1,
+        plays: [{ seat: 0, playSuit: 'S', cards: [T('S', 14, 80)] }, { seat: 3, cards: [T('S', 10, 81)] },
+                { seat: 2, cards: [T('S', 13, 82)] }, { seat: 1, cards: [T('S', 11, 83)] }],
+      },
+      { // 第 2 墩：他换打 ♦，我用唯一那张 ♦Q 吃下 ——「回他那门」无牌可回
+        leadSeat: 0, leadSuit: 'D', winnerSeat: 2, trickNo: 2,
+        plays: [{ seat: 0, playSuit: 'D', cards: [T('D', 8, 84)] }, { seat: 3, cards: [T('D', 10, 85)] },
+                { seat: 2, cards: [T('D', 12, 86)] }, { seat: 1, cards: [T('D', 6, 87)] }],
+      },
+    ],
+    piecesView: {
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'unseen' }],
+      D: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
+      C: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
+    },
+  });
+  const card = chooseLeadCards(view)[0];
+  assert.notEqual(card.suit, 'S',
+    `他领件求件就是三件，♠K 撞出来他就齐了，再打 ♠ 是拆他的三求一（实际领了 ${card.suit}${card.rank}）`);
+});
