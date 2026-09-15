@@ -969,15 +969,23 @@ function partnerRequest(view, ctx) {
   //   c6543a2 只实现了「跨墩」，把「换门就作废」一起丢了；
   //   再往前那一版只看最近一领，把「同门跨墩」丢了。
   //
-  // 停止条件是「一支未现的件都没有了」：件已经逼完，接下来该甩而不是接着领。
+  // 停止条件：【按 Glen 的读法，求件者已经甩得动了】（见 partnerCanThrowPresumed）。
+  // ⚠️ 原来写的是「这门一支未现的件都没有了」—— 可站在我这边看，求件者【自己手上】
+  // 的件永远是「未现」，他不甩就永远不会现身，于是这个条件一辈子不成立，
+  // 我就一直替他捅这门。Glen 2026-09-15：「现在碰到很多次是件已经出了，
+  // 但队友却还一直捅短这一门牌，让这一门变得很短不好甩或威胁降低。」
+  // 实测 200 局：帮他打的领牌 482 次里 146 次（30.3%）是在他已经甩得动之后。
   const items = view.round?.piecesView?.[suit] ?? [];
-  if (items.some(item => item.status === 'unseen')) {
-    // 求件只算这门【第一次】被领的那一手（Glen 2026-08-29）——
-    // 原来是往回扫「队友在这门求过没有」，同一门第二次领小牌也算数。
-    const first = firstLeadInSuit(view, suit);
-    if (first && first.seat === partnerSeat && isPieceAskLead(first.cards, ctx)) {
-      return { suit, seeking: true, partnerIsDeclarer };
-    }
+  // 求件只算这门【第一次】被领的那一手（Glen 2026-08-29）——
+  // 原来是往回扫「队友在这门求过没有」，同一门第二次领小牌也算数。
+  const first = firstLeadInSuit(view, suit);
+  const partnerAsked = !!first && first.seat === partnerSeat && isPieceAskLead(first.cards, ctx);
+  if (partnerAsked && partnerCanThrowPresumed(view, ctx, suit, partnerSeat, first)) {
+    // 他甩得动了：不再替他打这门（打一张就短一张），可以转去吊主护着他甩
+    return { suit, seeking: false, canThrow: true, partnerIsDeclarer };
+  }
+  if (partnerAsked && items.some(item => item.status === 'unseen')) {
+    return { suit, seeking: true, partnerIsDeclarer };
   }
 
   // ============ ② 这门上没有未了的求件：只是把牌权还给他这门 ============
@@ -993,6 +1001,78 @@ function partnerRequest(view, ctx) {
       !suitLedBeforeIndex(view, suit, lastIndex),
     partnerIsDeclarer,
   };
+}
+
+// 【队友求件之后，他甩得动了没有】—— Glen 2026-09-15 给的读法：
+//   「队友看到你求的时候，需要假设一般情况下是两件，队友如果看到外边已经出了
+//     两件（包括队友自己出的）要假设你已经可以甩了，不再为你打这个花色求件了，
+//     而且队友可以转为吊主……如果你是一求三，还有一件没出来，那就得自己再吊
+//     这门花色，如果队友看到了你再打这门，那要假设你是一求三，继续帮你打这一门。」
+//
+// 算法照他的原话：
+//   · 先假设他手上 2 件 —— 他的原话「一般情况下是两件」，不分他是拿小牌、10 还是件来求
+//     ⚠️ 试过【领件求件默认 3 件】（按三求一的约定推的）：600 局配对只差 4% 的局，
+//     过庄 5 次全往好的方向（z=1.79），不显著。照他「不显著就取消」的口径没留，
+//     回头请他定三求一要不要单算。
+//   · 「外边出了」= 这门的件里【不是他打出来的】那些（含我出的、埋底亮出的）
+//   · 外边出够 T - H 件 → 他甩得动了
+//   · 外边已经出够、他却【又领这门】→ 说明他还甩不动，手上比假设的少一件（H - 1），
+//     一路减到 1（一求三）为止 —— 这就是「看到你再打这门，要假设你是一求三」
+//   · 我手上还压着这门的件 → 他不可能甩得动（甩牌资格要每支件都不在暗处，
+//     我手里那支对他就是暗的），这时不算
+// T 是这门件的总数（打 A / 打 K 时那一档升成主，只剩 2 件）。
+// H 不会超过 T - 1：他要是件全在手，根本不用求。
+function partnerCanThrowPresumed(view, ctx, suit, askerSeat, first) {
+  const items = view.round?.piecesView?.[suit] ?? [];
+  const total = items.length;
+  if (total === 0) return false;
+  if (items.some(item => item.status === 'mine')) return false;
+  const history = view.round?.trickHistory ?? [];
+  const piecesIn = cards => (cards ?? []).filter(
+    card => suitOf(card, ctx) === suit && isSidePiece(card, ctx)
+  ).length;
+  // 埋底亮出的件：piecesView 里「已现」的，减去打出来的
+  let playedAll = 0;
+  for (const trick of history) {
+    if (trick.virtual) continue;
+    for (const play of trick.plays ?? []) playedAll += piecesIn(play.cards);
+  }
+  const seen = items.filter(item => item.status === 'seen').length;
+  const kittyShown = Math.max(0, seen - playedAll);
+  // 第 index 墩之前，「外边」出了几件
+  const outsideBefore = index => {
+    let n = kittyShown;
+    for (let i = 0; i < Math.min(index, history.length); i += 1) {
+      if (history[i].virtual) continue;
+      for (const play of history[i].plays ?? []) {
+        if (play.seat !== askerSeat) n += piecesIn(play.cards);
+      }
+    }
+    return n;
+  };
+  let held = Math.min(2, total - 1);
+  // 他每一次「外边已经出够了还再领这门」，都说明手上比假设的少一件
+  for (let i = 0; i < history.length; i += 1) {
+    const trick = history[i];
+    if (trick.virtual || trick.leadSeat !== askerSeat || trick.leadSuit !== suit) continue;
+    if (trick.plays?.[0]?.cards === first.cards) continue;         // 第一次那一手本身不算
+    if (!suitLedBeforeIndex(view, suit, i)) continue;               // 同上（按位置再保一道）
+    if (held > 1 && outsideBefore(i) >= total - held) held -= 1;
+  }
+  return outsideBefore(history.length) >= total - Math.max(1, held);
+}
+
+// 队友求过件、而且按上面的读法已经甩得动的那些门。
+function partnerThrowableSuits(view, ctx) {
+  const partnerSeat = partnerSeatOf(view.you.seat);
+  const out = [];
+  for (const suit of SUITS) {
+    if (suit === ctx.trumpSuit) continue;
+    const first = firstLeadInSuit(view, suit);
+    if (!first || first.seat !== partnerSeat || !isPieceAskLead(first.cards, ctx)) continue;
+    if (partnerCanThrowPresumed(view, ctx, suit, partnerSeat, first)) out.push(suit);
+  }
+  return out;
 }
 
 function pieceContributionContinuationLead(view, ctx) {
@@ -2524,7 +2604,13 @@ export function chooseLeadCards(view) {
   const opponentsTrumpless = opponentsOutOfTrumps(view, ctx);
   if (!opening && !helpingOpponentDraw && drawPool.length > 0 && outstandingTrumps > 0 &&
       !bottomDone && !opponentsTrumpless && (!strongSide || planPending)) {
-    const drawBonus =
+    // 【队友甩得动了 → 转去吊主】（Glen 2026-09-15）：
+    //   「如果对手已经把件放出来，那就是可以甩了，如果把主吊短，
+    //     则有利于甩牌（对方可能毙不到）。」
+    // 权重和「跟着主家吊」同档（480）。取两者较大 —— 别的档（尾巴 560、撬底 520）
+    // 本来就更高的照旧，只是把「本来不吊」的那些局面补上这一档。
+    const partnerThrowDraw = partnerRequest(view, ctx)?.canThrow ? 480 : 0;
+    const drawBonus = Math.max(partnerThrowDraw,
       planPending ? 560                                                // 为尾巴削对手的主
       // 队友已经应了「不用吊主」→ 转去跑副牌保底，别再削对手的主。
       // 策略已经是「跑分为主」（保底不现实）→ 同样别再吊：Glen 明说这时候
@@ -2565,7 +2651,7 @@ export function chooseLeadCards(view) {
       // 判据见 partnerLine —— 看的是他【干不干脆】和【赢不赢得下来】，不是猜他的牌。
       // 权重和庄家队友那一档同级（480）：都是「跟着主家的路子打」。
       : partnerLine(view, ctx) === 'trump' ? 480
-      : 0;                                                             // 其余闲家：随便
+      : 0);                                                            // 其余闲家：随便
     // 【最后一墩要靠主牌去赢 —— 别把最后一张主吊出去】（Glen 2026-09-06）：
     //   「BOT 把鬼吊完，但剩最后一支是副牌给我们保底的情况，优化一下，
     //     大牌主还是需要留到最后撬底。」
@@ -2666,6 +2752,9 @@ export function chooseLeadCards(view) {
   // 两条同时提案会让「回门」的加分叠上 develop-long-side-suit 的 160，
   // 反过来把更精确的续件盖掉。
   const request = continuationPiece ? null : partnerRequest(view, ctx);
+  // 注：他已经甩得动的那门（canThrow）这里【不单独拦】—— 下面「队友甩得动的那门，
+  // 别的意图也别去领」那段删提案会把这门的单张领牌一起删掉，回门也在内。
+  // 两处各写一道的话互相掩护，变异测试删掉哪一道都杀不掉（试过）。
   if (request) {
     // 上限压在 safe-side-throw（620）之下：帮队友求件重要，
     // 但不该盖过自己手上已经能甩的那门 —— 那是实打实的分。
@@ -2770,6 +2859,27 @@ export function chooseLeadCards(view) {
   // 只剩主牌时 quietLead 自动退化成 lowestLead（主牌不是求件信号）。
   const fallback = quietLead(view, ctx, nonTrumps.length ? nonTrumps : trumps, tuning);
   if (fallback) addProposal([fallback], 20, 'low-card-fallback');
+
+  // 【队友甩得动的那门，别的意图也别去领】（Glen 2026-09-15）——
+  // 上面只掐了「回队友那门」这一条，可发展长副牌、兜底小牌照样会挑中那门的小牌，
+  // 效果一样是在替他把甩牌捅短。和下面几段一样用【删提案】，全删光就维持原判。
+  //
+  // ⚠️ 管的是【他求过件、按读法已经甩得动】的所有门，不只是他最近一领那一门。
+  // 第一版只看 request（他最近一领），实测剩下的 43 次「还在捅」里有 22 次是
+  // 他最近一领已经换了门（12 次换副牌、10 次换成吊主）—— 那恰恰是甩得动的人
+  // 常见的打法：先吊主把对手的主削短，再回头甩（Glen 早先说的「求出件不甩、
+  // 转打主，极有可能是留着甩尾手」）。那时候我去捅他那门，拆的就是他的尾巴。
+  {
+    const partnerThrow = new Set(partnerThrowableSuits(view, ctx));
+    if (partnerThrow.size > 0) {
+      const victims = [...proposals].filter(([, proposal]) =>
+        proposal.cards.length === 1 && partnerThrow.has(suitOf(proposal.cards[0], ctx))
+      );
+      if (victims.length < proposals.size) {
+        for (const [key] of victims) proposals.delete(key);
+      }
+    }
+  }
 
   // 【手上还有副牌，就别把最后一张主领出去】—— 上面吊主那条的另一半（Glen 2026-09-06）。
   //

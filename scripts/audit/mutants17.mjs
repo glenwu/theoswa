@@ -23,10 +23,10 @@ runMutants([
   // ---- 同门跨墩：他换成非求件牌接着打这门，第一次那个求件仍然算数 ----
   // ⚠️ 2026-08-29 之后这一段是靠 firstLeadInSuit 实现的：求件只算这门第一次
   // 被领的那一手，所以「他后来又领这门」自然不影响那次求件仍然算数。
-  [F, `    const first = firstLeadInSuit(view, suit);
-    if (first && first.seat === partnerSeat && isPieceAskLead(first.cards, ctx)) {
-      return { suit, seeking: true, partnerIsDeclarer };
-    }`, '',
+  // ⚠️ 2026-09-15 这一段按 Glen 给的「甩得动没有」读法重写过，锚点跟着换。
+  [F, `  if (partnerAsked && items.some(item => item.status === 'unseen')) {
+    return { suit, seeking: true, partnerIsDeclarer };
+  }`, '',
       '跨墩记忆整段删掉 —— 只认他最近一领是不是求件牌'],
   // ⚠️ 「不看这门第一次是不是队友领的」那一条【删了 —— 杀不掉，也没别处盖住】。
   // 试过两个 fixture 都被别的规矩罩住了（都在 scratchpad/probeF.mjs 里试过）：
@@ -36,10 +36,10 @@ runMutants([
   //     「逼件领最小」和「中性牌」挑到的是同一张。
   // 判据本身没问题（它就是 Glen 那条规矩的直译，suitAskSignal 那一层单独钉着），
   // 只是隔离不出来。留一条永远存活的变异体只会让整套的杀伤率失真。
-  [F, "  if (items.some(item => item.status === 'unseen')) {",
-      '  if (true) {',
+  [F, "  if (partnerAsked && items.some(item => item.status === 'unseen')) {",
+      '  if (partnerAsked) {',
       '件已经全现了还在接着逼（该甩的时候还在一张张领）'],
-  [F, '      return { suit, seeking: true, partnerIsDeclarer };',
-      '      return { suit, seeking: false, partnerIsDeclarer };',
+  [F, '    return { suit, seeking: true, partnerIsDeclarer };',
+      '    return { suit, seeking: false, partnerIsDeclarer };',
       '未了的求件不再算「明确求件」，力度掉回普通回门'],
 ]);

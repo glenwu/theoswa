@@ -2908,9 +2908,14 @@ test('求完件要甩：让位只挂在甩牌那一门，别的门照领不误',
       // 黑桃：双 A 已现、♠K 在我手上、另一支 K 已现 → 甩得出去
       S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'seen' },
           { rank: 13, status: 'mine' }, { rank: 13, status: 'seen' }],
-      // 方块：还有一支 ♦A 没现身 → 队友第 1 墩那次求件还没逼完
-      D: [{ rank: 14, status: 'unseen' }, { rank: 14, status: 'seen' },
-          { rank: 13, status: 'seen' }, { rank: 13, status: 'seen' }],
+      // 方块：队友第 1 墩用 ♦4 求件，外边才出了一支件 → 那次求件还没逼完。
+      // ⚠️ 这里原来是「三支已现、只剩一支 ♦A 未现」。Glen 2026-09-15 给了读法之后
+      // 那个形状就不对了：一求件就默认他手上两件，外边出够两件就当他甩得动 ——
+      // 三支已现时那支未现的 ♦A 只能在他手上，他【已经】甩得动，不该再替他打 ♦。
+      // 这条测试钉的是「让位只挂在甩牌那一门」，♦ 只是个载体，所以换成
+      // 【确实还要帮】的形状：外边只出一支，按两件算还差一支。
+      D: [{ rank: 14, status: 'unseen' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'unseen' }, { rank: 13, status: 'seen' }],
       C: [],
     },
     trickHistory: [{
@@ -4128,7 +4133,7 @@ test('打A封：打完这张这门只剩一张 → 压不住甩牌，不算「�
 //     把对手的件逼出来。」
 // 中间隔了两墩、队友最近领的是别的门，旧代码就把这次求件忘干净了：
 // partnerRequest 只看队友【最近一次】领了什么。
-function forgottenAskView(thirdSuit = 'S') {
+function forgottenAskView(thirdSuit = 'S', { myThirdSpade = 12 } = {}) {
   return leadView({
     mySeat: 2, declarerSeat: 0,
     hand: [
@@ -4159,7 +4164,12 @@ function forgottenAskView(thirdSuit = 'S') {
         ? { leadSeat: 0, leadSuit: 'S', winnerSeat: 2, trickNo: 3,
             plays: [{ seat: 0, playSuit: 'S', cards: [T('S', 9, 88)] },
                     { seat: 1, cards: [T('S', 6, 89)] },
-                    { seat: 2, cards: [T('S', 13, 90)] },
+                    // ⚠️ 原来这里我交的是 ♠K。Glen 2026-09-15 给了读法之后那就不对了：
+                    // 他一求件默认手上两件，我前后交出 ♠A、♠K 两件 =「外边出够两件」
+                    // → 他已经甩得动，不该再替他捅 ♠。默认换成 ♠Q（不是件），
+                    // 外边只出了一支，这才是「那次求件还没逼完」的形状。
+                    // 想要「外边出够两件」的形状就传 myThirdSpade: 13。
+                    { seat: 2, cards: [T('S', myThirdSpade, 90)] },
                     { seat: 3, cards: [T('S', 7, 91)] }] }
         : { leadSeat: 0, leadSuit: 'D', winnerSeat: 2, trickNo: 3,
             plays: [{ seat: 0, playSuit: 'D', cards: [T('D', 9, 88)] },
@@ -4382,4 +4392,84 @@ test('停吊：只断了一家 → 照吊不误（要两家都断才停）', () 
   const lead = chooseLeadCards(trumplessOpponentsView(false))[0];
   assert.equal(lead.suit, 'H',
     `还有一家有主，吊主照样是在削他（实际领了 ${lead.suit}${lead.rank}）`);
+});
+
+
+// ============ 队友求件之后：他甩得动了就别再捅那门 ============
+//
+// Glen 2026-09-15：
+//   「队友看到你求的时候，需要假设一般情况下是两件，队友如果看到外边已经出了
+//     两件（包括队友自己出的）要假设你已经可以甩了，不再为你打这个花色求件了，
+//     而且队友可以转为吊主……如果你是一求三，还有一件没出来，那就得自己再吊
+//     这门花色，如果队友看到了你再打这门，那要假设你是一求三，继续帮你打这一门；
+//     现在碰到很多次是件已经出了，但队友却还一直捅短这一门牌。」
+//
+// 根因：原来的停止条件是「这门一支未现的件都没有了」—— 可站在我这边，
+// 他【自己手上】的件永远是未现的，他不甩就永远不现身，于是我一直替他捅。
+// 实测 200 局：帮他打的领牌 482 次里 146 次（30.3%）是在他已经甩得动之后。
+
+test('帮队友求件：外边出够两件（我先后交了 ♠A ♠K）→ 当他甩得动了，不再捅 ♠，转去吊主', () => {
+  const card = chooseLeadCards(forgottenAskView('S', { myThirdSpade: 13 }))[0];
+  assert.notEqual(card.suit, 'S',
+    `外边已经出了两件，按两件算他甩得动了，再打 ♠ 就是替他捅短（实际领了 ${card.suit}${card.rank}）`);
+  assert.equal(card.suit, 'H', `可以转去吊主护着他甩（实际领了 ${card.suit}${card.rank}）`);
+});
+
+// 同样外边出了两件，差别只在【他是在外边出够两件之后才又领的 ♠】——
+// 那就说明他还甩不动：手上只有一件（一求三），得继续帮他。
+// 两条一起才钉得住「看到你再打这门，要假设你是一求三」。
+test('帮队友求件：外边已经出够两件他还【又领 ♠】→ 他是一求三，继续帮他打', () => {
+  const view = forgottenAskView('S');            // 第 3 墩我交 ♠Q，打出去的件只有第 1 墩那支 ♠A
+  // 另一支件是埋底亮出来的（♠K）—— 于是他第 3 墩再领 ♠ 之前，外边就已经出了两件
+  view.round.piecesView.S = [
+    { rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
+    { rank: 13, status: 'seen' }, { rank: 13, status: 'unseen' },
+  ];
+  const card = chooseLeadCards(view)[0];
+  assert.equal(card.suit, 'S', `他出够两件之后还再领 ♠，是在说他还缺一件（实际领了 ${card.suit}${card.rank}）`);
+  assert.equal(card.rank, 4, `接着求件走最小的那张（实际领了 ${card.suit}${card.rank}）`);
+});
+
+
+// 他最近一领已经【换了门】，可他求过件的那门照样甩得动 —— 那门还是不能碰。
+// 第一版只看他最近一领那一门，实测剩下的「还在捅」里一半是这种：他换打别的门
+// 或者转吊主（甩得动的人常见的打法：先把对手的主削短再回头甩），我这边的
+// 「发展长副牌」一看 ♠ 最长就去捅它，拆的正是他的尾巴。
+test('帮队友求件：他求过的 ♠ 已经甩得动、后来换打 ♦ → 我最长的副牌是 ♠ 也不去捅', () => {
+  const hand = [
+    ...[9, 8, 7, 6, 5, 4].map((r, i) => T('S', r, i)),   // ♠ 是我最长的副牌
+    T('C', 8, 10),
+    ...[5, 4, 3].map((r, i) => T('H', r, i + 20)),
+  ];
+  const view = leadView({
+    hand, mySeat: 2, declarerSeat: 0,
+    trickHistory: [
+      { // 第 1 墩：队友 ♠3 求件，我交出 ♠A
+        leadSeat: 0, leadSuit: 'S', winnerSeat: 2, trickNo: 1,
+        plays: [{ seat: 0, playSuit: 'S', cards: [T('S', 3, 80)] }, { seat: 3, cards: [T('S', 10, 81)] },
+                { seat: 2, cards: [T('S', 14, 82)] }, { seat: 1, cards: [T('S', 11, 83)] }],
+      },
+      { // 第 2 墩：我领 ♣，队友吃下
+        leadSeat: 2, leadSuit: 'C', winnerSeat: 0, trickNo: 2,
+        plays: [{ seat: 2, playSuit: 'C', cards: [T('C', 7, 84)] }, { seat: 1, cards: [T('C', 9, 85)] },
+                { seat: 0, cards: [T('C', 14, 86)] }, { seat: 3, cards: [T('C', 10, 87)] }],
+      },
+      { // 第 3 墩：队友换打 ♦，我用唯一那张 ♦Q 吃下 —— 于是「回他那门（♦）」无牌可回
+        leadSeat: 0, leadSuit: 'D', winnerSeat: 2, trickNo: 3,
+        plays: [{ seat: 0, playSuit: 'D', cards: [T('D', 8, 88)] }, { seat: 3, cards: [T('D', 10, 89)] },
+                { seat: 2, cards: [T('D', 12, 90)] }, { seat: 1, cards: [T('D', 6, 91)] }],
+      },
+    ],
+    piecesView: {
+      // ♠：我交的 ♠A + 埋底亮出的 ♠K = 外边出够两件
+      S: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'seen' }, { rank: 13, status: 'unseen' }],
+      D: [14, 14, 13, 13].map(rank => ({ rank, status: 'unseen' })),
+      C: [{ rank: 14, status: 'seen' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' }],
+    },
+  });
+  const card = chooseLeadCards(view)[0];
+  assert.notEqual(card.suit, 'S',
+    `♠ 是他求过、已经甩得动的门，发展长副牌也不该去捅它（实际领了 ${card.suit}${card.rank}）`);
 });
