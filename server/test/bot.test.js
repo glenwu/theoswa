@@ -410,6 +410,38 @@ test('已确认对手全主，但我手上还有别的主牌 → 大鬼留着，
     `手上还有别的主牌就不该把大鬼扔出去，实际领了 ${lead.map(c => c.id).join(',')}`);
 });
 
+// Glen 2026-09-19：「在倒数二三轮，BOT 自己把大鬼撞出来，然后给对手保底/撬底。」
+// 上面那条兑现是 4 张手牌的局面。只剩【大鬼 + 一张副牌】时前提不成立：先领副牌
+// 让他毙，最后一墩就是我的大鬼对他剩的那张；先兑现，最后一墩只剩副牌去撞全主，必输。
+// 现场取自模拟局（种子 41326）：另一张大鬼已经出过，这张是场上唯一的顶牌。
+function lastTwoCashView(otherBigPlayed, extra = []) {
+  const view = playView({
+    seat: 2,
+    declarerSeat: 1,
+    hand: [card('last-big', 'JOKER', 16), card('last-c14', 'C', 14), ...extra],
+    trickHistory: [{
+      trickNo: 1, leadSeat: 1, leadSuit: 'TRUMP', winnerSeat: 1,
+      plays: otherBigPlayed ? [{ seat: 1, playSuit: 'TRUMP', cards: [card('other-big', 'JOKER', 16)] }] : [],
+    }],
+  });
+  view.botBeliefs = {
+    kittySlots: 8,
+    players: { 1: { seat: 1, team: 1, handCount: 2 + extra.length, allTrumpConfirmed: true } },
+  };
+  return view;
+}
+
+test('只剩大鬼 + 一张副牌：先领副牌，大鬼留给最后一墩（不兑现）', () => {
+  assert.equal(chooseLeadCards(lastTwoCashView(true))[0].id, 'last-c14');
+  assert.equal(chooseLeadCards(lastTwoCashView(false))[0].id, 'last-c14',
+    '另一张大鬼下落不明也一样：留着至少还有一半机会，兑现掉就一点没有');
+});
+
+// 对照：三张（大鬼 + 两张副牌）仍按原裁定兑现 —— 他毙完领主，我的大鬼照样被逼出来。
+test('大鬼 + 两张副牌：仍按原裁定先兑现大鬼', () => {
+  assert.equal(chooseLeadCards(lastTwoCashView(false, [card('last-c13', 'C', 13)]))[0].id, 'last-big');
+});
+
 test('庄家首轮没有双大鬼时先吊最小主牌', () => {
   const view = playView({
     seat: 0,
