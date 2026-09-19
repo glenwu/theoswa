@@ -1531,6 +1531,114 @@ const JOKER_HOLD_LAST_TRICKS = 2;
 // 这条罚的是「顶端还在、但兑现得太早」。
 const JOKER_EARLY_SPEND_PENALTY = 420;
 
+// ============ 尾盘：最后一墩的赢牌，留还是砍（Glen 2026-09-19 裁定）============
+//
+// 「底给撬了，基本意味着多 20 分，而且底里边还有分可以加……也就是看底的分值
+//   还有加那 20 分，还有自己能大的概率」「一般情况下，还是不砍……吃过分损失一般
+//   没撬底惨。当然也要结合可以砍下多少分还有保底可能性，如果能保底，这个行为就
+//   至少值 20 分，因为底里通常还会有分。」
+//
+// 所以是一笔期望值账：留着 ≈ 多拿最后一墩的概率 ×（20 + 底分），砍 ≈ 这一墩的分。
+// 20 就是撬底那一档（settleRound：撬底档位整体高一级，一级 20 分）。
+const KITTY_GRAB_TIER_POINTS = 20;
+const LAST_TRICK_KEEPER_PENALTY = 1200;
+// 倒数第三墩留下的顶牌旁边没有别的主护着：下一墩对手一领主就被逼出来。
+// 打五折是我定的数，Glen 没给。
+const UNGUARDED_KEEPER_SURVIVAL = 0.5;
+const TOTAL_POINTS = 200;
+// 潜在的顶牌（同档另一张下落不明）：另一张在对手手上的概率 —— 别家三手里两手是对手。
+// 模拟局实测（scripts/audit/twin-where.mjs，181 个尾盘样本）64%，在底里 0%（庄家不埋大鬼）。
+// 分庄闲的话是 53% / 77%，但对抗测里分不分一局都没差（分数都是 5 的倍数，
+// 只有桌上恰好 5 分时才分得出），取简单的。
+const TWIN_WITH_OPPONENT = 2 / 3;
+// 另一张在对手手上时，留着的那张还能抢在他前面出的概率。我定的数（对抗测里 2/7）。
+const KEEPER_PLAYS_FIRST = 0.3;
+// 庄家一方「对方还没什么分」的线 —— Glen 原话「比如 50 分以内」。
+const DEFENDER_POINTS_LOW = 50;
+
+// 我手上【最后一墩的赢牌】：最大的那张主，外面已经没有比它更大的牌。
+// equalOutstanding = 同档还有几张没现身（0 = 确定的顶牌；≥1 = 潜在的，另一张大鬼下落不明）。
+function lastTrickKeeper(view, ctx) {
+  const trumps = cardsOfSuit(view.you?.hand ?? [], 'TRUMP', ctx);
+  if (trumps.length === 0) return null;
+  const card = trumps.reduce((best, item) =>
+    cardStrength(item, ctx) > cardStrength(best, ctx) ? item : best
+  );
+  const strength = cardStrength(card, ctx);
+  let stronger = 0, equal = 0;
+  for (const [tierStrength, total] of trumpTierTemplate(ctx)) {
+    if (tierStrength > strength) stronger += total;
+    if (tierStrength === strength) equal += total;
+  }
+  const played = playedCardsOf(view).filter(item => suitOf(item, ctx) === 'TRUMP');
+  if (stronger - played.filter(item => cardStrength(item, ctx) > strength).length > 0) return null;
+  const equalSeen = played.filter(item => cardStrength(item, ctx) === strength).length;
+  const equalMine = trumps.filter(item => cardStrength(item, ctx) === strength).length;
+  return { card, strength, equalOutstanding: Math.max(0, equal - equalSeen - equalMine) };
+}
+
+// 底里估计有多少分 —— 只用公开信息：没现身的分按张数摊到「别家手牌 + 底」上，
+// 底里被系统亮出来的件（K 带 10 分）照实算。
+// ⚠️ 庄家其实知道自己埋了什么，但 view 里没有埋下去的牌，电脑庄家也只能估。
+function kittyPointEstimate(view) {
+  const kittyCount = view.round?.kittyCount ?? 8;
+  if (kittyCount <= 0) return 0;
+  const revealed = view.round?.kittyRevealedPieces ?? [];
+  const known = revealed.reduce((sum, card) => sum + cardPoints(card), 0);
+  const seen = playedCardsOf(view).reduce((sum, card) => sum + cardPoints(card), 0);
+  const mine = (view.you?.hand ?? []).reduce((sum, card) => sum + cardPoints(card), 0);
+  const unseen = Math.max(0, TOTAL_POINTS - seen - mine - known);
+  const slots = Math.max(0, kittyCount - revealed.length);
+  const others = (view.players ?? [])
+    .filter(player => player.seat !== view.you?.seat)
+    .reduce((sum, player) => sum + (player.handCount ?? 0), 0);
+  return known + (others + slots > 0 ? (unseen * slots) / (others + slots) : 0);
+}
+
+// 这张最后一墩的赢牌，这一墩值不值得留着（不拿去砍）。
+function keeperWorthKeeping(view, ctx, keeper) {
+  const round = view.round;
+  const you = view.you;
+  const lead = round.currentTrick[0];
+  // 砍下来 / 让出去的，就是桌上这些分
+  const stake = playedPointTotal(round.currentTrick);
+  const bottomValue = KITTY_GRAB_TIER_POINTS + kittyPointEstimate(view);
+  // 不砍的话这一墩得出别的牌：领的是主就得拿别的主去跟。跟完之后顶牌旁边还有主护着，
+  // 下一墩才不会被对手领主逼出来。倒数第二墩（跟完只剩这一张）不存在这个问题。
+  const otherTrumps = cardsOfSuit(you.hand, 'TRUMP', ctx)
+    .filter(card => card.id !== keeper.card.id).length;
+  const guarded =
+    you.hand.length - lead.cards.length <= 1 ||
+    otherTrumps - (lead.playSuit === 'TRUMP' ? lead.cards.length : 0) >= 1 ||
+    opponentsOutOfTrumps(view, ctx);
+  const survival = guarded ? 1 : UNGUARDED_KEEPER_SURVIVAL;
+  // 确定的顶牌（同档已经没有牌在外面）：留到最后一墩就是我的。
+  // Glen：「如果能保底，这个行为就至少值 20 分，因为底里通常还会有分。」
+  if (keeper.equalOutstanding === 0) return survival * bottomValue > stake;
+
+  // 潜在的顶牌（另一张下落不明）。
+  //
+  // 庄家一方、对方分还少、这一墩让掉也到不了移庄线 —— Glen：「庄家的话，如果对方还
+  // 没什么分，比如 50 分以内，你砍 10 分 20 分，但是失去了有可能保底的机会，那是不能砍的。」
+  // 这时分数决定不了移不移庄，只有最后一墩能，没什么好算的。
+  const declarerSide = you.team === view.declarerSeat % 2;
+  const defenderPoints = round.defenderTrickPoints ?? 0;
+  if (
+    declarerSide &&
+    defenderPoints <= DEFENDER_POINTS_LOW &&
+    defenderPoints + stake < DEFENDER_TARGET_POINTS
+  ) return true;
+
+  // 其余的按概率算。⚠️ 算的是【留着比砍掉多出来的】那一截，不是「留着能赢的概率」
+  //（第一版不看概率，潜在的也一律留，只让一方用的对抗测里那一方净 −11 级）：
+  // 另一张要是在队友手上，砍了最后一墩也还是我方的，留着一分不多拿。
+  // 真正多出来的只有「它在对手手上、而我的抢在前面出」这一种（底里实测是 0）。
+  // Glen 还说过看对手吊主的习惯来估（乱吊的大牌少、躲着吊的大牌多），但 BOT 对局里
+  // 这个信号是反的（躲着吊的一方反而更少攥着大鬼：47% vs 乱吊的 68%），先没用。
+  const gain = TWIN_WITH_OPPONENT * KEEPER_PLAYS_FIRST;
+  return gain * survival * bottomValue > stake;
+}
+
 const TOTAL_PER_SIDE_SUIT = 24;
 
 // 场上还有多少张主牌没露面（不含我手上的；底牌里的仍算未知，故偏高）
@@ -3581,23 +3689,30 @@ function scoreFollow(view, cards, ctx) {
     score -= JOKER_EARLY_SPEND_PENALTY * bottomWeight * tuning.bottomControlWeight;
   }
 
-  // ⚠️ 【试过又撤掉的一条：倒数二三墩，「潜在」的最后一墩赢牌别交出去】（2026-09-19）
+  // 【倒数二三墩：最后一墩的赢牌，留还是砍】—— 账怎么算见 keeperWorthKeeping。
   //
-  // Glen：「保底牌及潜在的保底牌（例如有一支大鬼，但小鬼不知道在哪……）不能随便出来
-  //   吃分，或是到后期随便乱跑掉……我遇到多次在倒数二三轮，BOT 自己把大鬼撞出来。」
-  // 我把「潜在」读成：手上最大的主，外面没有【更大】的，同档另一张可以下落不明
-  //（单张大鬼、另一张没现身）。打完剩 1~2 张时交出去就罚 1200。
+  // 窗口 = 打完这一手手上还剩 1~2 张（Glen 说的「倒数二三轮」）。按【张数】算，
+  // 不按「这墩张数 × 2」—— 对手甩 3、4 张时那样会一下放到倒数第四、五墩（试过，亏）。
+  // 「交出去」= 打完手上再没有和它一样大的主（双大鬼交一张不算交出去）。
+  // 被逼（只剩这一张能跟）时所有候选一起挨罚，排序不变，不会卡死。
   //
-  // 自对弈看不出毛病（撬底 +0.5 个点，不显著），但【只让一方用】的对抗测
-  //（两边轮换各 600 局）显示用的那一方净 −11 级，17 局变了 14 局变差：
-  //   · 另一张大鬼「下落不明」其实几乎从不在底里 —— 庄家不埋大鬼。它不是在队友
-  //     手上（最后一墩本来就是我方的，留着只是白让这墩的分），就是在对手手上
-  //    （他抢先出就压住我，留着同样白让）。真能多拿最后一墩的只有 2 局。
-  //   · 另一张已经出过（这张是确定的顶牌）时，上面 OVER_KILL_PENALTY 本来就管着。
-  //   · 窗口按「剩的牌 ≤ 这墩张数 × 2」写的话，对手甩 2~4 张时会放到倒数第四、五墩，
-  //     多张墩那几局单独就是 −6 级。
-  // 所以撤掉了。Glen 报的「自己把大鬼撞出来」落在领牌那一侧，那条留着（见 cash-certain-control）。
-  // 统计脚本留在 scripts/audit/late-joker.mjs。
+  // ⚠️ 和上面 OVER_KILL_PENALTY 的分工：那条管全局的「顶端别丢」，带着「这墩到移庄线
+  // 就该砍」的豁免；到了倒数二三墩，Glen 裁定过线也要算账（「一般情况下，还是不砍」），
+  // 这一条就是那本账。两条同时成立时叠加，不影响排序。
+  {
+    const keeper = lastTrickKeeper(view, ctx);
+    const kept = you.hand.filter(card => !cards.some(played => played.id === card.id));
+    if (
+      keeper &&
+      kept.length >= 1 && kept.length <= 2 &&
+      !kept.some(card =>
+        suitOf(card, ctx) === 'TRUMP' && cardStrength(card, ctx) >= keeper.strength
+      ) &&
+      keeperWorthKeeping(view, ctx, keeper)
+    ) {
+      score -= LAST_TRICK_KEEPER_PENALTY * bottomWeight * tuning.bottomControlWeight;
+    }
+  }
 
   // 垫完一门短牌可以制造缺门，之后才有杀牌机会。
   if (!isKill) {

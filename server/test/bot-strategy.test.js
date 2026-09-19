@@ -3742,6 +3742,183 @@ test('留鬼：同一手牌，收下这 20 分正好到移庄线 → 该砍就�
     `60 + 20 = 80 过线了，这时候就该拿下（实际打了 ♥${cards[0].rank}）`);
 });
 
+// ============ 尾盘：最后一墩的赢牌，留还是砍（Glen 2026-09-19 裁定）============
+//
+// 「底给撬了，基本意味着多 20 分，而且底里边还有分可以加……看底的分值还有加那 20 分，
+//   还有自己能大的概率」「一般情况下，还是不砍……如果能保底，这个行为就至少值 20 分」
+//   「庄家的话，如果对方还没什么分，比如 50 分以内，你砍 10 分 20 分，但是失去了有可能
+//   保底的机会，那是不能砍的。」
+//
+// endgameView 用真牌堆把已出的分凑到「只剩 unseenPoints 分没现身」，底分估计就是
+// unseenPoints × 8 /（别家手牌 + 8）—— 两张手牌时 15 分摊出来约 8.6 分，留着值约 28.6。
+// 场面：对手（座位 1）领，我在最后一家。
+function endgameView({
+  hand, currentTrick, seat = 2, declarerSeat = 1, defenderTrickPoints = 0,
+  otherBigPlayed = true, unseenPoints = 15,
+}) {
+  const points = cards => cards.reduce((sum, card) => sum + cardPointsOf(card), 0);
+  const trickCards = currentTrick.flatMap(play => play.cards);
+  const used = new Map();
+  for (const card of [...hand, ...trickCards]) {
+    used.set(`${card.suit}${card.rank}`, (used.get(`${card.suit}${card.rank}`) ?? 0) + 1);
+  }
+  const target = 200 - unseenPoints - points(hand) - points(trickCards);
+  const filler = otherBigPlayed ? [T('JOKER', 16, 900)] : [];
+  let sum = 0;
+  for (const card of [...buildDeck()].sort((a, b) => cardPointsOf(b) - cardPointsOf(a))) {
+    const key = `${card.suit}${card.rank}`;
+    if (used.get(key)) { used.set(key, used.get(key) - 1); continue; }
+    if (!cardPointsOf(card) || sum + cardPointsOf(card) > target) continue;
+    filler.push({ ...card, id: `fill-${card.id}` });
+    sum += cardPointsOf(card);
+  }
+  assert.equal(sum, target, 'fixture 凑分失败');
+  return {
+    phase: 'PLAYING', declarerSeat,
+    you: { seat, team: seat % 2, hand, crossRiver: {} },
+    players: [0, 1, 2, 3].map(s2 => ({ seat: s2, team: s2 % 2, handCount: hand.length })),
+    round: {
+      trumpSuit: 'H', rankCard: 2, kittyCount: 8, defenderTrickPoints, currentTrick,
+      trickHistory: [{
+        trickNo: 1, leadSeat: 0, leadSuit: 'TRUMP', winnerSeat: 0, points: sum,
+        plays: [{ seat: 0, cards: filler }],
+      }],
+      piecesView: { S: [], D: [], C: [] },
+    },
+    botDifficulty: 'expert',
+    botBeliefs: { players: {} },
+  };
+}
+const trumpLedTrick = (partnerCard, oppCard) => [
+  { seat: 1, playSuit: 'TRUMP', cards: [T('JOKER', 15, 80)] },
+  { seat: 0, cards: [partnerCard] },
+  { seat: 3, cards: [oppCard] },
+];
+const EG_BJ = T('JOKER', 16, 0);
+const EG_H4 = T('H', 4, 1);
+const TRUMP_10 = trumpLedTrick(T('H', 6, 81), T('H', 10, 82));
+const TRUMP_20 = trumpLedTrick(T('H', 10, 81), T('H', 13, 82));
+
+// ---- 确定的顶牌（另一张大鬼已经出过）----
+test('尾盘·庄方：闲家 70 分、桌上 10 分，让掉就过 80 —— 大鬼照样留着保底（Glen 第 2 条）', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, EG_H4], currentTrick: TRUMP_10, declarerSeat: 0, defenderTrickPoints: 70,
+  }))[0];
+  assert.notEqual(play.rank, 16,
+    `砍了也只是把闲家压在 70，最后一墩被撬底照样移庄、还多一档（实际打了 ${play.suit}${play.rank}）`);
+});
+
+// 对照：桌上的分比「20 + 底分」还多，那就该砍 —— Glen：「也要结合可以砍下多少分」。
+test('尾盘·庄方：同样过线，但缺门时桌上 30 分，多过保底那点价值 —— 砍', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, T('D', 9, 2)], declarerSeat: 0, defenderTrickPoints: 70,
+    currentTrick: [
+      { seat: 1, playSuit: 'S', cards: [T('S', 13, 80)] },
+      { seat: 0, cards: [T('S', 10, 81)] },
+      { seat: 3, cards: [T('S', 10, 82)] },
+    ],
+  }))[0];
+  assert.equal(play.rank, 16, `30 分 > 20 + 底里约 9 分，该砍（实际打了 ${play.suit}${play.rank}）`);
+});
+
+// 底分也要算进去：25 分 > 20，但 < 20 + 底里约 9 分 —— 还是留。
+test('尾盘·庄方：过线、缺门桌上 25 分 —— 加上底分，保底还是更值，不砍', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, T('D', 9, 2)], declarerSeat: 0, defenderTrickPoints: 70,
+    currentTrick: [
+      { seat: 1, playSuit: 'S', cards: [T('S', 13, 80)] },
+      { seat: 0, cards: [T('S', 5, 81)] },
+      { seat: 3, cards: [T('S', 10, 82)] },
+    ],
+  }))[0];
+  assert.notEqual(play.rank, 16, `20 + 底里约 9 分 > 25（实际打了 ${play.suit}${play.rank}）`);
+});
+
+test('尾盘·闲方：我方 70 分、桌上 15 分，砍下就过线 —— 可留着撬底更值，不砍', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, EG_H4], currentTrick: trumpLedTrick(T('H', 5, 81), T('H', 10, 82)),
+    declarerSeat: 1, defenderTrickPoints: 70,
+  }))[0];
+  assert.notEqual(play.rank, 16,
+    `撬底是 70 + 底分再高一档，比砍这 15 分过线多（实际打了 ${play.suit}${play.rank}）`);
+});
+
+// ---- 潜在的顶牌（另一张大鬼下落不明）----
+test('尾盘·庄方：另一张大鬼不明、闲家才 30 分 —— 不为 20 分丢掉保底的机会（Glen 第 1 条）', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, EG_H4], currentTrick: TRUMP_20, declarerSeat: 0, defenderTrickPoints: 30,
+    otherBigPlayed: false,
+  }))[0];
+  assert.notEqual(play.rank, 16, `对方分少，砍 20 分换不回保底的机会（实际打了 ${play.suit}${play.rank}）`);
+});
+
+// 「比如 50 分以内」这条线的两边
+test('尾盘·庄方：闲家 50 分还算「没什么分」—— 不砍', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, EG_H4], currentTrick: TRUMP_10, declarerSeat: 0, defenderTrickPoints: 50,
+    otherBigPlayed: false,
+  }))[0];
+  assert.notEqual(play.rank, 16, `（实际打了 ${play.suit}${play.rank}）`);
+});
+
+test('尾盘·庄方：闲家 55 分、另一张大鬼不明 —— 按概率算，10 分值得砍', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, EG_H4], currentTrick: TRUMP_10, declarerSeat: 0, defenderTrickPoints: 55,
+    otherBigPlayed: false,
+  }))[0];
+  assert.equal(play.rank, 16,
+    `另一张在队友手上时砍了也不丢最后一墩，多拿最后一墩的机会不值 10 分（实际打了 ${play.suit}${play.rank}）`);
+});
+
+// 「没什么分」说的是这一墩让掉也到不了线。闲家 50、桌上 30，让掉就是 80 ——
+// 那就回到按概率算（Glen：「如果不砍对方能吃够分，也要想自己底是有多少分」）。
+test('尾盘·庄方：闲家 50 分但这墩 30 分，让掉就到线 —— 不再是「没什么分」，按概率砍', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, T('D', 9, 2)], declarerSeat: 0, defenderTrickPoints: 50, otherBigPlayed: false,
+    currentTrick: [
+      { seat: 1, playSuit: 'S', cards: [T('S', 13, 80)] },
+      { seat: 0, cards: [T('S', 10, 81)] },
+      { seat: 3, cards: [T('S', 10, 82)] },
+    ],
+  }))[0];
+  assert.equal(play.rank, 16, `（实际打了 ${play.suit}${play.rank}）`);
+});
+
+// 「像之前经常看不出什么缘故就出鬼肯定是不行的」
+test('尾盘·闲方：另一张大鬼不明、桌上一分没有 —— 别拿大鬼去砍', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, EG_H4], currentTrick: trumpLedTrick(T('H', 6, 81), T('H', 7, 82)),
+    declarerSeat: 1, defenderTrickPoints: 30, otherBigPlayed: false,
+  }))[0];
+  assert.notEqual(play.rank, 16, `一分没有的墩，出鬼换不来任何东西（实际打了 ${play.suit}${play.rank}）`);
+});
+
+test('尾盘·闲方：另一张大鬼不明、桌上 10 分 —— 撬底机会小，砍', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, EG_H4], currentTrick: TRUMP_10, declarerSeat: 1, defenderTrickPoints: 30,
+    otherBigPlayed: false,
+  }))[0];
+  assert.equal(play.rank, 16, `（实际打了 ${play.suit}${play.rank}）`);
+});
+
+// ---- 倒数第三墩：留下的顶牌旁边有没有主护着 ----
+// 对手领主，不砍就得拿别的主去跟。跟完大鬼旁边还有主 → 下一墩对手再领主也逼不出它。
+test('尾盘·倒数第三墩：跟完还有主护着大鬼 —— 留', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, EG_H4, T('H', 6, 3)], currentTrick: TRUMP_20,
+    declarerSeat: 1, defenderTrickPoints: 70,
+  }))[0];
+  assert.notEqual(play.rank, 16, `（实际打了 ${play.suit}${play.rank}）`);
+});
+
+test('尾盘·倒数第三墩：跟完大鬼旁边没主了，下一墩一领主就被逼出来 —— 不如现在砍', () => {
+  const play = chooseFollowCards(endgameView({
+    hand: [EG_BJ, EG_H4, T('D', 9, 3)], currentTrick: TRUMP_20,
+    declarerSeat: 1, defenderTrickPoints: 70,
+  }))[0];
+  assert.equal(play.rank, 16, `（实际打了 ${play.suit}${play.rank}）`);
+});
+
 // ---- 开局第一墩：先放小牌，把表态机会让给队友（Glen 第三次实战反馈）----
 //
 // 「第一轮庄家吊主 7 也是有问题的。第一轮还没打过牌，并不知道对家是否需要吊主。
