@@ -2758,11 +2758,36 @@ test('别乱求：这门没甩牌欲望 → 换一张 6~9 的中性牌领，不�
   assert.equal(lead.rank, 7, `这门只有 4 张又一件没有，不该打 ♠3 去求件（实际 ♠${lead.rank}）`);
 });
 
-test('别乱求：这门够长（甩牌欲望成立）→ 照旧打最小的求件，这一喊是真心的', () => {
-  // 8 张 ♠：摊到单个对手头上约 4.4 张，我比谁都长 → 甩出去压得住
+// ⚠️ 这一条原来断言「8 张无件长门 → 打 ♠3 求件，这一喊是真心的」。
+// Glen 2026-09-19 改了口径：「自己没有件一般不能打 5 及 5 以下，队友一般会认为
+// 要求件，已经发生很多次让队友把件打出来让其它人甩的问题了。」
+// 所以长归长，一件都没有就不喊 —— 照领这门，但换 6~9。
+test('别乱求：这门够长但一件都没有 → 照领这门，换中性牌，不喊（Glen 2026-09-19）', () => {
+  // 8 张 ♠：摊到单个对手头上约 4.4 张，我比谁都长 —— 可一支件都不在我手上
   const lead = chooseLeadCards(strayAskView({ spades: [11, 9, 8, 7, 6, 5, 4, 3] }))[0];
   assert.equal(lead.suit, 'S');
-  assert.equal(lead.rank, 3, `长门求件是 Glen 认可的打法，该打 ♠3（实际 ♠${lead.rank}）`);
+  assert.equal(lead.rank, 6, `无件长门不该打 ♠3 求件，该领 ♠6（实际 ♠${lead.rank}）`);
+});
+
+// quietLead 只能在这门还有 6~9 时换牌；一张都没有时得靠 straySignal 那道闸改领别门。
+test('别乱求：够长但一件都没有、也没有 6~9 可换 → 改领别门，不喊', () => {
+  const lead = chooseLeadCards(strayAskView({ spades: [12, 12, 11, 11, 5, 4, 3, 2], diamonds: [8, 7] }))[0];
+  assert.ok(!(lead.suit === 'S' && (lead.rank <= 5 || lead.rank === 10)),
+    `♠ 一件都没有，不该领 ♠${lead.rank} 去喊求件（实际 ${lead.suit}${lead.rank}）`);
+});
+
+test('别乱求：够长又有一支件 → 这一喊是真心的，照旧打最小的求件', () => {
+  // 同样 8 张，但换进一张 ♠A：单件配 8 支，正是 Glen 说的「单件够长也可以求」
+  const lead = chooseLeadCards(strayAskView({
+    spades: [14, 9, 8, 7, 6, 5, 4, 3],
+    piecesView: {
+      S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+          { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' }],
+      D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+    },
+  }))[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 3, `有件的长门求件是 Glen 认可的打法，该打 ♠3（实际 ♠${lead.rank}）`);
 });
 
 test('别乱求：只剩小牌换不了 → 改领别的门，别硬着头皮喊', () => {
@@ -2817,6 +2842,31 @@ test('别乱求：这门和对手一样长（不算占优）→ 还是不喊', (
   const lead = chooseLeadCards(view)[0];
   assert.equal(lead.suit, 'S');
   assert.equal(lead.rank, 7, `打平不算占优，该换中性牌（实际 ♠${lead.rank}）`);
+});
+
+// 无件一律不喊之后（Glen 2026-09-19），「比谁都长」那一档只在【手上有一支件、
+// 又不到单件 8 支】时才起作用 —— 上面那条打平的 fixture 没有件，量不到它了。
+// 这两条把同一门换进一张 ♠A，钉住那条线的两边。
+const ONE_ACE_SPADES = {
+  S: [{ rank: 14, status: 'mine' }, { rank: 14, status: 'unseen' },
+      { rank: 13, status: 'unseen' }, { rank: 13, status: 'unseen' }],
+  D: ALL_UNSEEN(), C: ALL_UNSEEN(),
+};
+
+test('别乱求：有一支件、但和对手一样长 → 还是不喊', () => {
+  const view = strayAskView({ spades: [14, 9, 8, 7, 4, 3], piecesView: ONE_ACE_SPADES });
+  for (const p of view.players) p.handCount = 8;
+  view.round.kittyCount = 0;
+  const lead = chooseLeadCards(view)[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 7, `打平不算占优，有件也该换中性牌（实际 ♠${lead.rank}）`);
+});
+
+test('别乱求：有一支件、又比谁都长 → 这一喊是真心的，打最小的', () => {
+  // 同一手牌，底牌 8 张还没现身 → 摊到单个对手头上只有 4.5 张，我 6 张占优
+  const lead = chooseLeadCards(strayAskView({ spades: [14, 9, 8, 7, 4, 3], piecesView: ONE_ACE_SPADES }))[0];
+  assert.equal(lead.suit, 'S');
+  assert.equal(lead.rank, 3, `有件又占优，该打 ♠3 求件（实际 ♠${lead.rank}）`);
 });
 
 // 甩牌不是求件信号 —— 一手小牌的甩牌不能被「别乱喊」那道闸门误删。

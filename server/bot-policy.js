@@ -184,6 +184,25 @@ function suitThrowAmbition(view, ctx, suit, tuning = strategyTuning(view)) {
   return mine >= 2 && mine > maxOpponentSuitEstimate(view, ctx, suit);
 }
 
+// 「这门的求件信号我发得起」—— 有甩牌欲望，而且【手上至少有一支件】。
+//
+// Glen 2026-09-19：「自己没有件一般不能打 5 及 5 以下，队友一般会认为要求件，
+// 已经发生很多次让队友把件打出来让其它人甩的问题了。」
+// 上面「很长」那一档单靠长度就算有欲望，于是一件都没有的长门也照喊不误。
+// 实测（scripts/audit/stray-ask.mjs，300 局）：这样喊了 42 次（插桩看全是
+// develop-long-side-suit 挑的）；队友手上有件的 32 次，32 次都当墩交了件，
+// 其中 9 次对手随后就甩了这门（甩牌墩 310 分）。改完 0 次，有件的求件一次没少。
+// 件一支都不在我手上，逼出来的件只会凑齐【别人】的甩牌资格。
+//
+// ⚠️ 只用在【发不发信号】上（quietLead / straySignal）。suitThrowAmbition 本身
+// 不动：「对手在求的那门我也想甩就照领」那条问的不是信号 —— 那一门第一次
+// 已经被对手领过，我再领不会被读成求件。
+function askSignalWorthy(view, ctx, suit, tuning = strategyTuning(view)) {
+  const holdsPiece = cardsOfSuit(view.you?.hand ?? [], suit, ctx)
+    .some(card => isSidePiece(card, ctx));
+  return holdsPiece && suitThrowAmbition(view, ctx, suit, tuning);
+}
+
 // 领牌时挑那一张，但【不要顺手发出求件信号】。
 //
 // 电脑并不是故意乱求的：develop-long-side-suit / attack-opponent-long-suit /
@@ -213,7 +232,7 @@ function quietLead(view, ctx, cards, tuning = strategyTuning(view)) {
       // 加上之后 quietLead 不再躲开小牌，于是「回队友那门」和「发展长副牌」
       // 撞到同一张牌上叠成 940，把 Glen 明令要压过它的 compress(580) 盖掉了。
       // 判别那一头由 straySignal 负责，那里加了。
-      !suitThrowAmbition(view, ctx, suit, tuning)
+      !askSignalWorthy(view, ctx, suit, tuning)
     );
   };
   const natural = lowestLead(cards, ctx);
@@ -286,7 +305,7 @@ function straySignal(view, ctx, cards, tuning) {
   // 这门【已经被领过】了 —— 再领小牌是捅短，不是求件，不会被误读（Glen）。
   // 领件同理：碰件（用 A 碰对手的 K）走的就是这条，那时这门早被领过了。
   if (suitLedBefore(view, suit)) return false;
-  if (suitThrowAmbition(view, ctx, suit, tuning)) return false;  // 真心在求，该喊
+  if (askSignalWorthy(view, ctx, suit, tuning)) return false;    // 真心在求，该喊（得有件）
   // ⚠️ 这里【原来还有一条豁免】：「我方在这门的求件还没逼完 → 接着领小牌逼件，
   // 不算乱求」（helpingTeamAsk）。2026-08-29 求件收紧成「只算这门第一次被领的
   // 那一手」之后，它【推得出恒为假】：上面已经要求这门没被领过，
@@ -2849,8 +2868,8 @@ export function chooseLeadCards(view) {
     const long = sideGroups[0];
     const noPoint = long.filter(card => cardPoints(card) === 0);
     addProposal(
-      // 发展长副牌同样不是求件。注意这门【够长的话】quietLead 自己会放行 ——
-      // 「很长」本来就是 Glen 认可的甩牌欲望，那时的求件信号是真心的。
+      // 发展长副牌同样不是求件。注意这门【够长、手上又有件的话】quietLead 自己会放行 ——
+      // 那时的求件信号是真心的；一件都没有就不放（askSignalWorthy，Glen 2026-09-19）。
       [quietLead(view, ctx, noPoint.length ? noPoint : long, tuning)],
       // 「以跑副牌为主」的两种策略下，发展长副牌不再只是兜底选项
       (160 + (strategy === 'run-side' || strategy === 'run-and-score'

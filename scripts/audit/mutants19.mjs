@@ -33,7 +33,7 @@ runMutants([
       for (const [key] of stray) proposals.delete(key);
     }`, '',
       '整段换门删掉 —— 只剩小牌时照样硬着头皮喊'],
-  [F, '  if (suitThrowAmbition(view, ctx, suit, tuning)) return false;  // 真心在求，该喊',
+  [F, '  if (askSignalWorthy(view, ctx, suit, tuning)) return false;    // 真心在求，该喊（得有件）',
       '',
       '有甩牌欲望也不许喊（长门求件被一并封死）'],
   // ⚠️ 「帮队友逼件也当成乱求」那一条【删了】：2026-08-29 求件收紧成「只算这门

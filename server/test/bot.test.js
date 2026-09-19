@@ -594,10 +594,12 @@ test('庄家朋友夺权后领牌表示，庄家取得牌权后优先回应这�
       ],
     },
   });
+  // ⚠️ 原来期望 signal-club-3。这门一支件都没有，领 ♣3 会被庄家读成求件 ——
+  // Glen 2026-09-19：「自己没有件一般不能打 5 及 5 以下」。照领长门表达意图，换 ♣6。
   assert.equal(
     chooseLeadCards(partnerSignal)[0].id,
-    'signal-club-3',
-    '朋友拿到主动权后，用长门小牌表达这门牌的意图'
+    'signal-club-6',
+    '朋友拿到主动权后，用长门的中性牌表达这门牌的意图（无件不喊求件）'
   );
 
   const declarerReadsSignal = playView({
@@ -1087,7 +1089,10 @@ test('AKK 缺一支 A 时出 A 求件（缺什么打什么）', () => {
   assert.equal(chooseLeadCards(view)[0].id, 'spade-a', '差的是 A，就该打 A 把另一张 A 逼出来');
 });
 
-test('无件长门用最小无分牌探件', () => {
+// ⚠️ 原来叫「无件长门用最小无分牌探件」、期望 club-3。
+// Glen 2026-09-19：「自己没有件一般不能打 5 及 5 以下，队友一般会认为要求件」——
+// 无件长门照领，但领 6~9，不发求件信号。
+test('无件长门照领这门，但不打 ≤5 去喊求件', () => {
   const view = playView({
     hand: [
       card('club-3', 'C', 3),
@@ -1109,7 +1114,7 @@ test('无件长门用最小无分牌探件', () => {
       ],
     },
   });
-  assert.deepEqual(chooseLeadCards(view).map(c => c.id), ['club-3']);
+  assert.deepEqual(chooseLeadCards(view).map(c => c.id), ['club-6']);
 });
 
 test('按动作类型使用思考时间，领牌比跟牌更慢', () => {
