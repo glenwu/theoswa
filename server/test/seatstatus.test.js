@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { seatStatusText, seatPendingText } from '../../client/src/seatStatus.js';
+import { seatStatusText, seatPendingText, seatOffline } from '../../client/src/seatStatus.js';
 import { PHASES } from '../constants.js';
 
 const P = extra => ({ seat: 1, team: 1, ready: false, seatLocked: false, isDeclarer: false, ...extra });
@@ -85,4 +85,11 @@ test('seatPendingText：确认态一律不上牌桌，等人的阶段才显示',
 
 test('seatPendingText：没有「等谁」语义的阶段不显示', () => {
   assert.equal(seatPendingText({ phase: 'PLAYING' }, { seat: 0 }), null);
+});
+
+test('牌桌掉线标记：真人断开才算，电脑座位永远不算', () => {
+  assert.equal(seatOffline({ isBot: false, connected: false }), true);
+  assert.equal(seatOffline({ isBot: false, connected: true }), false);
+  assert.equal(seatOffline({ isBot: true, connected: false }), false);
+  assert.equal(seatOffline(null), false);
 });

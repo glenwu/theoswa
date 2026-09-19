@@ -40,3 +40,10 @@ export function seatPendingText(game, player) {
   if (!text || DONE.has(text)) return null;
   return text;
 }
+
+// 掉线标记（Glen）：原来只在左栏玩家列表里有「掉线」胶囊，手机竖屏那栏藏在
+// 👥 浮层里，牌桌上看不出对面已经没人了。电脑座位永远不算掉线 ——
+// 服务端的电脑没有连接这回事，connected 对它没有意义。
+export function seatOffline(player) {
+  return !!player && !player.isBot && !player.connected;
+}

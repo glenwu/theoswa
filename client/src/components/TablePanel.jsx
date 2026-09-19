@@ -18,7 +18,7 @@ import { shortcutAction } from '../shortcut.js';
 import { declareOptions } from '../declare.js';
 import { kittySpotlightStage, KITTY_SPOTLIGHT_FLY_MS } from '../kittySpotlight.js';
 import { checkSelection } from '../playCheck.js';
-import { seatPendingText } from '../seatStatus.js';
+import { seatPendingText, seatOffline } from '../seatStatus.js';
 import { trickLeader } from '../../../server/trick.js';
 import { playSuitOf } from '../../../server/cards.js';
 import { tiaoZhuActive } from '../tiaozhu.js';
@@ -1185,6 +1185,16 @@ function PlayZone({ player, game, side = 'top', isYou }) {
         {player.isBot && (
           <span className="rounded bg-cyan-400/25 px-1 text-[10px] leading-tight text-cyan-200">
             电脑
+          </span>
+        )}
+        {/* 掉线也要上牌桌（Glen）：原来只有左栏列表里有，竖屏时那栏藏在浮层里。
+            和「电脑」一样放在名字前面、同样大小，不另占一行。 */}
+        {seatOffline(player) && (
+          <span
+            className="rounded bg-rose-500/80 px-1 text-[10px] leading-tight text-white"
+            title={`${player.nickname} 已掉线`}
+          >
+            📴掉线
           </span>
         )}
         {/* 手机竖屏把【自己】的名字藏起来（Glen）：这一格贴着控制栏，
