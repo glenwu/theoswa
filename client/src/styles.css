@@ -442,3 +442,40 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .beaten-bubble { animation: bubble-in 0.2s ease both, bubble-out 0.4s ease 3s forwards; }
 }
+
+/* 这门副牌的件都出来了 —— 整门甩得出去（Glen 2026-10-06：「在那门牌周围弄一圈光茫呼吸提示」）。
+   用【绿】不用金：手牌的选中态和一轮赢家都是琥珀金，再用金色就分不清
+   「这几张我选了」和「这门能甩了」。绿色在这套界面里一直是"可以动手"的意思
+   （亮主键、托管键都是绿的）。
+   光圈画在花色组的外框上（box-shadow 往外扩，不占布局），抬起的牌照常露在外面。 */
+.throw-ready {
+  border-radius: 12px;
+  animation: throw-ready-breathe 2.2s ease-in-out infinite;
+}
+@keyframes throw-ready-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1.5px rgba(52, 211, 153, 0.4), 0 0 8px 2px rgba(52, 211, 153, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.85), 0 0 18px 5px rgba(52, 211, 153, 0.45);
+  }
+}
+/* 手机竖屏手牌分两行、行间只有 4px —— 光圈的外发光收窄，免得糊到上下那一行。 */
+@media (orientation: portrait) and (max-width: 1023px), (orientation: landscape) and (max-height: 520px) {
+  @keyframes throw-ready-breathe {
+    0%,
+    100% {
+      box-shadow: 0 0 0 1.5px rgba(52, 211, 153, 0.45), 0 0 4px 1px rgba(52, 211, 153, 0.25);
+    }
+    50% {
+      box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.9), 0 0 10px 2px rgba(52, 211, 153, 0.45);
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .throw-ready {
+    animation: none;
+    box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.75), 0 0 10px 2px rgba(52, 211, 153, 0.3);
+  }
+}

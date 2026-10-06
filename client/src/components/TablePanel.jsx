@@ -24,6 +24,8 @@ import { playSuitOf } from '../../../server/cards.js';
 import { tiaoZhuActive } from '../tiaozhu.js';
 import { roundStory } from '../roundStory.js';
 import { handGroups, groupBadgeCount, partitionByWidth } from '../handGroups.js';
+import { throwReadySuits } from '../throwReady.js';
+import { lastFinishedTrick, lastTrickRows } from '../lastTrickView.js';
 import { tapToggle, dragAdd, toggleGroup } from '../selection.js';
 import { ProposeResetModal, ForceResetModal } from './ResetModals.jsx';
 
@@ -1285,6 +1287,8 @@ function PlayZone({ player, game, side = 'top', isYou }) {
 // compact = 手机横屏。高度是那套版式里最紧的资源，控制栏得收窄：
 // 去掉上下 padding、行距压到最小，按钮本身不动（拇指还要点得到）。
 function ControlBar({ game, send, error, selected, onClear, onTogglePlayers, onToggleChat, compact = false }) {
+  // 「看上一轮」（Glen 2026-10-06）：出牌之前想再看清上一轮谁出了什么。
+  const [showLastTrick, setShowLastTrick] = useState(false);
   const you = game.you;
   const round = game.round;
   // 注：原来这里有个 useNow(REVEALING) 只为了驱动揭牌键旁边那个 0.1 秒精度的倒计时。
@@ -1512,6 +1516,24 @@ function ControlBar({ game, send, error, selected, onClear, onTogglePlayers, onT
     }
   }
 
+  // 「看上一轮」：放在辅助行，不跟「出牌」抢位置。
+  // 出牌阶段全程可看（没轮到自己时正好用来回想），一墩都还没打完就不出现。
+  // ⚠️ 停留展示那 1.5 秒牌桌上本来就摆着这一墩，按钮照留 —— 停留一过牌就收走了，
+  // 而「我刚才没看清」正是这个按钮要救的场面。
+  const prevTrick = game.phase === 'PLAYING' ? lastFinishedTrick(round) : null;
+  if (prevTrick) {
+    hints.push(
+      <button
+        key="last-trick"
+        className="btn-gold-sm"
+        title="看上一轮四家各出了什么"
+        onClick={() => setShowLastTrick(true)}
+      >
+        看上一轮
+      </button>
+    );
+  }
+
   // 清空选择：有选中时随时可一键取消（拖动只加选不清除，取消交给这里和单击）
   if (
     selected.length > 0 &&
@@ -1558,7 +1580,61 @@ function ControlBar({ game, send, error, selected, onClear, onTogglePlayers, onT
         <div className="flex flex-wrap items-center justify-center gap-2">{hints}</div>
       )}
       <ErrorToast error={error} />
+      {showLastTrick && prevTrick && (
+        <LastTrickModal game={game} trick={prevTrick} onClose={() => setShowLastTrick(false)} />
+      )}
     </div>
+  );
+}
+
+// 上一轮回看：按出牌顺序一家一行 —— 领牌人在最上面，正好是真人读牌的顺序。
+//
+// ⚠️ 手机优先的排版：名字一列定宽（w-16，长名字截断），牌在右边自己换行 ——
+// 甩牌可能十几张，不换行会把弹窗撑出屏幕。四行固定，不论甩多少张都不用上下滚。
+function LastTrickModal({ game, trick, onClose }) {
+  const rows = lastTrickRows(trick);
+  const nameOf = seat => game.players.find(player => player.seat === seat);
+  const winner = nameOf(trick.winnerSeat);
+  return (
+    <Modal title={`上一轮（第 ${trick.trickNo} 墩）`} onClose={onClose}>
+      <div className="flex flex-col gap-1.5">
+        {rows.map(row => {
+          const player = nameOf(row.seat);
+          return (
+            <div
+              key={row.seat}
+              className={`flex items-center gap-2 rounded-xl border p-1.5 ${
+                row.isWinner
+                  ? 'border-amber-300/60 bg-amber-400/10'
+                  : 'border-white/10 bg-black/20'
+              }`}
+            >
+              <div className="flex w-16 shrink-0 flex-col text-[11px] font-black leading-tight text-white/80">
+                <span className="truncate">
+                  {PLAYER_EMOJI[player?.id]} {player?.nickname ?? '—'}
+                  {row.seat === game.you.seat ? '(我)' : ''}
+                </span>
+                <span className="text-[10px] font-bold text-white/45">
+                  {row.isLead ? '领' : ''}
+                  {row.isWinner ? ' 🏆' : ''}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                {row.cards.map(card => (
+                  <PlayingCard key={card.id} suit={card.suit} rank={card.rank} size="sm" />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-white/60">
+        <span>这一墩 {trick.points ?? 0} 分</span>
+        <span>
+          赢家 {PLAYER_EMOJI[winner?.id]} {winner?.nickname ?? '—'}
+        </span>
+      </div>
+    </Modal>
   );
 }
 
@@ -1608,6 +1684,9 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
   const crossSelectable =
     game.phase === 'CROSS_RIVER' && (cross.eligible || cross.mustRespond);
   const interactive = selectable || exchangeSelectable || crossSelectable;
+
+  // 这几门副牌的件都出来了 —— 整门甩得出去，给它们套一圈呼吸光（Glen）
+  const throwReady = useMemo(() => throwReadySuits(game), [game]);
 
   // 分组（输入已排序手牌；主牌组在最前）
   const groups = useMemo(
@@ -1874,8 +1953,23 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
       );
     }
     const groupIds = cards.map(c => c.id);
-    for (let i = 0; i < cards.length; i++) {
-      els.push(renderCard(cards[i], i, group, i === cards.length - 1, groupIds));
+    const cardEls = cards.map((card, i) =>
+      renderCard(card, i, group, i === cards.length - 1, groupIds)
+    );
+    if (throwReady.has(group.suit)) {
+      // 光圈套在整组外面。px-1 配 -mx-1：留出一点内边距让光圈不贴着牌，
+      // 又用负外边距抵消掉宽度变化 —— 上面 segments 算的组宽、分行划分都不受影响。
+      els.push(
+        <div
+          key={`throw-${group.suit}`}
+          className="throw-ready relative flex items-end -mx-1 px-1"
+          title={`${SUIT_INFO[group.suit]?.name ?? ''}的件都出来了，这门可以整门甩出去`}
+        >
+          {cardEls}
+        </div>
+      );
+    } else {
+      els.push(...cardEls);
     }
     // 组宽 = 前置间隔 + (张数-1) 张只露左缘 + 末张露全宽
     segments.push({ els, width: gapWidth + Math.max(0, cards.length - 1) * segS + segW });
