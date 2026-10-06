@@ -443,6 +443,48 @@ body {
   .beaten-bubble { animation: bubble-in 0.2s ease both, bubble-out 0.4s ease 3s forwards; }
 }
 
+/* 上一轮按牌桌的四个方位展示，位置始终相对当前玩家。 */
+.last-trick-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr);
+  grid-template-areas: "top top top" "left score right" "self self self";
+  align-items: center;
+  gap: 12px 8px;
+}
+.last-trick-seat {
+  min-width: 0;
+  padding: 8px;
+}
+.last-trick-seat[data-position="top"],
+.last-trick-seat[data-position="self"] {
+  justify-self: center;
+  width: min(75%, 280px);
+}
+/* 每张牌保留可读的左角，长甩牌自动换行，不挤入其他人的出牌区。
+   牌宽 32px、列宽 18px，右侧补足最后一张牌多出的 14px。 */
+.last-trick-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, 18px);
+  justify-content: center;
+  gap: 4px 0;
+  padding-right: 14px;
+}
+@media (max-width: 480px), (max-height: 520px) {
+  .last-trick-table { gap: 8px 6px; }
+  .last-trick-seat { padding: 6px; }
+}
+@media (orientation: landscape) and (max-height: 520px) {
+  /* 横屏高度有限，姓名与出牌并排，让常规单张的四个方位完整露出。 */
+  .last-trick-seat {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    column-gap: 6px;
+  }
+  .last-trick-player { align-self: end; margin-bottom: 2px; }
+  .last-trick-meta { align-self: start; margin-bottom: 0; }
+  .last-trick-cards { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+}
+
 /* 这门副牌的件都出来了 —— 整门甩得出去（Glen 2026-10-06：「在那门牌周围弄一圈光茫呼吸提示」）。
    用【绿】不用金：手牌的选中态和一轮赢家都是琥珀金，再用金色就分不清
    「这几张我选了」和「这门能甩了」。绿色在这套界面里一直是"可以动手"的意思

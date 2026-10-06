@@ -25,7 +25,9 @@ import { tiaoZhuActive } from '../tiaozhu.js';
 import { roundStory } from '../roundStory.js';
 import { handGroups, groupBadgeCount, partitionByWidth } from '../handGroups.js';
 import { throwReadySuits } from '../throwReady.js';
-import { lastFinishedTrick, lastTrickRows } from '../lastTrickView.js';
+import { lastFinishedTrick } from '../lastTrickView.js';
+import { tableSeats } from '../seatPositions.js';
+import LastTrickModal from './LastTrickModal.jsx';
 import { tapToggle, dragAdd, toggleGroup } from '../selection.js';
 import { ProposeResetModal, ForceResetModal } from './ResetModals.jsx';
 
@@ -113,9 +115,10 @@ export default function TablePanel({ game, send, error, onTogglePlayers, onToggl
 
   const you = game.you;
   const bySeat = Object.fromEntries(game.players.map(p => [p.seat, p]));
-  const top = bySeat[(you.seat + 2) % 4]; // 对家
-  const left = bySeat[(you.seat + 1) % 4]; // 上家
-  const right = bySeat[(you.seat + 3) % 4]; // 下家
+  const positions = tableSeats(you.seat);
+  const top = bySeat[positions.top];
+  const left = bySeat[positions.left];
+  const right = bySeat[positions.right];
 
   // 已打出的牌从选中集清除（出牌成功后保持干净）
   useEffect(() => {
@@ -1584,57 +1587,6 @@ function ControlBar({ game, send, error, selected, onClear, onTogglePlayers, onT
         <LastTrickModal game={game} trick={prevTrick} onClose={() => setShowLastTrick(false)} />
       )}
     </div>
-  );
-}
-
-// 上一轮回看：按出牌顺序一家一行 —— 领牌人在最上面，正好是真人读牌的顺序。
-//
-// ⚠️ 手机优先的排版：名字一列定宽（w-16，长名字截断），牌在右边自己换行 ——
-// 甩牌可能十几张，不换行会把弹窗撑出屏幕。四行固定，不论甩多少张都不用上下滚。
-function LastTrickModal({ game, trick, onClose }) {
-  const rows = lastTrickRows(trick);
-  const nameOf = seat => game.players.find(player => player.seat === seat);
-  const winner = nameOf(trick.winnerSeat);
-  return (
-    <Modal title={`上一轮（第 ${trick.trickNo} 墩）`} onClose={onClose}>
-      <div className="flex flex-col gap-1.5">
-        {rows.map(row => {
-          const player = nameOf(row.seat);
-          return (
-            <div
-              key={row.seat}
-              className={`flex items-center gap-2 rounded-xl border p-1.5 ${
-                row.isWinner
-                  ? 'border-amber-300/60 bg-amber-400/10'
-                  : 'border-white/10 bg-black/20'
-              }`}
-            >
-              <div className="flex w-16 shrink-0 flex-col text-[11px] font-black leading-tight text-white/80">
-                <span className="truncate">
-                  {PLAYER_EMOJI[player?.id]} {player?.nickname ?? '—'}
-                  {row.seat === game.you.seat ? '(我)' : ''}
-                </span>
-                <span className="text-[10px] font-bold text-white/45">
-                  {row.isLead ? '领' : ''}
-                  {row.isWinner ? ' 🏆' : ''}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-1">
-                {row.cards.map(card => (
-                  <PlayingCard key={card.id} suit={card.suit} rank={card.rank} size="sm" />
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-white/60">
-        <span>这一墩 {trick.points ?? 0} 分</span>
-        <span>
-          赢家 {PLAYER_EMOJI[winner?.id]} {winner?.nickname ?? '—'}
-        </span>
-      </div>
-    </Modal>
   );
 }
 

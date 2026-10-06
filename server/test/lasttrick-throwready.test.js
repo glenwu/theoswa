@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { lastFinishedTrick, lastTrickRows } from '../../client/src/lastTrickView.js';
 import { throwReadySuits } from '../../client/src/throwReady.js';
+import { tableSeats } from '../../client/src/seatPositions.js';
 
 const root = path.join(import.meta.dirname, '..', '..');
 const panel = readFileSync(path.join(root, 'client/src/components/TablePanel.jsx'), 'utf8');
@@ -15,6 +16,31 @@ const trick = (no, plays, winnerSeat, points = 0) => ({
 });
 
 // ============ 看上一轮 ============
+
+test('看上一轮：四个观看视角都与牌桌一致，自己在下、对家在上、上家在左、下家在右', () => {
+  assert.deepEqual([0, 1, 2, 3].map(tableSeats), [
+    { top: 2, left: 1, right: 3, self: 0 },
+    { top: 3, left: 2, right: 0, self: 1 },
+    { top: 0, left: 3, right: 1, self: 2 },
+    { top: 1, left: 0, right: 2, self: 3 },
+  ]);
+});
+
+test('看上一轮：领牌人变化不改变座位，四家牌面与赢家仍对应原座位', () => {
+  const rows = lastTrickRows(trick(3, [
+    { seat: 3, cards: [T('S', 10, 1)] },
+    { seat: 2, cards: [T('S', 14, 2)] },
+    { seat: 1, cards: [T('S', 7, 3)] },
+    { seat: 0, cards: [T('S', 5, 4)] },
+  ], 2, 15));
+  const positions = tableSeats(0);
+  const at = position => rows.find(row => row.seat === positions[position]);
+  assert.equal(at('right').isLead, true);
+  assert.equal(at('top').isWinner, true);
+  assert.equal(at('top').cards[0].rank, 14);
+  assert.equal(at('left').cards[0].rank, 7);
+  assert.equal(at('self').cards[0].rank, 5);
+});
 
 test('看上一轮：取最近打完的那一墩', () => {
   const round = {
