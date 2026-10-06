@@ -75,34 +75,12 @@ node scripts/screenshot.mjs                # 1366×768 UI 验收截图（需本�
 
 ## 部署
 
-部署步骤（示例，替换成你自己的服务器）：
+生产环境使用 `npm run build` 构建前端，再由进程管理器运行 `node server/index.js`。
+服务器地址、登录用户、部署目录、服务名称及口令只保存在仓库外的私有运维配置中。
+环境变量由进程管理器注入；本项目不会自动读取 `.env` 文件。
 
-```bash
-# 服务器装 Node 22+，克隆代码
-git clone git@github.com:glenwu/theoswa.git /opt/chaoshan
-cd /opt/chaoshan && npm install
-
-# 本机构建（或直接在服务器 npm run build）后 rsync 到服务器
-npm run build
-rsync -az --delete --exclude node_modules --exclude savegame.json ./ root@<ip>:/opt/chaoshan/
-
-# systemd 常驻
-cat > /etc/systemd/system/chaoshan.service <<'EOF'
-[Unit]
-Description=潮汕升级
-After=network.target
-[Service]
-WorkingDirectory=/opt/chaoshan
-ExecStart=/usr/bin/node server/index.js
-Environment=PORT=8787
-Environment=HOST=127.0.0.1
-Environment=ADMIN_RESET_TOKEN=你的口令
-Restart=always
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload && systemctl enable --now chaoshan
-```
+更新前备份当前版本与存档，部署时保留存档和环境配置，只重启游戏对应的进程。
+不要将整台服务器的配置、SSH 凭据或部署备份复制进公开仓库。
 
 服务默认只监听 `127.0.0.1`，公网访问请在前面放反向代理（nginx / caddy）终结 TLS 再转发到 8787。
 确实要让进程直接对外监听时才设 `HOST=0.0.0.0`（有快捷脚本 `npm run server:lan`），并自行确认防火墙（目标机器上 ufw 可能是 inactive）。
@@ -123,11 +101,9 @@ systemctl daemon-reload && systemctl enable --now chaoshan
 > - 只发给认识的人，玩完就把端口转发关掉。
 > - 真要长期开放，请在前面套一层反向代理做 basic auth，或走 Tailscale / WireGuard 之类的私有网络。
 
-存档：`/opt/chaoshan/server/savegame.json`（12 小时内重启自动恢复）。清档：游戏内四人表决「新开一局」、管理员强制重置，或带管理员口令调接口：
-
-```bash
-curl -X DELETE -H "x-admin-token: 你的口令" http://127.0.0.1:8787/api/save
-```
+存档默认位于项目的 `server/savegame.json`，也可通过 `SAVE_FILE` 配置。
+12 小时内重启会自动恢复。需要清档时使用游戏内四人表决「新开一局」，
+或已配置的管理员功能；管理员口令不要写进公开文档、URL 或命令示例。
 
 ## 配置（环境变量）
 

@@ -10,4 +10,37 @@ server/savegame.json
 # 这条规则是防呆：即使有人把它拷进仓库目录，git 也不会收。
 *提示词*.md
 *开发提示词*
+*规则变更记录*.md
 .ui-preview-save.json
+
+# 本地运行与运维配置：公开仓库不得包含真实服务器信息或凭据。
+.claude/
+.codex/
+.ssh/
+.env
+.env.*
+*.env
+*.env.*
+*.local
+*.local.*
+secrets/
+private/
+deploy-local/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*.service
+*.service.d/
+# 发布包、备份与服务器版本标记。
+backups/
+*.bak
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+DEPLOY_COMMIT
+# macOS 打包元数据。
+._*
