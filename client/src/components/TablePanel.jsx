@@ -1957,12 +1957,11 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
       renderCard(card, i, group, i === cards.length - 1, groupIds)
     );
     if (throwReady.has(group.suit)) {
-      // 光圈套在整组外面。px-1 配 -mx-1：留出一点内边距让光圈不贴着牌，
-      // 又用负外边距抵消掉宽度变化 —— 上面 segments 算的组宽、分行划分都不受影响。
+      // 光圈贴齐整组牌的边缘，不加左右内边距；组宽与分行计算保持一致。
       els.push(
         <div
           key={`throw-${group.suit}`}
-          className="throw-ready relative flex items-end -mx-1 px-1"
+          className="throw-ready relative flex items-end"
           title={`${SUIT_INFO[group.suit]?.name ?? ''}的件都出来了，这门可以整门甩出去`}
         >
           {cardEls}
@@ -2041,4 +2040,3 @@ function HandArea({ game, send, selected, onToggle, onDragAdd, onToggleGroup, on
     </div>
   );
 }
-

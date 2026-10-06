@@ -449,7 +449,7 @@ body {
    （亮主键、托管键都是绿的）。
    光圈画在花色组的外框上（box-shadow 往外扩，不占布局），抬起的牌照常露在外面。 */
 .throw-ready {
-  border-radius: 12px;
+  border-radius: 8px; /* 与牌面的 rounded-lg 一致，光圈贴合四角。 */
   animation: throw-ready-breathe 2.2s ease-in-out infinite;
 }
 @keyframes throw-ready-breathe {
