@@ -27,6 +27,98 @@ const ADMIN_RESET_TOKEN = process.env.ADMIN_RESET_TOKEN || null;
 const adminTokenMatches = token =>
   ADMIN_RESET_TOKEN !== null && typeof token === 'string' && token === ADMIN_RESET_TOKEN;
 
+// ── 进门密码（Basic Auth + Cookie 会话）──────────────────────────────────────
+// 本服务原本没有任何身份验证：知道地址就能顶替任意一家看牌。设 GAME_PASSWORD 后：
+//   1. Cookie 会话（主路径，手机友好）：首次访问弹一个登录页，密码对了发
+//      HttpOnly Cookie（30 天），之后 HTTP / WebSocket 全自动携带，
+//      手机锁屏、关标签页都不用再输。
+//   2. Basic Auth（兼容路径）：仍然有效，curl / 已缓存凭证的浏览器照常用。
+// 不设该变量则行为与之前完全一致（本地开发不受影响）。
+// Basic Auth 凭证由浏览器决定缓存多久（手机 Safari 常一锁屏就忘），
+// 所以「状态保持」靠 Cookie 会话实现。
+import { timingSafeEqual, randomBytes } from 'node:crypto';
+const GAME_PASSWORD = process.env.GAME_PASSWORD || null;
+function passwordOk(pass) {
+  if (GAME_PASSWORD === null) return true;
+  const a = Buffer.from(String(pass));
+  const b = Buffer.from(GAME_PASSWORD);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+function basicAuthOk(req) {
+  if (GAME_PASSWORD === null) return true;
+  const h = req.headers.authorization;
+  if (typeof h !== 'string' || !h.startsWith('Basic ')) return false;
+  let decoded;
+  try {
+    decoded = Buffer.from(h.slice(6).trim(), 'base64').toString('utf8');
+  } catch {
+    return false;
+  }
+  const i = decoded.indexOf(':');
+  // 用户名随便填（方便朋友记忆），只校验密码部分
+  return passwordOk(i === -1 ? '' : decoded.slice(i + 1));
+}
+
+// ── Cookie 会话 ──────────────────────────────────────────────────────────────
+// token 存内存 Map：服务重启后失效（朋友重输一次即可）。浏览器主动清 Cookie
+// 或 30 天后过期同理。不需要落盘 —— 牌局存档才是要保的，登录态丢一次无所谓。
+const SESSION_COOKIE = 'chaoshan_session';
+const SESSION_TTL_MS = 30 * 24 * 3600 * 1000;
+const sessions = new Map(); // token -> 过期时间戳
+function issueSession() {
+  const token = randomBytes(24).toString('hex');
+  sessions.set(token, Date.now() + SESSION_TTL_MS);
+  return token;
+}
+function sessionOk(req) {
+  if (GAME_PASSWORD === null) return true;
+  const cookies = req.headers.cookie;
+  if (typeof cookies !== 'string') return false;
+  for (const part of cookies.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== SESSION_COOKIE) continue;
+    const exp = sessions.get(part.slice(eq + 1).trim());
+    if (typeof exp === 'number' && exp > Date.now()) return true;
+  }
+  return false;
+}
+// 统一入口：Cookie 会话或 Basic Auth 任一通过即可
+function authOk(req) {
+  if (GAME_PASSWORD === null) return true;
+  return sessionOk(req) || basicAuthOk(req);
+}
+
+// 登录页：手机友好的独立小页（不进 React bundle，密码错了就地提示）
+const LOGIN_PAGE = `<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>潮汕升级 · 进门密码</title>
+<style>
+  html,body{height:100%;margin:0;background:#1a1c22;color:#eee;
+    font-family:system-ui,-apple-system,"PingFang SC",sans-serif;
+    display:flex;align-items:center;justify-content:center}
+  form{width:min(320px,86vw);background:#23262f;border-radius:14px;
+    padding:28px 24px;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+  h1{font-size:1.15rem;margin:0 0 4px;text-align:center}
+  p{font-size:.82rem;color:#9aa;margin:0 0 18px;text-align:center}
+  input{width:100%;box-sizing:border-box;height:56px;font-size:1.25rem;
+    text-align:center;letter-spacing:.3em;border-radius:10px;
+    border:1px solid #3a3e4a;background:#1a1c22;color:#eee;outline:none}
+  input:focus{border-color:#e8b339}
+  button{width:100%;height:52px;margin-top:14px;font-size:1rem;border:0;
+    border-radius:10px;background:#e8b339;color:#222;font-weight:600}
+  .err{color:#e06c5a;font-size:.85rem;text-align:center;margin-top:12px;min-height:1em}
+</style></head><body>
+<form method="POST" action="/api/login">
+  <h1>潮汕升级</h1>
+  <p>请输入进门密码</p>
+  <input type="password" name="password" autocomplete="current-password" autofocus>
+  <button type="submit">进入</button>
+  <div class="err">${'${ERR}'}</div>
+</form></body></html>`;
+
 // 持久化恢复：启动时若有 12 小时内的存档，自动恢复（进程重启不丢战果）
 function reviveState(saved) {
   const state = saved;
@@ -86,6 +178,37 @@ if (!restored) {
 const connections = new Map();
 
 const app = express();
+// 表单解析要放在最前：登录页 <form> 是 urlencoded 提交，
+// 认证中间件和 /api/login 都要能读到 req.body.password
+app.use(express.urlencoded({ extended: false }));
+// 进门密码：所有路由（含静态页面和 /api）都要先过 Cookie 会话或 Basic Auth。
+// 浏览器首次访问看到的是登录页（不再弹原生密码框，避免手机端缓存易丢）。
+if (GAME_PASSWORD !== null) {
+  app.use((req, res, next) => {
+    // 登录提交本身免检（密码就是凭证）
+    if (req.method === 'POST' && req.path === '/api/login') return next();
+    if (authOk(req)) return next();
+    const wantsHtml = String(req.headers.accept ?? '').includes('text/html');
+    if (wantsHtml) {
+      res.status(401).type('html').send(LOGIN_PAGE.replace('${ERR}', ''));
+      return;
+    }
+    // 非浏览器（curl、脚本）仍走标准 Basic Auth 质询
+    res.set('WWW-Authenticate', 'Basic realm="chaoshan", charset="UTF-8"');
+    res.status(401).send('需要密码');
+  });
+  app.post('/api/login', (req, res) => {
+    const pass = req.body?.password ?? '';
+    if (!passwordOk(pass)) {
+      res.status(401).type('html').send(LOGIN_PAGE.replace('${ERR}', '密码不对，再试一次'));
+      return;
+    }
+    res.setHeader('Set-Cookie',
+      `${SESSION_COOKIE}=${issueSession()}; Path=/; HttpOnly; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}; SameSite=Lax`);
+    res.redirect('/');
+  });
+  console.log('[潮汕升级] 🔒 已启用进门密码（GAME_PASSWORD）：登录页 + Cookie 会话（30 天），兼容 Basic Auth。');
+}
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
 // ⚠️ 绝不要把 state.seed 加回这个响应。
@@ -173,7 +296,22 @@ app.post('/api/debug/inject', (req, res) => {
 });
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+// WebSocket：有 GAME_PASSWORD 时，升级握手要求 Cookie 会话或 Basic Auth。
+// 用 noServer + 手动 handleUpgrade，才能在握手阶段就拒绝。浏览器对同源
+// ws:// 连接会自动带上 Cookie 和 Basic 凭证，与页面共用同一份登录态。
+const wss = new WebSocketServer({ noServer: true });
+server.on('upgrade', (req, socket, head) => {
+  if (!authOk(req)) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="chaoshan", charset="UTF-8"\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  if (req.url !== '/ws') {
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+});
 
 function send(ws, msg) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
@@ -277,7 +415,10 @@ server.listen(PORT, HOST, () => {
   console.log(`[潮汕升级] WebSocket: ws://${HOST}:${PORT}/ws`);
   if (HOST === '0.0.0.0') {
     console.warn('[潮汕升级] ⚠️ 正在监听所有网卡（HOST=0.0.0.0）。');
-    console.warn('[潮汕升级] ⚠️ 本服务没有任何身份验证：知道地址的人可以选任意一家并看到那家的手牌。');
+    if (GAME_PASSWORD === null) {
+      console.warn('[潮汕升级] ⚠️ 本服务没有任何身份验证：知道地址的人可以选任意一家并看到那家的手牌。');
+      console.warn('[潮汕升级] ⚠️ 建议设置 GAME_PASSWORD（Basic Auth 进门密码）。');
+    }
     console.warn('[潮汕升级] ⚠️ 对外只转发这一个端口，不要用 DMZ（DMZ 会把整台机器暴露出去）。');
   }
   if (ADMIN_RESET_TOKEN === null) {

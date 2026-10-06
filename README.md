@@ -109,9 +109,13 @@ systemctl daemon-reload && systemctl enable --now chaoshan
 
 > ### ⚠️ 对外开放前必读
 >
-> **本服务没有任何身份验证。** 身份就是 `T/H/B/M` 四个字母，写死在前后端共享常量里，
-> 客户端 bundle 里也有。知道地址的人可以选任意一家，立刻看到那家的完整手牌，
-> 并把原来那位踢下线。`viewer.js` 的保密裁剪拦不住这个 —— 他就是那一家。
+> **可设置 `GAME_PASSWORD` 启用共享进门密码。** 页面登录后签发 HttpOnly Cookie，
+> HTTP 和 WebSocket 都要求有效会话，也兼容 Basic Auth（用户名任意，密码为进门密码）。
+> Cookie 最长 30 天，会话只存在服务端内存中，重启后需要重新登录；旧页面重连遇到
+> 登录失效会自动刷新到登录页。未设置密码时保留原来的直接访问方式。
+>
+> 这不是个人账号系统：通过进门密码后仍可选择 `T/H/B/M` 任意身份，查看其手牌并顶替
+> 原连接。密码应只分享给牌友；公网部署使用 HTTPS 保护密码和会话。
 >
 > 因此：
 > - **只转发需要的那一个端口，不要用 DMZ。** DMZ 会把整台机器的所有端口
@@ -133,6 +137,7 @@ curl -X DELETE -H "x-admin-token: 你的口令" http://127.0.0.1:8787/api/save
 | HOST | `127.0.0.1` | 监听地址。默认只绑回环，公网请走反向代理；设 `0.0.0.0` 才对外暴露 |
 | SEED | 随机并打印 | 发牌种子，`SEED=<数字>` 可复现整局 |
 | ADMIN_RESET_TOKEN | *（无）* | 管理员强制重置口令。**不设则管理员能力整个关闭**，不再有默认口令 |
+| GAME_PASSWORD | *（无）* | 共享进门密码；设置后保护页面、API 和 WebSocket。Cookie 最长 30 天，服务重启后失效；兼容 Basic Auth |
 | FLIP_MS / DRAW_MS / GRACE_MS / FALLBACK_MS / DEALING_MS | 800/3000/3000/800/600 | 揭牌定主各节奏 |
 | SETTLE_MS / SCORING_MS / ROUND_END_MS | 1500/600/3000 | 收牌/结算/小结停留 |
 | PLAY_MS | 60000 | 出牌限时（超时自动出最小合法牌） |

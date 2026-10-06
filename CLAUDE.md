@@ -22,7 +22,7 @@
 ## 常用命令
 
 ```bash
-npm test                 # node:test，全部单测（当前 432 条）
+npm test                 # node:test，全部单元与集成测试
 npm run server           # 只绑 127.0.0.1
 npm run server:lan       # HOST=0.0.0.0，对外开放时用
 npm run start:lan        # 先构建再对外开放
@@ -107,8 +107,12 @@ node scripts/audit/mutantsN.mjs   # 变异测试，见下
 `/api/health` **绝不能返回 `state.seed`** —— 种子完全决定牌堆顺序，
 拿到它就能在本地把四家手牌和底牌全算出来（`scripts/audit/seed-leak.mjs` 有实证）。
 
-⚠️ **本服务没有任何身份验证**：身份就是 `T/H/B/M` 四个字母，写死在共享常量里。
-知道地址的人可以选任意一家并看到那家的手牌。Glen 已知情并选择先不加，走 Tailscale 而非公网。
+**进门密码**：设置 `GAME_PASSWORD` 后，HTTP 与 WebSocket 统一校验 Cookie 会话或
+Basic Auth；未配置则直接开放。Cookie 最长 30 天，会话存在内存中，服务重启后失效，
+客户端重连探测到 401 会刷新到登录页。回归测试见 `server/test/auth.test.js` 与
+`server/test/net-session.test.js`。
+⚠️ **共享密码不是个人身份验证**：登录后仍可选 `T/H/B/M` 任意一家并看到其手牌、顶替原连接。
+部署时保留现有口令配置，公网使用 HTTPS 或通过私有网络访问。
 
 ---
 
